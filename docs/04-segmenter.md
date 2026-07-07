@@ -97,6 +97,12 @@ needs per-hit gap data.
 - It records the **hit index at which the defender's state changed** (blocked hit 1, got hit by
   hit 2 ⇒ they pressed in a gap, or the gap was real and they ate it). This feeds
   `string_gap` / `gap_size` labeling and the "duck after hit 2 / stop pressing" knowledge checks.
+- It records, per hit, whether the defender **blocked it standing** vs **ducked/evaded it** — a
+  ducked high whiffs and breaks the string there, so a high that appears in the *blocked* sequence
+  means the defender stood on it. Combined with per-hit `hit_level` from frame data
+  ([05](05-frame-data-and-move-map.md) §3.2), this lets xref flag a **duckable high the user blocked
+  standing** (the `standing_duckable_high` check, [06](06-coaching-skill.md) §4.1) — e.g. Paul's
+  `df+1,1,2` (mid→high→mid), where ducking hit 2 gives a punish before hit 3.
 - Boundary rule: the string interaction **closes** when the defender becomes actionable *between*
   hits (they interrupted, or there was a real gap they acted in) or when the string fully recovers.
 

@@ -60,16 +60,58 @@ notation strings and frame-data table keys don't always match character-to-chara
 ## 3. The frame-data table (`assets/framedata/`)
 
 ### 3.1 Sources of truth
-Two community sources, both offering machine-readable data:
-- **Wavu Wiki** (`wavu.wiki`) — community frame-data wiki; pages expose JSON via a `?_format=json`
-  request. Primary source.
-- **TekkenDocs** (`tekkendocs.com`) — serves frame data as JSON (e.g. `/api/.../framedata`
-  patterns). Secondary / cross-check.
+**Primary (git-pinned CSV):**
+- **`pbruvoll/tekkendocs`** — the source repo behind `tekkendocs.com`. Its
+  `data/wavuConvertedCsv/<char>/*.csv` files are **Wavu-derived frame data, already normalized to
+  CSV, in version control**. This is our primary ingest source because it is:
+  - **machine-readable and stable** — plain CSV, no scraping, no rate limits;
+  - **reproducible** — we **pin a commit SHA**, which is a stricter, better snapshot key than a
+    fetch date (§3.2);
+  - **rich enough for our checks** — the `Hit level` column carries **per-hit string levels** as
+    comma-separated values (e.g. Bryan `1,2,1` → `h, h, m`), which maps directly onto the string
+    `hits[]` sequence (§3.2) and feeds `standing_duckable_high` ([06](06-coaching-skill.md) §4.1).
+    Columns observed: `Command; Hit level; Damage; Start up frame; Block frame; Hit frame;
+    Counter hit frame; Notes; Tags; Transitions; Name; Recovery; …; Wavu id; Character id`.
+  - **Licensing (data vs code):** the repo's **code is restrictively licensed** (do **not** copy or
+    vendor the app code), but the **data may be used with attribution**. Attribute
+    **tekkendocs.com and rbnorway.org** in `NOTICE`/`THIRD_PARTY_LICENSES`. Same split as the reader
+    ([02](02-memory-reader.md) §5): we take the *data*, not the code.
+  - **Consistency caveat:** coverage/field completeness varies across characters (blank cells,
+    occasional missing per-hit startup). Our loader is already miss-tolerant
+    ([§2.3](#22-structure), §4.1) and we cross-check against the live sources + okizeme below.
+
+**Cross-check / fallback (live — Wavu Cargo API):**
+- **Wavu Wiki** (`wavu.wiki`) is the upstream authority the CSVs derive from. It is a **MediaWiki +
+  Cargo** install queried structurally at **`https://wavu.wiki/w/api.php`** with
+  `action=cargoquery&format=json` against the **`Move`** table. The importer we're mirroring
+  (`pbruvoll/tekkendocs` `utils/wavu-importer/.../wavu_reader.py`) requests fields:
+  `id, name, input, alias, alt, num, parent, image, video, target, damage, reach, tracksLeft,
+  tracksRight, startup, recv, tot, crush, block, hit, ch, notes`, scoped `WHERE id LIKE '<Char>%'`,
+  `limit 500`, ordered by `id`.
+  - **How per-hit string levels arise:** hits are stored as separate `Move` rows linked by
+    `parent`/`num`; the importer concatenates a string's hits and joins their **`target`** (hit
+    level) into the comma list that becomes the CSV `Hit level` column (`h, h, m`). Same data as the
+    CSV — the CSV just has this reconstruction pre-done. `block`/`hit`/`ch` need HTML-tag stripping
+    and pipe-delimited normalization (the importer does this too).
+  - **Use it for:** reconciling suspicious CSV values, and as a **direct-ingest fallback** if the
+    CSV repo goes stale. If we query it, set a **descriptive `User-Agent`** and keep requests
+    **serial** (the importer sets neither, but MediaWiki etiquette expects both).
+- **TekkenDocs** (`tekkendocs.com`) — the rendered site, for quick human spot-checks.
 
 > **Important distinction found in research:** `wank.wavu.wiki` is a *different* service — it
 > serves **player ratings and a `/api/replays` endpoint**, *not* move frame data. It is relevant
 > to clean-capture replay selection ([01](01-capture-modes.md) §4.2), **not** to this asset. Don't
 > conflate the two Wavu hosts.
+
+**Reference-only (not an ingest source):**
+- **okizeme.gg** (`okizeme.gg`) — an excellent Tekken 8 data platform and the best *human*
+  cross-check, especially for **per-hit string levels and duck/punish info** (exactly what the
+  `standing_duckable_high` check needs, [06](06-coaching-skill.md) §4.1). But it is **client-rendered
+  with no documented public API** — the page fetches data from an internal endpoint. Programmatic use
+  would require reverse-engineering that endpoint or scraping the rendered DOM, which is a
+  ToS/stability risk and not a stable contract; so we use it to **verify/curate the snapshot by hand**,
+  not as an automated ingest. Revisit if okizeme ever publishes an API.
+- Community API `theneosloth/tekken-api` is **Tekken 7 only and unlicensed** — not usable for T8.
 
 Exact endpoint shapes must be re-verified at implementation time (community sites change); treat
 the URLs above as starting points, not a stable API contract.
@@ -80,7 +122,8 @@ operation, and rate-limit friendliness — Wavu asks that clients keep ≤1 requ
 ```
 assets/framedata/
 ├── snapshot-2026-06-30/
-│   ├── manifest.json     // source URLs, fetch date, game/patch version, per-char checksums
+│   ├── manifest.json     // pinned source commit SHA (pbruvoll/tekkendocs), game/patch version,
+│   │                     //   per-char checksums, attribution (tekkendocs.com, rbnorway.org)
 │   ├── kazuya.json
 │   └── ...
 └── current -> snapshot-2026-06-30/
@@ -102,14 +145,35 @@ assets/framedata/
 }
 ```
 
+**Strings** additionally carry a per-hit sequence and, where a mid-string high can be ducked for a
+punish, a `duck_punish` marker:
+```jsonc
+// per string, e.g. Paul "df+1,1,2" (mid → high → mid)
+{
+  "key": "df+1,1,2",
+  "hits": [ { "hit_level": "mid" }, { "hit_level": "high" }, { "hit_level": "mid" } ],
+  "duck_punish": { "after_hit": 2, "answer": "df+1 (i13)" }  // duck the high (hit 2), punish before hit 3
+}
+```
+`hits[].hit_level` is populated directly from the primary CSV's `Hit level` column, split on
+commas (§3.1). `duck_punish.answer` is **not** in the CSV — it is derived (a high mid-string that
+whiffs on crouch, leaving a punish window) and hand-curated against okizeme.gg (§3.1) for the
+scoped matchups; absent ⇒ no `standing_duckable_high` flag, which is a safe miss ([§4.1](#41-core-computations)).
+
 ### 3.3 Ingest tooling
 A `fetch-framedata` command:
-1. Pulls each scoped character from the primary source (respecting rate limits: serial requests).
-2. Normalizes into the schema above; records source URL + checksum in `manifest.json`.
+1. Fetches the scoped characters' `data/wavuConvertedCsv/<char>/*.csv` from `pbruvoll/tekkendocs`
+   **at a pinned commit SHA** (raw file fetch or a shallow checkout of that ref) — no scraping, no
+   rate-limit dance.
+2. Parses the CSV and **normalizes into the schema above** (§3.2): splits the `Hit level` column
+   into the string `hits[]` sequence, maps block/hit/CH frames, carries `Notes`/`Tags`. Records the
+   **pinned SHA + attribution + per-char checksums** in `manifest.json`.
 3. Diffs against `current`; prints what changed (surfaces balance-patch deltas for review).
 4. Writes a new `snapshot-<date>/` and, on approval, repoints `current`.
-Ingestion is **manual-triggered**, not automatic, so a source outage or format change can't
-silently corrupt the table.
+Ingestion is **manual-triggered**, not automatic, and pinned to a specific commit, so an upstream
+edit or format change can't silently corrupt the table — a snapshot is only adopted after the diff
+is reviewed. The live Wavu/TekkenDocs sources and okizeme.gg (§3.1) are used to reconcile
+suspicious values and to hand-curate `duck_punish` answers, not as the bulk feed.
 
 ## 4. The cross-reference (`tekken_coach.framedata`)
 
@@ -127,6 +191,12 @@ loaded snapshot ([04](04-segmenter.md) §5, [00](00-architecture.md) §3).
   advantage is cross-checked against the *canonical* `on_block` (see §4.2).
 - **String gaps:** for in-string interactions ([04](04-segmenter.md) §4.2), compute the frame gap
   between hits from per-hit data → `string_gap ∈ {true|interruptible|duckable|null}`, `gap_size`.
+  (This is a *timing* property — distinct from the *height* check below.)
+- **Duckable highs:** cross-reference per-hit `hit_level` (§3.2 string `hits`) against the
+  segmenter's per-hit block/duck record ([04](04-segmenter.md) §4.2). If the user **blocked a high
+  standing** that the frame data marks `duck_punish`-able, set `labels.duckable_high_hit` (the hit
+  index) and `labels.duck_punish` (the answer). If the user ducked it (the high whiffed), no flag —
+  that's the correct play, not a knowledge check. Feeds `standing_duckable_high` ([06](06-coaching-skill.md) §4.1).
 - **Heat selection:** if the interaction was in Heat, use the move's `heat` overrides.
 - **Knowledge-check tagging:** run the rubric patterns ([06](06-coaching-skill.md)) and set
   `is_knowledge_check` / `knowledge_check_ids`.
@@ -169,7 +239,12 @@ Then: bump header stamps (game_version, framedata_snapshot) so new logs are repr
 - The pipeline **never blocks capture** on a data-quality problem; it degrades and flags.
 
 ## Sources
-- Wavu Wiki (frame data): <https://wavu.wiki>
+- Primary CSV data (git-pinned, Wavu-derived): <https://github.com/pbruvoll/tekkendocs> —
+  `data/wavuConvertedCsv/<char>/*.csv`. Data usable with attribution (tekkendocs.com, rbnorway.org);
+  repo code is restrictively licensed — do not vendor it.
+- Wavu Wiki (frame data): <https://wavu.wiki> — Cargo API: <https://wavu.wiki/w/api.php> (`action=cargoquery`, `Move` table)
+- Wavu importer reference (query shape + string reconstruction): `pbruvoll/tekkendocs` `utils/wavu-importer/src/wavu/wavu_reader.py`
 - TekkenDocs (frame data JSON): <https://tekkendocs.com>
 - Wavu Wank (ratings/replays API — *not* frame data): <https://wank.wavu.wiki/api>
+- okizeme.gg (manual cross-check reference; no public API): <https://okizeme.gg>
 - Fork whose DB approach we inherit: <https://github.com/dcep93/TekkenBot>

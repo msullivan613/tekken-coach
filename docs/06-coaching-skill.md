@@ -96,6 +96,7 @@ worth coaching). Starter set (from summary §8), as rule specs:
 | `punish_missed` | `labels.was_punishable && outcome == "no_punish"` on the same `attacker_move_id` | ≥3× vs one move | "X is −N. Punish with `correct_punish`." |
 | `respected_fake_gap` | `defender_reaction == "blocked"` in-string && `labels.string_gap == "interruptible"` && defender did nothing | ≥3× vs one string | "There's a gap after hit K — you can interrupt." |
 | `challenged_true_string` | `follow_up.result == "got_counter_hit"` && `labels.string_gap == "true"` | ≥3× vs one string | "That's a true string. Stop pressing; block it." |
+| `standing_duckable_high` | in-string && `labels.duckable_high_hit != null` (user **blocked a high standing** mid-string that could have been ducked for a punish) | ≥3× vs one string | "X is mid→high→mid — duck hit K (the high) and punish before the last hit: `duck_punish`." |
 | `ate_low` / `ate_mid` | `defender_reaction == "hit"` && `labels.move_property` low/mid on a known mix | ≥3× vs one move | "You keep standing on the low / ducking the mid — react to X." |
 | `mashed_into_plus` | attacker `+on_block`, user's `follow_up` `got_counter_hit` | ≥3× vs one situation | "X is plus. Stop mashing after it; wait your turn." |
 

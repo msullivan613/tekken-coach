@@ -143,6 +143,8 @@ shape as `Interaction` with an added `labels` block and resolved human-readable 
     "in_string": false,              // was this contact part of a multi-hit string
     "string_gap": null,              // {duckable|interruptible|true|null} for string situations
     "gap_size": null,                // frames of the gap, if any
+    "duckable_high_hit": null,       // index of a high in this string the user blocked STANDING that is duck-punishable (a missed duck-punish); null otherwise (05 §4.1)
+    "duck_punish": null,             // recommended punish after ducking that high, e.g. "df+1 (i13)"
     "move_property": "mid",          // high | mid | low | throw | unblockable
     "is_knowledge_check": true,      // did this trip a rubric pattern (06)
     "knowledge_check_ids": ["punish_missed"]  // which rubric pattern(s), see 06
