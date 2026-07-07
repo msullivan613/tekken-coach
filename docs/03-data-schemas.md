@@ -98,7 +98,7 @@ A discrete, bounded exchange with an attacker, a defender, an outcome, and follo
                                    //   (negative = attacker disadvantaged / punishable); null if N/A
   "outcome": "no_punish",          // see enum below
   "follow_up": {                   // what the defender did in their action window after reaction
-    "move_id": 0,                  // 0 / null = nothing
+    "move_id": null,               // move the defender did, or null for nothing. The authoritative "did nothing" signal is result=="none"; consumers key on result, not move_id (a reader may also report 0 for "no move" — treat 0 and null as equivalent).
     "result": "none",              // none | whiffed | hit | blocked | got_counter_hit | traded
     "reaction_frames": null        // frames until defender acted, if they acted
   },
@@ -152,6 +152,14 @@ shape as `Interaction` with an added `labels` block and resolved human-readable 
 }
 ```
 
+**Nullable-vs-required in `labels`.** The **frame-data-derived** fields — `on_block`,
+`was_punishable`, `punish_window`, `correct_punish`, `user_punished_correctly`, `move_property`,
+`string_gap`, `gap_size`, `duckable_high_hit`, `duck_punish` — are **null when
+`frame_data_matched` is false** (the miss-tolerant path, [05](05-frame-data-and-move-map.md)
+§2.3/§4.1); they carry values only on a match. The **structural/rubric** fields are always present:
+`frame_data_matched`, `in_string`, `is_knowledge_check` (bool), and `knowledge_check_ids` (list,
+possibly empty). Rule of thumb: *if it depends on resolving the move in frame data, it is nullable.*
+
 **Xref is a pure function.** `LabeledInteraction = f(Interaction, FrameDataTable, MoveMap, Rubric)`.
 No memory access, no LLM. It is fully unit-testable against fixture interactions ([04](04-segmenter.md) §7).
 
@@ -188,11 +196,22 @@ sessions/2026-07-07T20-14-03.jsonl
   "framedata_snapshot": "2026-06-30",
   "user_player": 0,                // which player index is the user (01 §5) — coaching pivots on this
   "user_char": "Jin",
-  "matches": [                      // filled/updated as matches complete
+  "matches": [                      // may be empty at open; finalized on close (see note)
     {"match_id": "...#3", "opponent_char": "Kazuya", "result": "loss", "rounds": 3}
   ]
 }
 ```
+
+> **Header write model (append-only reconciliation).** The header is written **once at open** as
+> line 1, and the body is strictly **append-only** — the header is never rewritten per match. Since
+> every `LabeledInteraction` carries its `match_id`, the `matches` list is a **denormalized
+> convenience** derivable from the body. Two allowed strategies, both preserving line-1-is-header:
+> (a) leave `matches` as written at open (possibly empty) and let consumers derive the match list
+> from the body; or (b) **rewrite line 1 once on session close** to finalize `matches`. The default
+> is (b). Per-match in-place header rewrites are **not** done. Header finalization is a session-
+> orchestration concern ([07](07-output-and-cli.md)); the writer may expose a `finalize(matches)`
+> hook for it. `MatchSummary.result` is intentionally an open string until the reader establishes
+> the real value set (`win`/`loss`/disconnect/…); do not invent an enum prematurely.
 
 **Body (lines 2..N):** one `LabeledInteraction` per line (§3).
 
@@ -206,8 +225,12 @@ layer refuses logs with an unknown major version.
 ## 6. Schema versioning & compatibility
 
 - `schema_version` is semver. **Major** bump = breaking field change; **minor** = additive.
-- The reader and segmenter emit the current version; the coaching layer accepts any log whose
-  **major** matches and whose **minor** ≤ its own (forward-additive tolerance).
+- The reader and segmenter emit the current version. **Compatibility is gated on major only:** a
+  consumer accepts any log whose **major** matches its own, regardless of minor. Within a matching
+  major, minor differences are non-breaking in **both** directions — a newer log's additive fields
+  are ignored on load, and an older log simply omits newer (optional) fields. A **major** mismatch
+  is rejected. (An earlier draft said "minor ≤ its own"; that was wrong — it contradicts additive
+  tolerance — and is corrected here.)
 - `game_version` + `framedata_snapshot` in the header make every log **reproducible**: you can
   re-run xref/coaching against the exact data set that produced it, which matters across Season
   patches ([05](05-frame-data-and-move-map.md)).
