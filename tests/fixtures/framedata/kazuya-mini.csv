@@ -1,0 +1,9 @@
+Command;Hit level;Damage;Start up frame;Block frame;Hit frame;Counter hit frame;Notes;Tags;Transitions;Name;Recovery;Image;Video;Wavu id;Character id
+df+2;m;22;i14;-12;+5;+59a;"* Homing
+* Balcony Break on air hit
+* Crumple stun +13F after CH";hom;;Abolishing Fist;32;;File:t8-p2-kazuya-df+2.mp4;Kazuya-df+2;kazuya
+1,1,2;h, h, m;5, 6, 14;i10, ,i13;-17;+20a (+15);;"* Balcony Break (airborne)
+* Combo from 1st hit
+* Combo form 2nd hit with 11f delay
+* Move can be delayed 11f";;;Flash Punch Combo;r36;;File:t8-p2-kazuya-1,1,2.mp4;Kazuya-1,1,2;kazuya
+f,n,d,df+2;h;20;i11~12;-10;+39a (+29);;Becomes Electric Wind God Fist during Heat (Consumes 60F of remaining Heat Time);;;Wind God Fist;r28;;File:t8-p2-kazuya-f,n,d,df+2.mp4;Kazuya-f,n,d,df+2;kazuya

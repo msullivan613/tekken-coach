@@ -1,0 +1,15 @@
+{
+  "game_version": "2.01.01",
+  "characters": [
+    {
+      "char_id": 12,
+      "char_name": "Kazuya",
+      "file": "kazuya.json"
+    },
+    {
+      "char_id": null,
+      "char_name": "Paul",
+      "file": "paul.json"
+    }
+  ]
+}

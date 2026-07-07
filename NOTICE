@@ -1,0 +1,22 @@
+tekken-coach
+============
+
+This product includes frame-data derived from third-party community sources. The data is
+used with attribution; no third-party application *code* is vendored (see THIRD_PARTY_LICENSES
+for the code/data split).
+
+Frame data (assets/framedata/)
+------------------------------
+Frame-data snapshots under `assets/framedata/` are ingested (via `fetch-framedata`) from the
+Wavu-derived CSV files published by the `pbruvoll/tekkendocs` repository, which is the source
+behind tekkendocs.com. The underlying frame data originates from the Tekken community, notably:
+
+  - tekkendocs.com
+  - rbnorway.org
+
+Each snapshot's `manifest.json` records the exact pinned upstream commit SHA and per-character
+source checksums, so every snapshot is reproducible and traceable to its source.
+
+The `pbruvoll/tekkendocs` *application code* is restrictively licensed and is NOT used or
+vendored here — only the published *data* is ingested, with the attribution above. See docs/05
+§3.1 for the data-vs-code licensing split.

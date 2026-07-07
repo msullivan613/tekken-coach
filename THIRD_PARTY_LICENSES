@@ -1,0 +1,33 @@
+Third-Party Licenses & Attribution
+==================================
+
+This file records third-party material used by tekken-coach and the licensing posture for
+each. The governing principle (docs/05 §3.1, docs/02 §5) is a strict **data-vs-code split**:
+we ingest community *data* with attribution, and we never vendor restrictively-licensed
+application *code*.
+
+
+1. Frame data — tekkendocs.com / rbnorway.org (DATA, used with attribution)
+---------------------------------------------------------------------------
+Source repository : https://github.com/pbruvoll/tekkendocs
+Ingested files    : data/wavuConvertedCsv/<char>/*.csv  (Wavu-derived, CSV-normalized)
+Attribution       : tekkendocs.com, rbnorway.org
+Used in           : assets/framedata/  (snapshots; see each manifest.json for the pinned SHA)
+
+Posture:
+  - The frame *data* is community-sourced and used here WITH ATTRIBUTION.
+  - The `pbruvoll/tekkendocs` application *code* is RESTRICTIVELY LICENSED and is NOT copied,
+    vendored, adapted, or redistributed in this project. Only the published data is ingested.
+  - `fetch-framedata` pins a specific upstream commit SHA and records it, plus per-character
+    checksums, in each snapshot's manifest.json for reproducibility and traceability.
+
+Cross-check / upstream authority (not vendored):
+  - Wavu Wiki      : https://wavu.wiki      (the upstream frame-data authority)
+  - okizeme.gg     : https://okizeme.gg     (manual cross-check for duck/punish curation; no API)
+
+
+2. Memory-reader lineage (noted here; delivered in C4)
+------------------------------------------------------
+The read-only memory reader (docs/02) will port MIT-licensed code (roguelike2d TekkenBot, MIT,
+2017). That attribution will be added with the C4 deliverable. It is listed here only to record
+the intended posture; no such code is present in C1.

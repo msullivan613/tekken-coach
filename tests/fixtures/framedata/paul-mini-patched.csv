@@ -1,0 +1,6 @@
+Command;Hit level;Damage;Start up frame;Block frame;Hit frame;Counter hit frame;Notes;Tags;Transitions;Name;Recovery;Image;Video;Wavu id;Character id
+df+1,1,2;m, h, m;11, 9, 22;i14, ,i22~23;-9;+32a (+24);;"* Balcony Break
+* Combo from 2nd CH";bbr;;Lion's Roar;r31;;File:Paul-df1,1,2.mp4;Paul-df+1,1,2;paul
+df+2;m;13;i15~16;-11;+33a (+23);;"* High evasion
+* +4s on crouching normal hit";;;Kurenai;r25;;File:Paul-df2.mp4;Paul-df+2;paul
+b+4;L;23;i18;-14;+8;;"* High crush";;;Sway Kick;r30;;File:Paul-b4.mp4;Paul-b+4;paul
