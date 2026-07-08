@@ -21,6 +21,22 @@ The `pbruvoll/tekkendocs` *application code* is restrictively licensed and is NO
 vendored here — only the published *data* is ingested, with the attribution above. See docs/05
 §3.1 for the data-vs-code licensing split.
 
+Memory reader (src/tekken_coach/reader/, assets/offsets/)
+---------------------------------------------------------
+The read-only Tekken 8 memory reader is an original implementation informed by the memory-layout
+knowledge of the MIT-licensed TekkenBot root (WAZAAAAA0/TekkenBot, (c) 2017 roguelike2d). That
+project is credited for the layout knowledge; its MIT copyright/permission text is retained in
+THIRD_PARTY_LICENSES (MIT is irrevocable for the code it covered).
+
+  - Offsets, addresses, and AOB signatures are FACTS/DATA, not code: they live under
+    `assets/offsets/` as versioned tables, never hard-coded in source.
+  - The `update-offsets` re-discovery command (C4b) is a CLEAN-ROOM re-implementation of the
+    Jin-vs-Kazuya practice-mode technique; it does not copy the dcep93 fork's script.
+  - The reader is READ-ONLY by construction: no memory-write or input-injection primitive exists
+    anywhere in the package (the bot/input half of the ancestral TekkenBot is not ported).
+
+See docs/02 §5 and THIRD_PARTY_LICENSES for the full data-vs-code split and licensing posture.
+
 Punisher profiles (assets/punishers/)
 --------------------------------------
 The curated per-character punisher profiles under `assets/punishers/` are frame-number facts

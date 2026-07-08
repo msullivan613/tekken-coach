@@ -1,0 +1,94 @@
+{
+  "_comment": [
+    "Offsets, addresses, and AOB signatures are FACTS/DATA, not copyrightable expression",
+    "(docs/02 §5). This file is data: it declares the byte layout the read-only decoder uses.",
+    "Real Tekken 8 addresses are (re)discovered by `update-offsets` (C4b) — a CLEAN-ROOM",
+    "re-implementation of the Jin-vs-Kazuya practice-mode technique (docs/02 §4), NOT a copy of",
+    "the dcep93 fork's update_memory_address.py. The values below are PLACEHOLDER layout offsets",
+    "for the C4a offline decoder tests; they are not the running game's real addresses and are",
+    "expected to be overwritten by the first `update-offsets` run at bring-up (docs/02 §5)."
+  ],
+  "game_version": "2.01.01",
+  "discovered_at": "2026-07-07T00:00:00Z",
+  "notes": "C4a placeholder layout aligned to the C1 movemap snapshot (game_version 2.01.01). update-offsets (C4b) rewrites this file per build.",
+  "endianness": "little",
+  "pointer_size": 8,
+  "global": {
+    "anchor": { "module": "Polaris-Win64-Shipping.exe", "base_offset": 0, "pointer_path": [] },
+    "fields": {
+      "frame_counter": { "offset": 0, "kind": "u32" },
+      "match_phase": { "offset": 4, "kind": "u32" },
+      "game_mode": { "offset": 8, "kind": "u32" },
+      "round": { "offset": 12, "kind": "u32" },
+      "timer_ms": { "offset": 16, "kind": "u32" }
+    }
+  },
+  "players": {
+    "anchor": { "module": "Polaris-Win64-Shipping.exe", "base_offset": 4096, "pointer_path": [] },
+    "stride": 1024,
+    "fields": {
+      "char_id": { "offset": 0, "kind": "u32" },
+      "move_id": { "offset": 4, "kind": "u32" },
+      "move_frame": { "offset": 8, "kind": "u32" },
+      "health": { "offset": 12, "kind": "i32" },
+      "pos_x": { "offset": 16, "kind": "f32" },
+      "pos_y": { "offset": 20, "kind": "f32" },
+      "pos_z": { "offset": 24, "kind": "f32" },
+      "facing": { "offset": 28, "kind": "i32" },
+      "simple_state": { "offset": 32, "kind": "u32" },
+      "counter_state": { "offset": 36, "kind": "u32" },
+      "block_stun": { "offset": 40, "kind": "bool8" },
+      "hit_stun": { "offset": 41, "kind": "bool8" },
+      "stagger": { "offset": 42, "kind": "bool8" },
+      "throw_active": { "offset": 43, "kind": "bool8" },
+      "throw_tech": { "offset": 44, "kind": "bool8" },
+      "thrown": { "offset": 45, "kind": "bool8" },
+      "airborne": { "offset": 46, "kind": "bool8" },
+      "juggle": { "offset": 47, "kind": "bool8" },
+      "knockdown": { "offset": 48, "kind": "bool8" },
+      "wakeup": { "offset": 49, "kind": "bool8" },
+      "sidestep": { "offset": 50, "kind": "bool8" },
+      "crouch": { "offset": 51, "kind": "bool8" },
+      "heat_active": { "offset": 52, "kind": "bool8" },
+      "heat_engager_used": { "offset": 53, "kind": "bool8" },
+      "rage": { "offset": 54, "kind": "bool8" },
+      "input_valid": { "offset": 55, "kind": "bool8" },
+      "input_dir": { "offset": 56, "kind": "u8" },
+      "heat_timer_ms": { "offset": 60, "kind": "u32" },
+      "input_buttons": { "offset": 64, "kind": "u16" }
+    }
+  },
+  "state_codes": {
+    "match_phase": {
+      "0": "menu",
+      "1": "pre_round",
+      "2": "in_round",
+      "3": "round_over",
+      "4": "match_over",
+      "5": "replay"
+    },
+    "game_mode": {
+      "0": "idle",
+      "1": "offline_match",
+      "2": "online_match",
+      "3": "replay",
+      "4": "practice"
+    },
+    "counter_state": {
+      "0": "none",
+      "1": "counter_hit",
+      "2": "punish_counter"
+    },
+    "simple_state": {
+      "0": "neutral",
+      "1": "attack",
+      "2": "recovery"
+    }
+  },
+  "sanity": {
+    "round_start_health": 150,
+    "health_plausible_min": 1,
+    "health_plausible_max": 250,
+    "move_id_max": 60000
+  }
+}

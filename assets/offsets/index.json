@@ -1,0 +1,13 @@
+{
+  "_comment": [
+    "Offset index (docs/02 §3): game version -> offset file, plus the detected-version marker.",
+    "`detected_version` records which build the checked-in offset assets are aligned to. Version",
+    "detection (C4a) selects the matching table for the running game's version; an UNKNOWN version",
+    "FAILS CLOSED (docs/02 §3/§7) — the reader never falls back to a stale table, because a wrong",
+    "offset silently yields garbage FrameRecords. `update-offsets` (C4b) adds new versions here."
+  ],
+  "detected_version": "2.01.01",
+  "versions": {
+    "2.01.01": { "file": "2.01.01.json" }
+  }
+}

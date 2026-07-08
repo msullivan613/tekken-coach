@@ -26,8 +26,54 @@ Cross-check / upstream authority (not vendored):
   - okizeme.gg     : https://okizeme.gg     (manual cross-check for duck/punish curation; no API)
 
 
-2. Memory-reader lineage (noted here; delivered in C4)
-------------------------------------------------------
-The read-only memory reader (docs/02) will port MIT-licensed code (roguelike2d TekkenBot, MIT,
-2017). That attribution will be added with the C4 deliverable. It is listed here only to record
-the intended posture; no such code is present in C1.
+2. Memory-reader lineage — roguelike2d TekkenBot (MIT, 2017) + fork posture (C4a)
+--------------------------------------------------------------------------------
+Layout root     : https://github.com/WAZAAAAA0/TekkenBot   (MIT License, (c) 2017 roguelike2d)
+T8 fork (ref)   : https://github.com/dcep93/TekkenBot       (no LICENSE file -> all rights reserved)
+Used in         : src/tekken_coach/reader/  and  assets/offsets/
+
+Posture (docs/02 §5 — engineering-practical guidance, not legal advice):
+
+  - OFFSETS / ADDRESSES / AOB SIGNATURES ARE FACTS/DATA, not copyrightable expression. The T8
+    memory-layout *knowledge* is used freely and lives as DATA under `assets/offsets/` (one
+    versioned table per game build), never hard-coded in source.
+
+  - The read-only decoder in `src/tekken_coach/reader/` is an ORIGINAL implementation. It is
+    informed by the MIT-root layout knowledge above; roguelike2d (MIT, 2017) is credited here for
+    that knowledge. Where MIT-root *code* is ported verbatim in future, the MIT notice below is
+    retained (MIT is irrevocable for the code it covered).
+
+  - The dcep93 fork has NO LICENSE file (confirmed 404) -> its net-new *source* is "all rights
+    reserved" and is NOT copied, vendored, or adapted here. Only layout *facts* are used.
+
+  - `update-offsets` (C4b) is a CLEAN-ROOM re-implementation of the Jin-vs-Kazuya practice-mode
+    re-discovery *technique* (an idea/method, not protected). It does NOT copy the fork's
+    `update_memory_address.py` text.
+
+  - READ-ONLY BY CONSTRUCTION: the entire bot / input-injection half of the ancestral TekkenBot is
+    removed from the port, not merely unused. No memory-write or input-synthesis primitive exists
+    anywhere in `src/tekken_coach/reader/` (enforced by `tests/test_reader_readonly.py`).
+
+MIT License text (WAZAAAAA0/TekkenBot root, retained per the MIT permission requirement):
+
+  MIT License
+
+  Copyright (c) 2017 roguelike2d
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
