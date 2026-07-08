@@ -124,9 +124,7 @@ def label_interaction(
         knowledge_check_ids=[],
     )
     ids = evaluate_triggers(interaction, labels, rubric)
-    labels = labels.model_copy(
-        update={"is_knowledge_check": bool(ids), "knowledge_check_ids": ids}
-    )
+    labels = labels.model_copy(update={"is_knowledge_check": bool(ids), "knowledge_check_ids": ids})
 
     return _build(
         interaction, notes, lookup.notation, attacker_char_name, defender_char_name, labels
@@ -248,23 +246,51 @@ def _select_correct_punish(
     return best.notation
 
 
-def _duckable_high(
-    interaction: Interaction, move: FrameDataMove
-) -> tuple[int | None, str | None]:
+def _duckable_high(interaction: Interaction, move: FrameDataMove) -> tuple[int | None, str | None]:
     """The duckable-high (height) check (docs/05 §4.1, gap #3).
 
-    If the string carries a curated ``duck_punish`` and the user **blocked** it (stood and ate the
-    high rather than ducking), flag the missed duck-punish. If they ducked it (evaded), no flag —
-    that is the correct play. The merged Interaction (03 §2) has no per-hit block/duck record yet
-    (that is a C3/§04 §4.2 field), so we approximate "blocked the high standing" as
-    ``defender_reaction == blocked``; ducking surfaces as ``evaded``. See the C2 report gap note.
+    Fire when the user **blocked a high standing** mid-string that the frame data marks
+    ``duck_punish``-able — a missed duck-punish. If they ducked it (the high whiffed), no flag: that
+    is correct play, not a knowledge check.
+
+    Preferred path (C3b, docs/04 §4.2): read the segmenter's per-hit ``string_hits`` record and
+    cross it with per-hit ``hit_level`` from the frame data. Fire only when the curated duckable
+    hit was ``blocked`` while the defender was **not** crouching *and* that hit's ``hit_level`` is
+    ``high``. A ducked hit surfaces as ``evaded`` (or crouching) and is correctly not flagged.
+
+    Fallback (pre-1.2.0 logs / single-``defender_reaction`` interactions with no per-hit array):
+    the C2 approximation — ``defender_reaction == blocked`` ⇒ stood on the high; ``evaded`` ⇒
+    ducked. Exact for a whole-string block (the Paul ``df+1,1,2`` case).
+
+    Miss-tolerant throughout (docs/05 §4.1): no curated ``duck_punish``, no per-hit record, or no
+    per-hit frame-data match ⇒ ``(None, None)``, never a raise.
     """
-    if (
-        move.is_string
-        and move.duck_punish is not None
-        and interaction.defender_reaction == DefenderReaction.blocked
-    ):
-        return move.duck_punish.after_hit, move.duck_punish.answer
+    if not move.is_string or move.duck_punish is None:
+        return None, None
+    answer = move.duck_punish.answer
+    target_hit = move.duck_punish.after_hit  # the curated duckable high (1-based hit index)
+
+    if interaction.string_hits:
+        for record in interaction.string_hits:
+            if record.hit_index != target_hit:
+                continue
+            # Cross-reference the per-hit height (05 §3.2). A miss on the per-hit index degrades to
+            # no flag rather than raising.
+            hit = (
+                move.hits[record.hit_index - 1] if 1 <= record.hit_index <= len(move.hits) else None
+            )
+            stood_on_high = (
+                record.defender_reaction == DefenderReaction.blocked
+                and not record.defender_crouching
+                and hit is not None
+                and hit.hit_level == MoveProperty.high
+            )
+            return (target_hit, answer) if stood_on_high else (None, None)
+        return None, None  # the curated hit is not in the per-hit record → no flag
+
+    # No per-hit array (old log / single-reaction interaction): fall back to the approximation.
+    if interaction.defender_reaction == DefenderReaction.blocked:
+        return target_hit, answer
     return None, None
 
 

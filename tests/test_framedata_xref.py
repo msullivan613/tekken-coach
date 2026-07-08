@@ -39,8 +39,11 @@ from tekken_coach.schemas import (
     MoveProperty,
     Outcome,
     StringGap,
+    StringHitRecord,
 )
+from tekken_coach.segment import segment_frames
 from tests.factories import make_interaction
+from tests.fixtures.segment import streams
 
 REPO_ROOT = Path(__file__).parent.parent
 ASSETS = REPO_ROOT / "assets"
@@ -209,6 +212,73 @@ def test_ducked_high_is_not_flagged() -> None:
     assert "standing_duckable_high" not in labeled.labels.knowledge_check_ids
 
 
+def _hit(index: int, reaction: DefenderReaction, *, crouch: bool) -> StringHitRecord:
+    return StringHitRecord(hit_index=index, defender_reaction=reaction, defender_crouching=crouch)
+
+
+def test_segmenter_string_to_xref_flags_duckable_high_end_to_end() -> None:
+    """End-to-end: the real segmenter `string_blocked_standing` output (a mid→high→mid string
+    blocked standing, three per-hit records) retargeted to Paul → xref reads the per-hit record and
+    flags duckable_high_hit=2. Proves the C3b record wires through the pipeline, not just a unit."""
+    (seg_itx,) = segment_frames(streams.string_blocked_standing(), match_id="e2e#1")
+    # Entry move 100 == Paul df+1,1,2 in the fixture move map; retarget the char ids to Paul.
+    itx = seg_itx.model_copy(update={"attacker_char_id": PAUL_ID, "defender_char_id": KAZUYA_ID})
+    assert [(h.hit_index, h.defender_crouching) for h in itx.string_hits] == [
+        (1, False),
+        (2, False),
+        (3, False),
+    ]
+    labeled = _label(itx)
+    assert labeled.labels.duckable_high_hit == 2
+    assert "standing_duckable_high" in labeled.labels.knowledge_check_ids
+
+
+def test_duckable_high_from_per_hit_record_flags_blocked_standing() -> None:
+    """C3b: the per-hit record drives an exact call. Paul df+1,1,2 (mid→high→mid) with hit 2 (the
+    high) blocked STANDING → duckable_high_hit set, cross-referenced against per-hit hit_level."""
+    itx = _paul_attacks(
+        100,
+        defender_reaction=DefenderReaction.blocked,
+        string_hits=[
+            _hit(1, DefenderReaction.blocked, crouch=False),
+            _hit(2, DefenderReaction.blocked, crouch=False),
+            _hit(3, DefenderReaction.blocked, crouch=False),
+        ],
+    )
+    labeled = _label(itx)
+    assert labeled.labels.duckable_high_hit == 2
+    assert labeled.labels.duck_punish == "df+1 (i13)"
+    assert "standing_duckable_high" in labeled.labels.knowledge_check_ids
+
+
+def test_duckable_high_not_flagged_when_high_was_ducked() -> None:
+    """C3b: the same string, but hit 2 (the high) was ducked (evaded, crouching) → no flag, even
+    though the overall reaction is `blocked` (hit 1). The per-hit record OVERRIDES the fallback,
+    which would have flagged on `defender_reaction == blocked`."""
+    itx = _paul_attacks(
+        100,
+        defender_reaction=DefenderReaction.blocked,
+        string_hits=[
+            _hit(1, DefenderReaction.blocked, crouch=True),
+            _hit(2, DefenderReaction.evaded, crouch=True),
+        ],
+    )
+    labeled = _label(itx)
+    assert labeled.labels.duckable_high_hit is None
+    assert labeled.labels.duck_punish is None
+    assert "standing_duckable_high" not in labeled.labels.knowledge_check_ids
+
+
+def test_duckable_high_fallback_used_when_no_per_hit_record() -> None:
+    """C3b: a pre-1.2.0 log (no string_hits) still resolves via the retained approximation —
+    `defender_reaction == blocked` on a duck_punish string → flag."""
+    itx = _paul_attacks(100, defender_reaction=DefenderReaction.blocked)  # string_hits defaults []
+    assert itx.string_hits == []
+    labeled = _label(itx)
+    assert labeled.labels.duckable_high_hit == 2  # fallback path
+    assert "standing_duckable_high" in labeled.labels.knowledge_check_ids
+
+
 def test_string_gap_is_timing_not_height() -> None:
     """The curated interruptible gap surfaces as string_gap, independent of the duck check."""
     itx = _paul_attacks(101, defender_reaction=DefenderReaction.blocked)
@@ -283,9 +353,7 @@ def test_reconcile_disagreement_keeps_observed_and_notes() -> None:
 
 
 def test_reconcile_null_observed_uses_canonical_only() -> None:
-    itx = _kazuya_attacks(
-        2145, defender_reaction=DefenderReaction.blocked, observed_advantage=None
-    )
+    itx = _kazuya_attacks(2145, defender_reaction=DefenderReaction.blocked, observed_advantage=None)
     labeled = _label(itx)
     assert labeled.labels.on_block == -12
     assert not any("disagrees" in n for n in labeled.notes)
