@@ -1,12 +1,18 @@
 """Read-only Tekken 8 memory reader — offline core (docs/02). Chunk C4a.
 
 Turns Tekken 8 process memory into ``FrameRecord``s (docs/03 §1) behind a read-only
-:class:`~tekken_coach.reader.memory_source.MemorySource` seam. This is the environment-independent
-half: the seam + fake source, the ``assets/offsets/`` format and typed loader, version detection
+:class:`~tekken_coach.reader.memory_source.MemorySource` seam. The C4a half is the
+environment-independent core: the seam + fake source, the ``assets/offsets/`` format and loader,
+version selection
 with fail-closed behavior, the raw-bytes -> ``FrameRecord`` decoder, the doctor self-check, and the
-structured failure/state signals. The concrete Windows ``ReadProcessMemory`` backend and the
-``update-offsets`` re-discovery tool are **C4b** (they need the game and a Windows box) and plug in
-behind the same seam.
+structured failure/state signals. **C4b** adds the OS-facing half — the concrete Windows
+:class:`~tekken_coach.reader.win_source.WinMemorySource` (pymem-backed, read+query handle only),
+live version detection, and the ``capture``/``doctor``/``smoke`` command entry points — all behind
+the same seam. The ``update-offsets`` re-discovery tool is **C4c**.
+
+pymem is an optional (``windows`` extra) dependency: it is imported lazily, so this package imports
+and the offline suite runs with pymem absent (docs/02 §3 posture); only *constructing* a
+:class:`~tekken_coach.reader.win_source.WinMemorySource` needs it.
 
 Read-only, by construction (docs/02 §2, §5)
 -------------------------------------------
@@ -27,6 +33,14 @@ Licensing posture (docs/02 §5) — not legal advice
   *technique* (an idea, not protected) — it does not copy the fork's ``update_memory_address.py``.
 """
 
+from tekken_coach.reader.capture import (
+    CaptureFile,
+    CaptureMeta,
+    capture_from_reads,
+    load_capture,
+    run_capture,
+    write_capture,
+)
 from tekken_coach.reader.decode import (
     FrameRead,
     FrameReader,
@@ -53,9 +67,18 @@ from tekken_coach.reader.offsets import (
     select_offset_table,
 )
 from tekken_coach.reader.state import SignalKind, StateSignal, classify_state
+from tekken_coach.reader.version import (
+    detect_running_version,
+    normalize_version,
+    version_from_dwords,
+)
+from tekken_coach.reader.win_source import GAME_PROCESS_NAME, WinMemorySource, map_pymem_error
 
 __all__ = [
+    "GAME_PROCESS_NAME",
     "PATCH_RUNBOOK",
+    "CaptureFile",
+    "CaptureMeta",
     "DoctorCheck",
     "DoctorReport",
     "FakeMemorySource",
@@ -73,12 +96,21 @@ __all__ = [
     "SignalKind",
     "StateSignal",
     "UnknownGameVersionError",
+    "WinMemorySource",
+    "capture_from_reads",
     "classify_fault",
     "classify_state",
     "decode_frame",
+    "detect_running_version",
+    "load_capture",
     "load_offset_index",
+    "map_pymem_error",
+    "normalize_version",
     "poll_frames",
     "read_state_signal",
+    "run_capture",
     "run_doctor",
     "select_offset_table",
+    "version_from_dwords",
+    "write_capture",
 ]

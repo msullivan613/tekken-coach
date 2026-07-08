@@ -20,6 +20,12 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+# Windows-only capture backend (C4b). pymem is not a base dependency: the offline pipeline
+# installs and tests without it (it is Windows-only and may not even install elsewhere). Install
+# on a Windows machine with `pip install tekken-coach[windows]` to run smoke/doctor/capture.
+windows = [
+    "pymem>=1.13; sys_platform == 'win32'",
+]
 
 [project.scripts]
 tekken-coach = "tekken_coach.cli:main"
@@ -56,6 +62,13 @@ files = ["src", "tests"]
 init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
+
+# pymem is the optional Windows-only capture backend (C4b). It ships no type stubs and is not
+# installed in the offline/Linux environment, so mypy cannot resolve it there. The reader treats
+# pymem's surface as untyped and normalizes its exceptions at the WinMemorySource seam.
+[[tool.mypy.overrides]]
+module = "pymem.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
