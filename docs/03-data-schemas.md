@@ -102,6 +102,7 @@ A discrete, bounded exchange with an attacker, a defender, an outcome, and follo
     "result": "none",              // none | whiffed | hit | blocked | got_counter_hit | traded
     "reaction_frames": null        // frames until defender acted, if they acted
   },
+  "string_hits": [],               // per-hit block/duck record for multi-hit strings (04 §4.2). [] for single-hit; for a string, one record per hit: {hit_index (1-based), defender_reaction (blocked|hit|evaded), defender_crouching (bool)}. Lets xref cross per-hit hit_level (05 §3.2) to flag a duckable high blocked STANDING (06 §4.1). Added in schema 1.2.0, additive.
   "notes": []                      // segmenter diagnostics (e.g. "gap-tolerated:2 dropped frames")
 }
 ```
@@ -109,7 +110,8 @@ A discrete, bounded exchange with an attacker, a defender, an outcome, and follo
 ### `defender_reaction` enum
 `blocked` · `hit` · `counter_hit` · `whiff_punished` (defender blocked/evaded then hit back) ·
 `evaded` (sidestep/backdash made it whiff) · `parried` · `thrown` · `throw_broke` ·
-`traded` · `interrupted` (defender's own move beat it)
+`traded` · `interrupted` (defender's own move beat it) · `stagger` (a forced stagger — its own
+reaction, distinct from block/hit; see [04](04-segmenter.md) §4.1. Added in schema 1.2.0, additive.)
 
 ### `outcome` enum (from the *user's* coaching perspective, filled after we know which side is the user)
 `no_punish` (punishable, defender did nothing) · `punished` · `bad_punish` (punished but suboptimal) ·
