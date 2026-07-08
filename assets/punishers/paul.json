@@ -1,0 +1,37 @@
+{
+  "char_id": null,
+  "char_name": "Paul",
+  "punishers": [
+    {
+      "startup": 10,
+      "notation": "1,2",
+      "stance": "standing",
+      "launcher": false,
+      "damage": 17,
+      "notes": "Standard i10 jab-string block punish."
+    },
+    {
+      "startup": 12,
+      "notation": "b+1",
+      "stance": "standing",
+      "launcher": false,
+      "damage": 10
+    },
+    {
+      "startup": 15,
+      "notation": "df+2",
+      "stance": "standing",
+      "launcher": true,
+      "damage": 13,
+      "notes": "Kurenai; i15 mid launcher, the go-to 15f punish for a full combo."
+    },
+    {
+      "startup": 20,
+      "notation": "db+1+2",
+      "stance": "while_standing",
+      "launcher": true,
+      "damage": 21,
+      "notes": "Chain Breaker; used to punish blocked lows on reaction."
+    }
+  ]
+}

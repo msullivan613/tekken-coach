@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from tekken_coach.schemas import MoveProperty
+from tekken_coach.schemas import MoveProperty, StringGap
 
 # ---------------------------------------------------------------------------
 # Move map (assets/movemap/), docs/05 §2.2
@@ -117,6 +117,23 @@ class DuckPunish(BaseModel):
     answer: str  # recommended punish after ducking, e.g. "df+1 (i13)"
 
 
+class StringGapInfo(BaseModel):
+    """A hand-curated string-gap (timing) annotation for a string (docs/05 §3.2, §4.1).
+
+    Distinct from :class:`DuckPunish`, which is a *height* check. This is the *timing* gap
+    between two hits of a string: whether the string jails (``true``), leaves an interruptible
+    gap (``interruptible``), or a duckable window (``duckable``), and how large the gap is.
+
+    Not derivable from the snapshot CSV — the CSV has no per-hit on-block frames, only per-hit
+    startup (docs/05 §4.1, gap #3). It is hand-curated against okizeme.gg / Wavu the same way
+    ``duck_punish`` is; absent (``None`` on the move) => ``string_gap`` stays null, a safe miss.
+    """
+
+    after_hit: int  # the gap sits after hit ``after_hit`` (1-based hit index)
+    gap: StringGap  # duckable | interruptible | true (docs/03 §3 labels.string_gap)
+    gap_size: int | None = None  # frames of the gap, if known (docs/03 §3 labels.gap_size)
+
+
 class HeatOverride(BaseModel):
     """Heat-state overrides where a move differs in Heat (docs/05 §3.2, §04 §4.6).
 
@@ -163,7 +180,8 @@ class FrameDataMove(BaseModel):
     notes: str | None = None  # CSV Notes (may contain newlines)
 
     hits: list[Hit] = Field(default_factory=list)  # per-hit sequence; strings only (docs/05 §3.2)
-    duck_punish: DuckPunish | None = None  # curated; not from the CSV (docs/05 §3.2)
+    duck_punish: DuckPunish | None = None  # curated height check; not from the CSV (docs/05 §3.2)
+    string_gap: StringGapInfo | None = None  # curated timing gap; not from the CSV (docs/05 §4.1)
     heat: HeatOverride | None = None  # curated Heat overrides; not from the base CSV
 
 

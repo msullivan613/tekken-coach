@@ -301,6 +301,11 @@
         }
       ],
       "duck_punish": null,
+      "string_gap": {
+        "after_hit": 1,
+        "gap": "true",
+        "gap_size": 0
+      },
       "heat": null
     },
     "1,2,3": {
@@ -737,6 +742,11 @@
         }
       ],
       "duck_punish": null,
+      "string_gap": {
+        "after_hit": 1,
+        "gap": "interruptible",
+        "gap_size": 1
+      },
       "heat": null
     },
     "f+3,2": {

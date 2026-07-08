@@ -227,6 +227,14 @@ class Interaction(BaseModel):
     attacker: int  # player index who initiated
     defender: int  # the other player
     attacker_move_id: int
+    # Character identity (03 §2 additive, schema minor bump). The merged Interaction carried only
+    # move ids; the xref (05 §4) needs both characters — the attacker's to resolve the move, the
+    # defender's to pick the punisher profile. Populated by the segmenter (C3) from
+    # PlayerFrame.char_id. Optional (default None) so the addition is a genuine additive-minor
+    # change: an older log that omits them still loads, and an unseeded/unknown id degrades to
+    # frame_data_matched:false rather than raising (03 §6, 05 §4.1).
+    attacker_char_id: int | None = None
+    defender_char_id: int | None = None
     context: InteractionContext
     defender_reaction: DefenderReaction
     observed_advantage: int | None = None  # int frames; negative = attacker punishable; null if N/A

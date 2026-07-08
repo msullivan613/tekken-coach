@@ -72,6 +72,8 @@ def make_interaction() -> Interaction:
         attacker=1,
         defender=0,
         attacker_move_id=2145,
+        attacker_char_id=12,
+        defender_char_id=7,
         context=InteractionContext(
             distance=1.6,
             attacker_heat=True,
@@ -118,7 +120,7 @@ def make_labeled_interaction() -> LabeledInteraction:
     )
 
 
-def make_header(schema_version: str = "1.0.0") -> SessionHeader:
+def make_header(schema_version: str = "1.1.0") -> SessionHeader:
     return SessionHeader(
         schema_version=schema_version,
         created_at="2026-07-07T20:14:03Z",

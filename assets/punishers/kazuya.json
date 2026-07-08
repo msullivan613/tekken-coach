@@ -1,0 +1,45 @@
+{
+  "char_id": 12,
+  "char_name": "Kazuya",
+  "punishers": [
+    {
+      "startup": 10,
+      "notation": "1,1",
+      "stance": "standing",
+      "launcher": false,
+      "damage": 13,
+      "notes": "Standard i10 jab-string block punish."
+    },
+    {
+      "startup": 13,
+      "notation": "df+1,2",
+      "stance": "standing",
+      "launcher": false,
+      "damage": 20
+    },
+    {
+      "startup": 14,
+      "notation": "df+2",
+      "stance": "standing",
+      "launcher": true,
+      "damage": 13,
+      "notes": "i14 high-crushing mid; launches for a full combo. The go-to 14f punish."
+    },
+    {
+      "startup": 16,
+      "notation": "f,F+2",
+      "stance": "standing",
+      "launcher": true,
+      "damage": 30,
+      "notes": "CD.2 wavedash launcher; strongest 15+ block punish."
+    },
+    {
+      "startup": 16,
+      "notation": "ws2",
+      "stance": "while_standing",
+      "launcher": true,
+      "damage": 20,
+      "notes": "While-standing launcher for punishing blocked lows from crouch."
+    }
+  ]
+}
