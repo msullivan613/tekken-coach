@@ -63,7 +63,14 @@ class CounterState(StrEnum):
 
 
 class DefenderReaction(StrEnum):
-    """Interaction.defender_reaction (03 §2)."""
+    """Interaction.defender_reaction (03 §2).
+
+    ``stagger`` extends the docs/03 §2 enum list for the docs/04 §4.1 edge case: a stagger is
+    "its own reaction," distinct from block/hit (blocked a mid that forces a stagger, or ate a
+    stagger-on-normal-hit). Added under the 1.2.0 additive-minor bump alongside ``string_hits``;
+    older logs never emit it, so it is backward-compatible within the major (03 §6). See the C3b
+    report note on the docs/03 enum discrepancy.
+    """
 
     blocked = "blocked"
     hit = "hit"
@@ -75,6 +82,7 @@ class DefenderReaction(StrEnum):
     throw_broke = "throw_broke"
     traded = "traded"
     interrupted = "interrupted"  # defender's own move beat it
+    stagger = "stagger"  # forced stagger (docs/04 §4.1); extends the docs/03 §2 list
 
 
 class Outcome(StrEnum):
@@ -216,6 +224,25 @@ class FollowUp(BaseModel):
     reaction_frames: int | None = None  # frames until defender acted, if they acted
 
 
+class StringHitRecord(BaseModel):
+    """One hit of a multi-hit string, per-hit (docs/04 §4.2).
+
+    Additive per-hit annotation that resolves the C2 duckable-high gap: the merged Interaction
+    (03 §2) carried a single ``defender_reaction``, so the xref could only approximate "blocked a
+    high standing" as a whole-string block. This array pins the exact hit — its per-hit reaction
+    and the defender's standing-vs-crouching posture on that hit — so the xref (05 §4.1) can cross
+    it with per-hit ``hit_level`` (05 §3.2) and fire ``standing_duckable_high`` (06 §4.1) precisely.
+
+    The "hit index at which the defender's state changed" (04 §4.2) is *derivable* from the array
+    (the first hit whose ``defender_reaction``/``defender_crouching`` differs), so it is not stored
+    separately. Populated only for strings (>= 2 hits); ``[]`` for single-hit interactions.
+    """
+
+    hit_index: int  # 1-based hit within the string
+    defender_reaction: DefenderReaction  # per-hit: blocked | hit | evaded
+    defender_crouching: bool  # was the defender crouching (ducking) on this hit
+
+
 class Interaction(BaseModel):
     """A discrete, bounded exchange with an attacker, defender, outcome, follow-up (03 §2)."""
 
@@ -240,6 +267,11 @@ class Interaction(BaseModel):
     observed_advantage: int | None = None  # int frames; negative = attacker punishable; null if N/A
     outcome: Outcome
     follow_up: FollowUp
+    # Per-hit block/duck record for multi-hit strings (docs/04 §4.2). Additive minor (03 §6):
+    # Optional-with-default so a pre-1.2.0 log (no per-hit array) still loads and the xref falls
+    # back to the single-``defender_reaction`` approximation (05 §4.1). Empty for single-hit
+    # interactions; populated (>= 2 records) only for strings.
+    string_hits: list[StringHitRecord] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)  # segmenter diagnostics
 
 

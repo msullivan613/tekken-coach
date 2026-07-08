@@ -4,10 +4,10 @@
     "match_id": "test-match#1",
     "round": 1,
     "start_frame": 103,
-    "end_frame": 136,
+    "end_frame": 130,
     "attacker": 0,
     "defender": 1,
-    "attacker_move_id": 800,
+    "attacker_move_id": 100,
     "attacker_char_id": 12,
     "defender_char_id": 7,
     "context": {
@@ -19,14 +19,25 @@
       "defender_health_frac": 1.0
     },
     "defender_reaction": "blocked",
-    "observed_advantage": -13,
+    "observed_advantage": -18,
     "outcome": "punished",
     "follow_up": {
-      "move_id": 900,
+      "move_id": 966,
       "result": "hit",
-      "reaction_frames": 3
+      "reaction_frames": 8
     },
-    "string_hits": [],
+    "string_hits": [
+      {
+        "hit_index": 1,
+        "defender_reaction": "blocked",
+        "defender_crouching": true
+      },
+      {
+        "hit_index": 2,
+        "defender_reaction": "evaded",
+        "defender_crouching": true
+      }
+    ],
     "notes": []
   }
 ]

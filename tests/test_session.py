@@ -124,6 +124,27 @@ def test_malformed_version_rejected() -> None:
         check_compatibility("not-a-version")
 
 
+def test_pre_1_2_0_log_loads_under_current_schema(tmp_path: Path) -> None:
+    """C3b compat gate (03 §6): a 1.1.0-header log — written before `string_hits` existed and so
+    omitting it on every body line — still loads under 1.2.0, and the new field defaults to []."""
+    path = tmp_path / "v110.jsonl"
+    header_raw = json.loads(make_header(schema_version="1.1.0").model_dump_json())
+
+    interaction = make_labeled_interaction()
+    body_raw = json.loads(interaction.model_dump_json())
+    del body_raw["string_hits"]  # a 1.1.0 writer never emitted this additive field
+    assert "string_hits" not in body_raw
+
+    path.write_text(json.dumps(header_raw) + "\n" + json.dumps(body_raw) + "\n", encoding="utf-8")
+
+    loaded = load_session(path)
+    assert loaded.header.schema_version == "1.1.0"  # tolerated: same major
+    (loaded_itx,) = loaded.interactions
+    assert loaded_itx.string_hits == []  # additive field defaults cleanly
+    # The rest of the record is unchanged from the 1.1.0 original.
+    assert loaded_itx == interaction
+
+
 def test_default_header_uses_current_schema_version() -> None:
     header = SessionHeader(
         schema_version=SCHEMA_VERSION,

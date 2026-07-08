@@ -20,7 +20,9 @@ from tekken_coach.schemas import LabeledInteraction, SessionHeader
 
 # The schema version this build emits. Semver: MAJOR = breaking, MINOR = additive (03 §6).
 # 1.1.0: additive — Interaction gained attacker_char_id / defender_char_id (03 §2, C2/05 §4).
-SCHEMA_VERSION = "1.1.0"
+# 1.2.0: additive — Interaction gained string_hits (per-hit block/duck record, 04 §4.2) and
+#        DefenderReaction gained `stagger` (04 §4.1); both C3b. A 1.1.0 log still loads (03 §6).
+SCHEMA_VERSION = "1.2.0"
 
 
 def _major(version: str) -> int:

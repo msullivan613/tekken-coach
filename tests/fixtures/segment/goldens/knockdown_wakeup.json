@@ -4,10 +4,10 @@
     "match_id": "test-match#1",
     "round": 1,
     "start_frame": 103,
-    "end_frame": 145,
+    "end_frame": 154,
     "attacker": 0,
     "defender": 1,
-    "attacker_move_id": 810,
+    "attacker_move_id": 820,
     "attacker_char_id": 12,
     "defender_char_id": 7,
     "context": {
@@ -19,7 +19,7 @@
       "defender_health_frac": 1.0
     },
     "defender_reaction": "hit",
-    "observed_advantage": 8,
+    "observed_advantage": 20,
     "outcome": "neutral",
     "follow_up": {
       "move_id": null,
