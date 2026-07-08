@@ -72,9 +72,14 @@ same way it detects match-active state). The API integration is a documented v1.
 
 ### 4.3 Playback detection
 The reader distinguishes *live match* from *replay playback* by the game's mode/state flags in
-memory (the same round/match-state fields it already reads — [03](03-data-schemas.md)). In clean
-mode the reader **only** buffers when the state indicates offline replay playback, and refuses to
-buffer if it detects an online match state (defense in depth against misconfiguration).
+memory. Note this needs **more than** the persisted `FrameRecord.match_state` ([03](03-data-schemas.md)
+§1), which is *phase only* (pre_round / in_round / … ) and cannot tell online from offline. Online
+vs offline (and replay vs live) is a **separate `game_mode` read** the reader surfaces as a
+**side signal, not a persisted field** — the reader classifies each frame as live-match /
+replay-playback / idle plus an `online` flag. In clean mode the reader **only** buffers when that
+signal indicates offline replay playback, and refuses to buffer if it detects an online match state
+(defense in depth against misconfiguration). **C6 gates the online-refusal on that reader signal,
+not on `match_state`.**
 
 ## 5. Shared requirements
 
