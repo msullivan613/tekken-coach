@@ -164,7 +164,6 @@ def normalize_row(row: dict[str, str]) -> FrameDataMove | None:
         startup=parse_frames(first_startup) if first_startup else None,
         startup_raw=first_startup or None,
         on_block=parse_frames(block_raw) if block_raw else None,
-        block_frames=parse_frames(block_raw) if block_raw else None,
         block_raw=block_raw,
         on_hit=hit_raw,
         on_ch=ch_raw,

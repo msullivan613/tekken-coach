@@ -84,7 +84,6 @@ def test_single_move_scalar_fields() -> None:
     assert df2.hit_level_raw == "m"
     assert df2.startup == 14
     assert df2.on_block == -12
-    assert df2.block_frames == -12
     assert df2.on_hit == "+5"
     assert df2.on_ch == "+59a"  # launch marker kept as a string (docs/05 §3.2)
     assert df2.damage == 22

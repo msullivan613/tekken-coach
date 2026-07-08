@@ -149,7 +149,6 @@ class FrameDataMove(BaseModel):
     startup: int | None = None  # first-hit startup (lower bound of any range)
     startup_raw: str | None = None
     on_block: int | None = None  # ground-truth on-block advantage (docs/03 §3 labels.on_block)
-    block_frames: int | None = None  # docs/05 §3.2 lists this alongside on_block; same value
     block_raw: str | None = None  # raw CSV Block frame cell (may carry an annotation)
     on_hit: str | None = None  # raw CSV Hit frame cell (int-or-launch-marker)
     on_ch: str | None = None  # raw CSV Counter hit frame cell

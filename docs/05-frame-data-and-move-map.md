@@ -132,12 +132,11 @@ assets/framedata/
 // per move
 {
   "key": "df+2",
-  "startup": 15,
-  "on_block": -13,
-  "on_hit": 45,          // or a launch marker
-  "on_ch": "+launch",
-  "block_frames": -13,
-  "hit_level": "mid",     // high | mid | low | throw | unblockable
+  "startup": 15,          // parsed lower-bound int; the raw token (e.g. "i15~16") is kept in startup_raw
+  "on_block": -13,        // canonical on-block advantage — the CSV "Block frame" column
+  "on_hit": "+45",        // stored as a raw string: carries launch/knockdown markers, e.g. "+32a (+24)"
+  "on_ch": "+launch",     // raw string, same reason (a clean leading int is still parseable)
+  "hit_level": "mid",     // best-effort MoveProperty (high|mid|low|throw|unblockable); raw token in hit_level_raw
   "properties": ["homing", "heat_engager"],
   "recovery": 30,
   "notes": "…",
@@ -151,14 +150,38 @@ punish, a `duck_punish` marker:
 // per string, e.g. Paul "df+1,1,2" (mid → high → mid)
 {
   "key": "df+1,1,2",
-  "hits": [ { "hit_level": "mid" }, { "hit_level": "high" }, { "hit_level": "mid" } ],
+  "startup": 14,
+  "hits": [
+    { "hit_level": "mid",  "startup": 14 },
+    { "hit_level": "high", "startup": null },   // the CSV occasionally omits a per-hit startup
+    { "hit_level": "mid",  "startup": 22 }
+  ],
   "duck_punish": { "after_hit": 2, "answer": "df+1 (i13)" }  // duck the high (hit 2), punish before hit 3
 }
 ```
 `hits[].hit_level` is populated directly from the primary CSV's `Hit level` column, split on
-commas (§3.1). `duck_punish.answer` is **not** in the CSV — it is derived (a high mid-string that
+commas (§3.1); `hits[].startup` comes from the per-hit `Start up frame` column and is what §4.1
+uses to compute string gaps (so a string carries per-hit startup, not just per-hit level).
+`duck_punish.answer` is **not** in the CSV — it is derived (a high mid-string that
 whiffs on crouch, leaving a punish window) and hand-curated against okizeme.gg (§3.1) for the
 scoped matchups; absent ⇒ no `standing_duckable_high` flag, which is a safe miss ([§4.1](#41-core-computations)).
+
+**Normalization notes (how the loader shapes the CSV into the above).**
+- **`hit_level` is a best-effort enum with a raw passthrough.** The CSV vocabulary is richer than
+  the five-value set (`m!`, `sm`, `sl`, `sp`, `th(h)`, `*`/`!` power/break markers, case variants).
+  Recognizable heights map to `MoveProperty`; anything without a clean height mapping is `null`, and
+  the exact source token is always preserved in `hit_level_raw` (per-hit: `hits[].hit_level_raw`).
+  `hit_level_raw` is authoritative for edge tokens; the enum mappings can be refined during curation.
+- **Frame cells that carry annotations keep a `*_raw`.** `startup`/`startup_raw`,
+  `on_block`/`block_raw`, `recovery`/`recovery_raw`: the parsed leading integer is exposed where it
+  is clean, and the raw cell (`"i15~16"`, `"-13~-8"`, `"r31"`, a stance code) is preserved beside it.
+  `on_hit`/`on_ch` are stored **only** as raw strings because they routinely carry launch markers.
+- **`on_block` is the single block-advantage field** (sourced from the CSV `Block frame` column);
+  there is no separate `block_frames` — an earlier draft listed both with identical values, which was
+  redundant and is removed here. `labels.on_block` ([03](03-data-schemas.md) §3) reads this field.
+- **`current` is a symlink where the filesystem supports one** (`current -> snapshot-<date>/`), with
+  a **plain-text pointer file** (contents = the snapshot dir name) as the fallback on filesystems
+  without symlinks (notably Windows without privilege); the loader and `promote` step read both forms.
 
 ### 3.3 Ingest tooling
 A `fetch-framedata` command:
