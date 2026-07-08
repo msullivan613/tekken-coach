@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "Probe manifest (docs/02 §4): the editable knob that drives `update-offsets` offset",
+    "re-discovery. It describes what is provably TRUE at the fixed calibration setup — practice",
+    "mode, P1 Jin vs P2 Kazuya, round start — so calibration after a patch is a DATA EDIT here,",
+    "not a source change. Everything here is FACTS/DATA (known values, plausibility bounds, scan",
+    "windows), not copyrightable expression (docs/02 §5). Extra keys like this comment are ignored.",
+    "",
+    "The scan windows are module-relative placeholders aligned to the C4a placeholder table; they",
+    "WILL need calibration on the real build (widen/relocate, or set `absolute` and point at an",
+    "address you located — player structs behind a pointer chain are not reachable by a",
+    "module-relative window). See the runbook printed by `update-offsets`."
+  ],
+  "module": "Polaris-Win64-Shipping.exe",
+  "notes": "Default manifest — calibrate scan windows on the real build (docs/02 §4).",
+
+  "kazuya_char_id": 12,
+  "round_start_health": 150,
+
+  "char_id_min": 0,
+  "char_id_max": 200,
+  "move_id_min": 0,
+  "move_id_max": 60000,
+  "stride_min": 256,
+  "stride_max": 262144,
+  "pos_abs_max": 1000000.0,
+  "pos_abs_min": 0.001,
+  "frame_delta_max": 100000,
+
+  "moving_player": 0,
+  "scan_align": 4,
+
+  "global_window": { "base_offset": 0, "size": 4096, "absolute": false },
+  "player_window": { "base_offset": 4096, "size": 65536, "absolute": false },
+
+  "char_id_kind": "u32",
+  "health_kind": "i32",
+  "move_id_kind": "u32",
+  "pos_kind": "f32",
+  "frame_counter_kind": "u32"
+}

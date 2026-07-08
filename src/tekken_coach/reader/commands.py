@@ -9,6 +9,8 @@ live game today:
 * ``doctor``  — attach, detect version, select the offset table, run the §6 self-check, print the
   report (and the §4 runbook on failure).
 * ``capture`` — attach, detect version, poll ``N`` frames, write a FrameRecord JSON fixture.
+* ``update-offsets`` — attach, re-discover offsets at the Jin-vs-Kazuya setup, and write a
+  candidate ``assets/offsets/<version>.json`` + diagnostic report (C4c, docs/02 §4).
 
 Silent-producer boundary (docs/02 §2): the reader *library* prints nothing; **this command layer**
 does. All rendering lives here, not in ``decode``/``doctor``/``faults``. ``doctor``/``capture`` only
@@ -130,6 +132,34 @@ def capture_main(args: argparse.Namespace) -> int:
     return 0
 
 
+def update_offsets_main(args: argparse.Namespace) -> int:
+    """Attach read-only, re-discover offsets at the Jin-vs-Kazuya setup, write a candidate table.
+
+    C4c clean-room re-discovery (docs/02 §4/§5). Prints the diagnostic report either way; returns
+    nonzero when the confident core did not resolve (the report then says which anchors to widen).
+    """
+    from tekken_coach.reader.discovery.orchestrate import run_update_offsets  # noqa: PLC0415
+
+    def act_prompt(message: str) -> None:
+        input("\n" + message + "\n")
+
+    try:
+        table, report = run_update_offsets(
+            args.process,
+            offsets_dir=args.offsets,
+            manifest_path=args.manifest,
+            version_override=args.version,
+            act_prompt=act_prompt,
+        )
+    except ReaderError as exc:
+        return _report_fault(exc)
+
+    print("\n" + report.render())
+    if table is None:
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m tekken_coach.reader.commands",
@@ -155,6 +185,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_capture.add_argument("--count", type=int, default=300, help="number of frames to poll")
     p_capture.add_argument("--out", required=True, help="output JSON fixture path")
     p_capture.set_defaults(func=capture_main)
+
+    p_update = sub.add_parser(
+        "update-offsets", help="re-discover offsets at the Jin-vs-Kazuya setup (C4c)"
+    )
+    p_update.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR)
+    p_update.add_argument(
+        "--manifest", default="assets/offsets/probe-manifest.json", help="probe manifest path"
+    )
+    p_update.add_argument("--version", default=None, help="override detected version")
+    p_update.set_defaults(func=update_offsets_main)
 
     return parser
 

@@ -30,7 +30,7 @@ Cross-check / upstream authority (not vendored):
 --------------------------------------------------------------------------------
 Layout root     : https://github.com/WAZAAAAA0/TekkenBot   (MIT License, (c) 2017 roguelike2d)
 T8 fork (ref)   : https://github.com/dcep93/TekkenBot       (no LICENSE file -> all rights reserved)
-Used in         : src/tekken_coach/reader/  and  assets/offsets/
+Used in         : src/tekken_coach/reader/ (incl. reader/discovery/)  and  assets/offsets/
 
 Posture (docs/02 §5 — engineering-practical guidance, not legal advice):
 
@@ -46,9 +46,12 @@ Posture (docs/02 §5 — engineering-practical guidance, not legal advice):
   - The dcep93 fork has NO LICENSE file (confirmed 404) -> its net-new *source* is "all rights
     reserved" and is NOT copied, vendored, or adapted here. Only layout *facts* are used.
 
-  - `update-offsets` (C4b) is a CLEAN-ROOM re-implementation of the Jin-vs-Kazuya practice-mode
-    re-discovery *technique* (an idea/method, not protected). It does NOT copy the fork's
-    `update_memory_address.py` text.
+  - `update-offsets` (C4c, src/tekken_coach/reader/discovery/) is a CLEAN-ROOM re-implementation of
+    the Jin-vs-Kazuya practice-mode re-discovery *technique* (an idea/method, not protected). It
+    does NOT read, copy, or paraphrase the fork's `update_memory_address.py` text; the scanners,
+    correlation/derivation, and offset-table builder are original code. The offsets/addresses/AOB
+    signatures it produces are facts/data (used freely); the probe manifest describes what is true
+    at the calibration setup and is likewise data.
 
   - READ-ONLY BY CONSTRUCTION: the entire bot / input-injection half of the ancestral TekkenBot is
     removed from the port, not merely unused. No memory-write or input-synthesis primitive exists

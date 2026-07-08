@@ -29,8 +29,9 @@ Licensing posture (docs/02 §5) — not legal advice
   *knowledge* surfaced by the MIT-root ``WAZAAAAA0/TekkenBot`` (© roguelike2d, 2017); credited in
   ``NOTICE`` / ``THIRD_PARTY_LICENSES``. No net-new source of the unlicensed ``dcep93`` fork is
   copied.
-* ``update-offsets`` (C4b) is a **clean-room** re-implementation of the Jin-vs-Kazuya re-discovery
-  *technique* (an idea, not protected) — it does not copy the fork's ``update_memory_address.py``.
+* ``update-offsets`` (C4c, :mod:`tekken_coach.reader.discovery`) is a **clean-room**
+  re-implementation of the Jin-vs-Kazuya re-discovery *technique* (an idea, not protected) — it does
+  not read or copy the fork's ``update_memory_address.py``.
 """
 
 from tekken_coach.reader.capture import (

@@ -30,8 +30,10 @@ THIRD_PARTY_LICENSES (MIT is irrevocable for the code it covered).
 
   - Offsets, addresses, and AOB signatures are FACTS/DATA, not code: they live under
     `assets/offsets/` as versioned tables, never hard-coded in source.
-  - The `update-offsets` re-discovery command (C4b) is a CLEAN-ROOM re-implementation of the
-    Jin-vs-Kazuya practice-mode technique; it does not copy the dcep93 fork's script.
+  - The `update-offsets` re-discovery command (C4c, src/tekken_coach/reader/discovery/) is a
+    CLEAN-ROOM re-implementation of the Jin-vs-Kazuya practice-mode technique (open Jin vs Kazuya,
+    scan to re-derive addresses — an unprotected idea); it does not read, copy, or paraphrase the
+    dcep93 fork's `update_memory_address.py`.
   - The reader is READ-ONLY by construction: no memory-write or input-injection primitive exists
     anywhere in the package (the bot/input half of the ancestral TekkenBot is not ported).
 
