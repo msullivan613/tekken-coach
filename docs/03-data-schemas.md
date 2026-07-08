@@ -136,10 +136,10 @@ shape as `Interaction` with an added `labels` block and resolved human-readable 
   "labels": {
     "frame_data_matched": true,      // did we resolve this move in the frame-data table
     "on_block": -13,                 // ground-truth on-block advantage for the move
-    "was_punishable": true,          // on_block ≤ the defender's fastest punisher startup
-    "punish_window": 3,              // frames of slack (fastest punisher startup − |on_block|... see 05)
+    "was_punishable": true,          // on_block ≤ −(defender's fastest punisher startup)
+    "punish_window": 3,              // frames of slack = |on_block| − fastest-punisher startup (≥0 when punishable; e.g. 13−10=3). See 05 §4.1.
     "correct_punish": "f,F+2 (i15)", // recommended punish for defender's character at this range
-    "user_punished_correctly": false,
+    "user_punished_correctly": false,// null when was_punishable is false (only meaningful when a punish was owed); else did the user take it
     "in_string": false,              // was this contact part of a multi-hit string
     "string_gap": null,              // {duckable|interruptible|true|null} for string situations
     "gap_size": null,                // frames of the gap, if any

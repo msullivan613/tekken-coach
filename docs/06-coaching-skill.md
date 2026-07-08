@@ -100,6 +100,17 @@ worth coaching). Starter set (from summary §8), as rule specs:
 | `ate_low` / `ate_mid` | `defender_reaction == "hit"` && `labels.move_property` low/mid on a known mix | ≥3× vs one move | "You keep standing on the low / ducking the mid — react to X." |
 | `mashed_into_plus` | attacker `+on_block`, user's `follow_up` `got_counter_hit` | ≥3× vs one situation | "X is plus. Stop mashing after it; wait your turn." |
 
+`ate_low` / `ate_mid` is one table row but **two distinct pattern ids** (they split on the move's
+height, and the coaching line and the tally grouping differ) — the machine layer carries them as
+two rules, so the starter set is 7 rules across these 6 rows.
+
+**Two-phase trigger/recurrence split.** Each pattern's **trigger** is a pure predicate over one
+interaction (evaluated in the xref, which sets `labels.is_knowledge_check` / `knowledge_check_ids`
+when a trigger fires). The **recurrence rule** (the `≥N×` threshold) is applied **session-level in
+the `KnowledgeCheckTally`** ([03](03-data-schemas.md) §4) — a per-interaction function can't see
+session counts. So an interaction is *tagged* the moment its trigger fires; it becomes a *coached*
+knowledge check only once the tally clears its recurrence threshold.
+
 Recurrence is what turns a fluke into a *knowledge check* (summary §1). The
 `KnowledgeCheckTally` ([03](03-data-schemas.md) §4) is the structure that counts these.
 

@@ -220,6 +220,13 @@ loaded snapshot ([04](04-segmenter.md) §5, [00](00-architecture.md) §3).
   standing** that the frame data marks `duck_punish`-able, set `labels.duckable_high_hit` (the hit
   index) and `labels.duck_punish` (the answer). If the user ducked it (the high whiffed), no flag —
   that's the correct play, not a knowledge check. Feeds `standing_duckable_high` ([06](06-coaching-skill.md) §4.1).
+  > **Per-hit block/duck record is a C3 deliverable.** The precise check wants a per-hit
+  > standing-vs-ducked array on the in-string `Interaction` ([04](04-segmenter.md) §4.2) so it can
+  > pinpoint *which* hit was blocked standing. The merged `Interaction` ([03](03-data-schemas.md)
+  > §2) carries only a single `defender_reaction`, so until the segmenter (C3) emits that array the
+  > xref **approximates**: `defender_reaction == blocked` ⇒ stood on the high (flag), `evaded` ⇒
+  > ducked (no flag). This is exact for a whole-string block (the Paul `df+1,1,2` case) and is the
+  > agreed interim behavior; C3 adds the per-hit array and the xref is upgraded to read it then.
 - **Heat selection:** if the interaction was in Heat, use the move's `heat` overrides.
 - **Knowledge-check tagging:** run the rubric patterns ([06](06-coaching-skill.md)) and set
   `is_knowledge_check` / `knowledge_check_ids`.
