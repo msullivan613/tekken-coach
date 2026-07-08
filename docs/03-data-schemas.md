@@ -77,7 +77,7 @@ A discrete, bounded exchange with an attacker, a defender, an outcome, and follo
 
 ```jsonc
 {
-  "id": "m3-r2-i017",        // stable id: match-round-interaction
+  "id": "m3-r2-i017",        // stable id: match-round-interaction. The i-sequence is monotonic per MATCH (not reset per round) — matching this example, the 17th interaction of match 3, which happens to fall in round 2. The r-component reflects the round the interaction opened in.
   "match_id": "2026-07-07T20:14:03Z#3",
   "round": 2,
   "start_frame": 128410,

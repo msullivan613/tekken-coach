@@ -73,6 +73,16 @@ For each interaction the segmenter must produce, from state transitions alone:
 "Actionable" = first frame a player exits all stun/recovery states and could input a move
 (`action_state` back to `neutral`/`crouch`/`sidestep` and stun flags clear).
 
+> **When a punish interrupts recovery, `observed_advantage` is `null`.** The measured value
+> requires *both* actionable frames. A frame-tight punish drives the attacker straight into
+> hitstun before their move recovers, so the attacker never cleanly becomes actionable and the
+> gap is unmeasurable — the segmenter emits `observed_advantage: null` and xref falls back to the
+> canonical on-block value alone (§6 in [05](05-frame-data-and-move-map.md); the null-advantage
+> path in [03](03-data-schemas.md) §3). The measured value is therefore available on blocks the
+> defender let recover (including *late* punishes) but not on frame-tight ones; that is expected,
+> not a gap. The interaction is still fully resolved and emitted — a landed follow-up hit resolves
+> it without waiting for an attacker-actionable frame that will never come.
+
 ## 4. Edge cases (the summary §7 fiddly boundaries)
 
 These are the situations that make naive segmentation wrong. Each has an explicit rule and a
