@@ -49,8 +49,10 @@
     "slot) is NOT seeded: it shifts every build and is re-derived by the scan.",
     "",
     "`pointer_path` = module+base_offset -> deref +0x10 -> +0x68 -> +0x8 -> +0x30. round_start_health",
-    "here is the base-scan regime's full HP (T8 ~200, distinct from the placeholder 150 above). These",
-    "are the durable values; the runbook covers what to recalibrate if a field reads wrong."
+    "is full HP (200, confirmed live). The struct has no direct HP field, so health is computed as",
+    "round_start_health - damage_taken (the fork's model). struct_span is the in-struct health/position",
+    "scan bound; it is capped to the derived stride at runtime, so setting it >= max_stride just means",
+    "'scan the whole player struct'. These are durable; the runbook covers what to recalibrate."
   ],
   "base_scan": {
     "pointer_path": [16, 104, 8, 48],
@@ -58,7 +60,7 @@
     "move_id_offset": 1320,
     "damage_taken_offset": 4704,
     "round_start_health": 200,
-    "struct_span": 8192,
+    "struct_span": 262144,
     "max_stride": 262144,
     "aob_window_before": 16,
     "aob_window_after": 16,

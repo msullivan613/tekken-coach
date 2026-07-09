@@ -217,12 +217,19 @@ def _decode_player(source: MemorySource, table: OffsetTable, index: int) -> Play
     facing_raw = i("facing")
     facing = 1 if facing_raw >= 0 else -1
 
+    # Health: computed from damage_taken when the table says so (T8's struct has no direct HP field,
+    # docs/02 §3), else a direct field read (C4c/legacy). Clamped to [0, max_health].
+    if players.max_health is not None:
+        health = max(0, players.max_health - i("damage_taken"))
+    else:
+        health = i("health")
+
     return PlayerFrame(
         char_id=i("char_id"),
         move_id=i("move_id"),
         move_frame=i("move_frame"),
         action_state=_derive_action_state(table, raw),
-        health=i("health"),
+        health=health,
         pos=(f("pos_x"), f("pos_y"), f("pos_z")),
         facing=facing,
         block_stun=raw.block_stun,

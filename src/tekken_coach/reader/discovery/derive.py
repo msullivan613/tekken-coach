@@ -74,6 +74,7 @@ class DerivationResult:
     player_anchor: Anchor | None = None
     global_anchor: Anchor | None = None
     player_char_ids: tuple[int, int] | None = None  # (p0 = Jin, p1 = Kazuya)
+    max_health: int | None = None  # set when health is computed as max_health - damage_taken (C4d)
     fields: list[DerivedField] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
     frame_counter_candidates: list[int] = field(default_factory=list)

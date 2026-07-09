@@ -505,10 +505,20 @@ def find_by_signature(
 
 
 def _derive_health(
-    source: MemorySource, match: OracleMatch, stride: int, spec: BaseScanSpec, m: ProbeManifest
+    source: MemorySource,
+    match: OracleMatch,
+    stride: int,
+    spec: BaseScanSpec,
+    m: ProbeManifest,
+    span: int,
 ) -> DerivedField | None:
-    """Find the health field: an offset reading full HP at round start in **both** players."""
-    window = _read_region(source, match.p1_base, spec.struct_span)
+    """Find a direct health field: an offset reading full HP at round start in **both** players.
+
+    Usually ``None`` on Tekken 8 — the struct has no direct HP field (docs/02 §3), so the caller
+    falls back to computed health. Kept as a first try in case a build does expose one within
+    ``span`` (bounded to the stride so the P2 cross-check stays inside P2's struct).
+    """
+    window = _read_region(source, match.p1_base, span)
     if not window:
         return None
     region = Region(base=match.p1_base, data=window)
@@ -536,13 +546,15 @@ def _derive_position(
     after_base: int,
     spec: BaseScanSpec,
     m: ProbeManifest,
+    span: int,
 ) -> int | None:
     """Offset of a moving (x,y,z) float triple in P1's struct across the two snapshots.
 
     Reads P1 at its before base and its (re-resolved) after base, so it is correct even if the chain
     re-resolved to a moved allocation between snapshots — the whole point of anchoring in code.
+    ``span`` bounds the search to P1's struct (the stride) so it never wanders into P2.
     """
-    for off in range(0, spec.struct_span - 8, m.scan_align):
+    for off in range(0, span - 8, m.scan_align):
         triple_ok = True
         x_moved = False
         for k in range(3):
@@ -706,15 +718,35 @@ def derive_base_layout(
         )
     )
 
-    health = _derive_health(source, match, stride, spec, manifest)
+    # Bound the in-struct scans to P1's struct: it spans exactly `stride` bytes (P2 begins at
+    # base+stride), so a manifest struct_span larger than the stride is capped here rather than
+    # bleeding into P2 and producing false matches.
+    span = min(spec.struct_span, stride)
+
+    health = _derive_health(source, match, stride, spec, manifest, span)
     if health is not None:
         result.fields.append(health)
     else:
-        result.unresolved.append("health")
+        # Expected on Tekken 8: no direct HP field. Compute health = round_start_health -
+        # damage_taken (the fork's model, docs/02 §3). Emit damage_taken as a field and set
+        # max_health so the decoder computes health; this is a resolved field, not a gap.
+        result.fields.append(
+            DerivedField(
+                name="damage_taken",
+                scope="player",
+                offset=spec.damage_taken_offset,
+                kind="i32",
+                example_address=match.p1_base + spec.damage_taken_offset,
+                confidence=Confidence.high,
+                method="oracle field; health computed as round_start_health - damage_taken",
+            )
+        )
+        result.max_health = spec.round_start_health
         result.notes.append(
-            f"no field read round-start max {spec.round_start_health} in both structs; health is "
-            f"seeded. Fallback: derive health = {spec.round_start_health} - damage_taken "
-            "(a computed field; reviewer's call)."
+            f"no direct HP field in the struct (as expected on T8); health is computed as "
+            f"{spec.round_start_health} - damage_taken (+0x{spec.damage_taken_offset:x}), the "
+            "fork's model. Verify full HP is really "
+            f"{spec.round_start_health} for this build."
         )
 
     if source_after is not None:
@@ -731,10 +763,17 @@ def derive_base_layout(
                     f"0x{after_base:x}); the static chain tracked it — this is exactly why C4d "
                     "anchors in code, not the heap."
                 )
-            pos_off = _derive_position(source, source_after, match, after_base, spec, manifest)
+            pos_off = _derive_position(
+                source, source_after, match, after_base, spec, manifest, span
+            )
             if pos_off is None:
                 result.unresolved.append("pos_x")
-                result.notes.append("no moving float triple found; position seeded (widen span).")
+                result.notes.append(
+                    f"no moving float triple found in P1's struct (scanned 0x{span:x} bytes = the "
+                    "full stride); position is seeded. Either P1 did not actually move between the "
+                    "two snapshots, or position lives in a separate transform component reachable "
+                    "by its own pointer (a follow-up; not in the single entity struct)."
+                )
             else:
                 for axis, delta in (("pos_x", 0), ("pos_y", 4), ("pos_z", 8)):
                     result.fields.append(

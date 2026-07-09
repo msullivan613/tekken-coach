@@ -16,7 +16,7 @@ import pytest
 from tekken_coach.reader.decode import FrameReader, decode_frame, poll_frames
 from tekken_coach.reader.faults import DecodeError
 from tekken_coach.reader.memory_source import FakeMemorySource
-from tekken_coach.reader.offsets import OffsetTable, ScalarKind, select_offset_table
+from tekken_coach.reader.offsets import FieldSpec, OffsetTable, ScalarKind, select_offset_table
 from tekken_coach.schemas import ActionState, CounterState, FrameRecord, MatchState
 from tests.factories import make_frame_record
 from tests.fixtures.reader.encode import advance_on_for, encode_frame, module_base_for
@@ -164,6 +164,35 @@ def test_encoder_decoder_round_trip(table: OffsetTable) -> None:
         assert got.counter_state is want.counter_state
         assert got.heat.timer_ms == want.heat.timer_ms
         assert (got.input is None) == (want.input is None)
+
+
+def test_health_computed_from_damage_taken(table: OffsetTable) -> None:
+    # Tekken 8's struct has no direct HP field: with max_health set, the decoder reports
+    # health = max_health - damage_taken, clamped to [0, max_health] (docs/02 §3, the fork's model).
+    t = table.model_copy(deep=True)
+    t.players.max_health = 200
+    t.players.fields["damage_taken"] = FieldSpec(offset=128, kind="i32")  # within the 1024 stride
+
+    g = t.global_struct
+    gbase = MODULE_BASE + g.anchor.base_offset
+    pf = t.players.fields
+    pbase = MODULE_BASE + t.players.anchor.base_offset
+    image: dict[int, bytes] = {}
+    for spec in g.fields.values():
+        image[gbase + spec.offset] = _pack(spec.kind, 0)
+    for idx in (0, 1):
+        for spec in pf.values():
+            image[pbase + idx * t.players.stride + spec.offset] = _pack(spec.kind, 0)
+    # P1 took 55 damage -> health 145; P2 took 250 (more than max) -> clamped to 0.
+    image[pbase + 0 * t.players.stride + 128] = _pack("i32", 55)
+    image[pbase + 1 * t.players.stride + 128] = _pack("i32", 250)
+
+    source = FakeMemorySource(
+        [image], module_bases={g.anchor.module: MODULE_BASE}, advance_on=gbase
+    )
+    fr = decode_frame(source, t)
+    assert fr.players[0].health == 145
+    assert fr.players[1].health == 0  # clamped, never negative
 
 
 def test_input_null_when_group_absent(table: OffsetTable) -> None:

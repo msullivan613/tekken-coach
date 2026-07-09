@@ -81,11 +81,19 @@ class GlobalStruct(BaseModel):
 
 
 class PlayerStruct(BaseModel):
-    """The per-player struct: a base anchor, the array ``stride`` between players, and fields."""
+    """The per-player struct: a base anchor, the array ``stride`` between players, and fields.
+
+    ``max_health`` (optional) switches health to a **computed** field: Tekken 8's entity struct
+    stores ``damage_taken`` (rising from 0), not current HP (docs/02 §3, confirmed live — the HP
+    value lives in a separate subsystem). When set, the decoder reads the ``damage_taken`` field
+    and reports ``health = max_health - damage_taken``; when ``None`` (the C4c/legacy path) it reads
+    a direct ``health`` field. This is the fork's own health model.
+    """
 
     anchor: Anchor
     stride: int
     fields: dict[str, FieldSpec]
+    max_health: int | None = None
 
 
 class StateCodes(BaseModel):

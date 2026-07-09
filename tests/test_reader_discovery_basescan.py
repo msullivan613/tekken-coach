@@ -149,6 +149,29 @@ def test_derive_reuses_a_prelocated_struct() -> None:
     assert reused.stride == fresh.stride
 
 
+def test_health_falls_back_to_computed_when_no_direct_hp_field() -> None:
+    # The real Tekken 8 case: no offset reads full HP (the struct tracks damage_taken, not HP). The
+    # derivation then emits damage_taken + sets max_health so health is COMPUTED, not left
+    # unresolved. Forced here by pointing round_start_health at a value the planted struct lacks.
+    chain = planted_chain()
+    manifest = _manifest()
+    assert manifest.base_scan is not None
+    manifest.base_scan.round_start_health = 12345  # not present in the planted struct
+    result = derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=manifest,
+        seed=_seed(),
+        source_after=chain.after,
+    )
+    assert result.max_health == 12345
+    player_fields = result.player_offsets()
+    assert "damage_taken" in player_fields  # emitted so the decoder can compute health
+    assert "health" not in player_fields  # not a direct field
+    assert "health" not in result.unresolved  # computed, so not reported as a gap
+
+
 # ---------------------------------------------------------------------------
 # The oracle recovers the planted static pointer -> chain -> struct layout
 # ---------------------------------------------------------------------------

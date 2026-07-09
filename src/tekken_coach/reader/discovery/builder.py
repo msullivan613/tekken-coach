@@ -63,7 +63,14 @@ def build_offset_table(
     player_fields: dict[str, FieldSpec] = dict(seed.players.fields)
     for df in result.player_offsets().values():
         player_fields[df.name] = FieldSpec(offset=df.offset, kind=df.kind)
-    players = PlayerStruct(anchor=result.player_anchor, stride=result.stride, fields=player_fields)
+    # max_health (when set) makes the decoder compute health = max_health - damage_taken instead of
+    # reading a direct HP field (docs/02 §3 — T8's struct has no HP field, only damage_taken).
+    players = PlayerStruct(
+        anchor=result.player_anchor,
+        stride=result.stride,
+        fields=player_fields,
+        max_health=result.max_health if result.max_health is not None else seed.players.max_health,
+    )
 
     global_fields: dict[str, FieldSpec] = dict(seed.global_struct.fields)
     for df in result.global_offsets().values():
