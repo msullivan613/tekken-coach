@@ -58,7 +58,10 @@ def _derivation() -> tuple[DerivationResult, OffsetTable, PlantedScan]:
 def test_build_overlays_derived_offsets_on_seed() -> None:
     result, seed, _ = _derivation()
     table = build_offset_table(
-        result, seed, game_version=DETECTED_EXE_VERSION, discovered_at="2026-07-08T00:00:00Z",
+        result,
+        seed,
+        game_version=DETECTED_EXE_VERSION,
+        discovered_at="2026-07-08T00:00:00Z",
         notes="test",
     )
     # Derived fields take the planted offsets (differ from the seed's).
@@ -81,9 +84,7 @@ def test_build_refuses_without_the_confident_core() -> None:
 
     empty = DerivationResult(module="m", module_base=0)
     with pytest.raises(OffsetTableError, match="confident core"):
-        build_offset_table(
-            empty, _seed(), game_version="x", discovered_at="t", notes="n"
-        )
+        build_offset_table(empty, _seed(), game_version="x", discovered_at="t", notes="n")
 
 
 def test_built_table_round_trips_through_select_and_decodes(tmp_path: Path) -> None:

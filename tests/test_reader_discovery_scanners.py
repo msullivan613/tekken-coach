@@ -114,8 +114,6 @@ def test_snapshot_region_reads_through_a_memory_source() -> None:
 
 def test_snapshot_region_absolute() -> None:
     blob = _u32(1, 2)
-    source = FakeMemorySource(
-        [{0x5000: blob}], module_bases={"game.exe": BASE}, advance_on=0x5000
-    )
+    source = FakeMemorySource([{0x5000: blob}], module_bases={"game.exe": BASE}, advance_on=0x5000)
     region = snapshot_region(source, "game.exe", 0x5000, len(blob), absolute=True)
     assert region.base == 0x5000

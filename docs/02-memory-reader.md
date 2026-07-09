@@ -66,8 +66,8 @@ assets/offsets/
 ```
 
 Each offset file is a versioned table: module base anchoring, the player-struct stride, and the
-field offsets within it, plus a `discovered_at` timestamp and the `update_memory_address.py`
-run notes. The reader:
+field offsets within it, plus a `discovered_at` timestamp and the `update-offsets` run notes. The
+reader:
 
 1. Detects the running game version (executable/product version, or a memory signature).
 2. Loads the matching offset file; if none matches, refuses to attach and prints the
@@ -76,16 +76,17 @@ run notes. The reader:
 
 ### Anchoring strategy
 Prefer **module-base + static offset** and, where the ancestral tool uses them, **AOB/pattern
-signatures** over absolute addresses, because signatures survive minor relocations better. The
-ported `update_memory_address.py` is the tool that regenerates both.
+signatures** over absolute addresses, because signatures survive minor relocations better. Our
+clean-room `update-offsets` (§4, §5) is the tool that regenerates both.
 
 ## 4. Patch handling (the maintenance story)
 
 A Season/balance patch can shift **both** offsets **and** move data (summary §7). The runbook:
 
 1. Game updates → reader detects an unknown version → **fails closed** with instructions.
-2. User opens **practice mode, P1 Jin vs P2 Kazuya**, runs the ported `update-offsets` command
-   (our wrapper around `update_memory_address.py`). It writes a new `assets/offsets/<version>.json`.
+2. User opens **practice mode, P1 Jin vs P2 Kazuya**, runs the clean-room `update-offsets` command
+   (§5 — a re-implementation of the fork's re-discovery *technique*, not its script). It scans the
+   setup and writes a candidate `assets/offsets/<version>.json` keyed to the detected exe version.
 3. **Invalidate move/frame data** for the new version (mirror the fork's "wipe frame_data"
    guidance) — see [05](05-frame-data-and-move-map.md) for the data side of the same patch event.
 4. Re-run the reader's **self-check** (§6). Green → capture is usable again.
@@ -98,7 +99,7 @@ deliberately a **data + tooling** operation, not a source-code edit.
 | Take (read-only) | Leave |
 |---|---|
 | `GameState`/`Entry.py` memory-layout knowledge | The bot / decision / input-injection layer |
-| `update_memory_address.py` (as `update-offsets`) | Any GUI/overlay from the fork |
+| The Jin-vs-Kazuya re-discovery *technique*, clean-room as `update-offsets` | The fork's `update_memory_address.py` script text (GUI/overlay too) |
 | Process-attach + read primitives | The fork's real-time frame-data display |
 | Offset table format (adapted to `assets/offsets/`) | Its match against our schema is re-mapped, not copied |
 

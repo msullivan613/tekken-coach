@@ -243,9 +243,9 @@ def _find_position_triple(
     return None
 
 
-def _derive_player(snap: DiscoverySnapshots, m: ProbeManifest) -> tuple[
-    int | None, int | None, int | None, tuple[int, int] | None, dict[str, DerivedField]
-]:
+def _derive_player(
+    snap: DiscoverySnapshots, m: ProbeManifest
+) -> tuple[int | None, int | None, int | None, tuple[int, int] | None, dict[str, DerivedField]]:
     """Search for the best ``(base0, base1, stride)`` and its resolved fields.
 
     Returns ``(base0, base1, stride, (jin, kazuya), fields)`` or ``(None, ...)`` if no hypothesis
