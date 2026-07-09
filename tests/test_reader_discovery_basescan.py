@@ -16,6 +16,7 @@ import pytest
 
 from tekken_coach.reader.decode import decode_frame, resolve_anchor
 from tekken_coach.reader.discovery.basescan import (
+    _section_passes,
     derive_base_layout,
     extract_signature,
     find_by_signature,
@@ -85,12 +86,67 @@ def test_candidate_slots_are_bounded_to_the_data_section() -> None:
     spec = _manifest().base_scan
     assert spec is not None
     image = parse_module_image(lambda rva, n: source.read(MODULE_BASE + rva, n))
-    slots = find_candidate_slots(source, MODULE_BASE, image, spec)
+    slots = find_candidate_slots(source, MODULE_BASE, image.data_sections())
     assert slots, "the planted root pointer must be generated as a candidate"
     assert BASE_OFFSET in slots
     # Every candidate lies inside .data — the sweep never touches .text or the headers.
     data = image.data_sections()[0]
     assert all(data.rva <= rva < data.end_rva for rva in slots)
+
+
+def test_writable_data_is_swept_before_readonly() -> None:
+    # The root pointer is a runtime-written global (writable .data). Sweeping .data first is both
+    # likelier to hit and far cheaper than the big read-only .rdata; the .rdata pass is a fallback.
+    source = planted_chain().before
+    image = parse_module_image(lambda rva, n: source.read(MODULE_BASE + rva, n))
+    spec = _manifest().base_scan
+    assert spec is not None
+    passes = _section_passes(image, spec)
+    assert [label for label, _ in passes][0] == "writable .data"
+    assert any(s.name == ".data" for _, sections in passes[:1] for s in sections)
+
+
+def test_locate_reports_progress() -> None:
+    # The long live sweep must be observable: the command layer passes a progress sink and the
+    # library streams what it is doing (PE parse -> which pass it is sweeping -> the strong match).
+    source = planted_chain().before
+    msgs: list[str] = []
+    located = locate_player_struct(
+        source,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        progress=msgs.append,
+    )
+    assert located is not None and located.match.strong
+    joined = "\n".join(msgs)
+    assert "parsed PE" in joined
+    assert "writable .data" in joined
+    assert "strong match" in joined
+
+
+def test_derive_reuses_a_prelocated_struct() -> None:
+    # The live path locates the struct once (to freeze the round-start snapshot) and passes that
+    # into derive so the expensive sweep is not repeated. Passing `located` must yield the same
+    # anchor as letting derive locate itself.
+    chain = planted_chain()
+    prelocated = locate_player_struct(
+        chain.before, module=MODULE, module_base=MODULE_BASE, manifest=_manifest()
+    )
+    assert prelocated is not None
+    reused = derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        seed=_seed(),
+        source_after=chain.after,
+        located=prelocated,
+    )
+    fresh = _derive()
+    assert reused.player_anchor is not None
+    assert reused.player_anchor == fresh.player_anchor
+    assert reused.stride == fresh.stride
 
 
 # ---------------------------------------------------------------------------

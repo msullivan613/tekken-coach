@@ -153,15 +153,23 @@ def update_offsets_main(args: argparse.Namespace) -> int:
     def act_prompt(message: str) -> None:
         input("\n" + message + "\n")
 
-    runner = run_update_offsets_base if args.base_scan else run_update_offsets
+    def progress(message: str) -> None:
+        # The base scan sweeps a large module and can run for minutes; stream progress to stderr so
+        # the run is observable (the report itself still goes to stdout). Flush so it appears live.
+        print(message, file=sys.stderr, flush=True)
+
+    common = {
+        "offsets_dir": args.offsets,
+        "manifest_path": args.manifest,
+        "version_override": args.version,
+        "act_prompt": act_prompt,
+    }
     try:
-        table, report = runner(
-            args.process,
-            offsets_dir=args.offsets,
-            manifest_path=args.manifest,
-            version_override=args.version,
-            act_prompt=act_prompt,
-        )
+        if args.base_scan:
+            print("scanning for the player-struct pointer (this can take a minute)...")
+            table, report = run_update_offsets_base(args.process, progress=progress, **common)
+        else:
+            table, report = run_update_offsets(args.process, **common)
     except ReaderError as exc:
         return _report_fault(exc)
 

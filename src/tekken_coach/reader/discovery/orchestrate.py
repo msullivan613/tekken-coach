@@ -20,7 +20,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tekken_coach.reader.discovery.basescan import derive_base_layout
+from tekken_coach.reader.discovery.basescan import Located, Progress, derive_base_layout
 from tekken_coach.reader.discovery.builder import (
     build_offset_table,
     register_version,
@@ -108,6 +108,8 @@ def discover_base(
     seed: OffsetTable,
     seed_version: str,
     source_after: MemorySource | None = None,
+    located: Located | None = None,
+    progress: Progress | None = None,
     discovered_at: str | None = None,
     notes: str = _BASE_SCAN_NOTES,
 ) -> tuple[OffsetTable | None, DiagnosticReport]:
@@ -116,9 +118,11 @@ def discover_base(
     Mirrors :func:`discover` but for the code-signature path: it reads through the ``MemorySource``
     seam (following pointer chains), so it takes ``source``(s) rather than pre-captured windows.
     ``source_after`` (a second snapshot after the user walks + presses a button) enables the
-    position scan; without it position is seeded. Returns ``(table, report)``; ``table`` is ``None``
-    when the player anchor or a constant stride did not resolve (e.g. the two-level P2 case) — the
-    report then explains what to do.
+    position scan; without it position is seeded. ``located`` reuses a sweep the caller already ran
+    (the live path locates once to know where to freeze), and ``progress`` makes that sweep
+    observable. Returns ``(table, report)``; ``table`` is ``None`` when the player anchor or a
+    constant stride did not resolve (e.g. the two-level P2 case) — the report then explains what
+    to do.
     """
     result = derive_base_layout(
         source,
@@ -127,6 +131,8 @@ def discover_base(
         manifest=manifest,
         seed=seed,
         source_after=source_after,
+        located=located,
+        progress=progress,
     )
     report = build_report(
         result,
@@ -248,6 +254,7 @@ def run_update_offsets_base(
     manifest_path: str | Path = DEFAULT_MANIFEST_PATH,
     version_override: str | None = None,
     act_prompt: Callable[[str], None] | None = None,
+    progress: Progress | None = None,
 ) -> tuple[OffsetTable | None, DiagnosticReport]:  # pragma: no cover - attaches to a live game
     """C4d live re-discovery: attach read-only, code-sig-scan the player struct, write the table.
 
@@ -255,7 +262,9 @@ def run_update_offsets_base(
     at round start -> prompt the user to walk P1 and press a button -> re-read for the position scan
     -> derive -> build + write the candidate table + register the version. Windows-only, user-run.
     The scan follows pointer chains through the live ``MemorySource``; everything below the attach
-    is offline-tested via :func:`discover_base` against a planted flat image.
+    is offline-tested via :func:`discover_base` against a planted flat image. ``progress`` (supplied
+    by the command layer) makes the sweep observable; the struct is located **once** here and reused
+    by :func:`discover_base`, so the expensive sweep is not repeated.
     """
     from tekken_coach.reader.discovery.basescan import (  # noqa: PLC0415
         LayeredMemorySource,
@@ -284,6 +293,7 @@ def run_update_offsets_base(
         module_base=module_base,
         manifest=manifest,
         hint=seed.players.anchor.signature,
+        progress=progress,
     )
     if located is not None and manifest.base_scan is not None:
         from tekken_coach.reader.decode import resolve_anchor  # noqa: PLC0415
@@ -324,6 +334,7 @@ def run_update_offsets_base(
         seed=seed,
         seed_version=seed_version,
         source_after=after_source,
+        located=located,
     )
     if table is not None:
         persist(table, report, offsets_dir=offsets_dir)

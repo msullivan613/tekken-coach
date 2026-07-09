@@ -74,6 +74,17 @@ class Section:
             and not self.is_code
         )
 
+    @property
+    def is_writable_data(self) -> bool:
+        """Writable initialized data (``.data``) — where a runtime-set global root pointer sits.
+
+        The pointer we chase is a global written *at runtime* to point at a heap-allocated game
+        object, so it lives in a **writable** section. Read-only data (``.rdata``: vtables, RTTI,
+        string/import pointers) is static and never the mutable root — and it is usually far larger,
+        so sweeping ``.data`` first is both more likely to hit and much cheaper (docs/02 §3).
+        """
+        return self.is_readable_data and bool(self.characteristics & SCN_MEM_WRITE)
+
 
 @dataclass(frozen=True)
 class ModuleImage:
@@ -85,6 +96,14 @@ class ModuleImage:
     def data_sections(self) -> tuple[Section, ...]:
         """Readable initialized-data sections to sweep for candidate global pointers (§3)."""
         return tuple(s for s in self.sections if s.is_readable_data)
+
+    def writable_data_sections(self) -> tuple[Section, ...]:
+        """Writable data sections (``.data``) — the likely, and cheap, home of the root pointer."""
+        return tuple(s for s in self.sections if s.is_writable_data)
+
+    def readonly_data_sections(self) -> tuple[Section, ...]:
+        """Read-only initialized data (``.rdata``) — the fallback sweep if ``.data`` yields none."""
+        return tuple(s for s in self.sections if s.is_readable_data and not s.is_writable_data)
 
     def code_sections(self) -> tuple[Section, ...]:
         """Executable sections (``.text``) — where RIP-relative refs to the globals live."""

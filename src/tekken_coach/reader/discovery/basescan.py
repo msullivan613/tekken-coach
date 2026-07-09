@@ -35,7 +35,7 @@ pointers; it never writes (docs/02 §2).
 from __future__ import annotations
 
 import struct
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from tekken_coach.reader.decode import resolve_anchor
@@ -46,7 +46,7 @@ from tekken_coach.reader.discovery.derive import (
     _plausible_coord,
 )
 from tekken_coach.reader.discovery.manifest import BaseScanSpec, ProbeManifest
-from tekken_coach.reader.discovery.pe import ModuleImage, Reader, parse_module_image
+from tekken_coach.reader.discovery.pe import ModuleImage, Reader, Section, parse_module_image
 from tekken_coach.reader.discovery.scanners import Region, aob_scan, value_scan
 from tekken_coach.reader.faults import MemoryReadError
 from tekken_coach.reader.memory_source import MemorySource
@@ -57,6 +57,17 @@ from tekken_coach.reader.offsets import Anchor, AobSignature, OffsetTable, Scala
 _MIN_USERSPACE = 0x10000
 _MAX_USERSPACE = 0x7FFF_FFFF_FFFF
 _PTR_SIZE = 8
+
+# A progress sink so the long live sweep is observable (the command layer prints; the library stays
+# silent by default, docs/02 §2). ``None`` means no reporting.
+Progress = Callable[[str], None]
+_PROGRESS_EVERY = 50_000  # emit a validation tally every N candidates
+
+
+def _emit(progress: Progress | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
+
 
 _SCALAR_FMT: dict[ScalarKind, tuple[str, int]] = {
     "u32": ("<I", 4),
@@ -148,24 +159,32 @@ def _follow_chain(
 
 
 def find_candidate_slots(
-    source: MemorySource, module_base: int, image: ModuleImage, spec: BaseScanSpec
+    source: MemorySource,
+    module_base: int,
+    sections: Sequence[Section],
+    *,
+    progress: Progress | None = None,
 ) -> list[int]:
-    """Return the module-relative RVAs of 8-aligned data slots holding a plausible pointer.
+    """Return module-relative RVAs of 8-aligned slots in ``sections`` holding a plausible pointer.
 
-    Sweeps the readable initialized-data sections (docs/02 §3) the PE parse identified. This is the
-    *generate* half — cheap and permissive; the oracle (:func:`validate_candidate`) does the real
-    filtering by following the chain. Restricting to data sections (``scan_data_only``) keeps the
-    sweep off the executable ``.text`` bytes, which are not pointer slots.
+    The *generate* half — cheap and permissive; the oracle (:func:`validate_candidate`) does the
+    real filtering by following the chain. The caller picks which ``sections`` to sweep (writable
+    ``.data`` first, then ``.rdata``; see :func:`locate_player_struct`), keeping the sweep off
+    ``.text`` and off the huge read-only data unless needed (docs/02 §3).
     """
-    sections = image.data_sections() if spec.scan_data_only else image.sections
     rvas: list[int] = []
     for section in sections:
         data = _read_region(source, module_base + section.rva, section.virtual_size)
         if not data:
+            _emit(progress, f"    section {section.name!r}: unreadable, skipped")
             continue
         region = Region(base=section.rva, data=data)
-        for value in value_scan_pointers(region):
-            rvas.append(value)
+        found = value_scan_pointers(region)
+        _emit(
+            progress,
+            f"    section {section.name!r}: {len(data) // 1024} KiB -> {len(found)} candidates",
+        )
+        rvas.extend(found)
     return rvas
 
 
@@ -285,6 +304,58 @@ class Located:
     from_signature: bool = False  # re-found via the previous table's AOB, skipping the full sweep
 
 
+def _section_passes(
+    image: ModuleImage, spec: BaseScanSpec
+) -> list[tuple[str, tuple[Section, ...]]]:
+    """The ordered section sweeps: writable ``.data`` first, then read-only ``.rdata`` as fallback.
+
+    The root pointer is a runtime-written global, so it lives in writable ``.data`` — usually far
+    smaller than ``.rdata``, so sweeping it first is both likelier to hit and much cheaper. A second
+    pass over ``.rdata`` only runs if ``.data`` yields no match, so correctness is unchanged if the
+    assumption is ever wrong. ``scan_writable_first=False`` restores the single all-data sweep.
+    """
+    if not spec.scan_data_only:
+        return [("all sections", image.sections)]
+    if spec.scan_writable_first and image.writable_data_sections():
+        return [
+            ("writable .data", image.writable_data_sections()),
+            ("read-only .rdata", image.readonly_data_sections()),
+        ]
+    return [("data sections", image.data_sections())]
+
+
+def _validate_all(
+    source: MemorySource,
+    candidates: Sequence[int],
+    *,
+    module: str,
+    module_base: int,
+    spec: BaseScanSpec,
+    manifest: ProbeManifest,
+    progress: Progress | None,
+) -> tuple[OracleMatch | None, list[OracleMatch]]:
+    """Validate every candidate; return the first strong match (short-circuit) and any weak ones."""
+    weak: list[OracleMatch] = []
+    total = len(candidates)
+    for i, base_offset in enumerate(candidates):
+        if progress is not None and i and i % _PROGRESS_EVERY == 0:
+            _emit(progress, f"    validated {i}/{total} candidates ...")
+        match = validate_candidate(
+            source,
+            module=module,
+            module_base=module_base,
+            base_offset=base_offset,
+            spec=spec,
+            manifest=manifest,
+        )
+        if match is None:
+            continue
+        if match.strong:
+            return match, weak
+        weak.append(match)
+    return None, weak
+
+
 def locate_player_struct(
     source: MemorySource,
     *,
@@ -292,6 +363,7 @@ def locate_player_struct(
     module_base: int,
     manifest: ProbeManifest,
     hint: AobSignature | None = None,
+    progress: Progress | None = None,
 ) -> Located | None:
     """Parse the PE bounds, sweep candidate slots, and return the accepted oracle match.
 
@@ -301,20 +373,28 @@ def locate_player_struct(
     that matches but fails the oracle falls through to the sweep.
 
     A **strong** match (both players resolved at a constant stride) wins immediately — that is the
-    two-struct consistency the acceptance rests on. Only if the whole sweep produces none do we fall
+    two-struct consistency the acceptance rests on. The sweep runs in passes (writable ``.data``,
+    then ``.rdata``); the first strong match ends it. Only if every pass produces none do we fall
     back to a **weak** P1-only match, and then only if every weak candidate lands on the *same*
     struct; otherwise the landing is ambiguous and we say so rather than pick one. The weak path
     exists to report the two-level-P2 case (see :class:`OracleMatch`), never to write a table.
 
-    Factored out of :func:`derive_base_layout` so the live orchestration can run it once (to find
-    where the struct lives), freeze that region, and then re-drive the position scan against a
-    frozen before-snapshot (:class:`LayeredMemorySource`). ``None`` when the manifest lacks a
-    ``base_scan`` spec or nothing landed on a plausible player struct at all.
+    ``progress`` (optional) makes the long live sweep observable — the command layer supplies a
+    printer; the library is silent without one (docs/02 §2). Factored out of
+    :func:`derive_base_layout` so the live orchestration can run it once (to find where the struct
+    lives), freeze that region, and re-drive the position scan against a frozen before-snapshot
+    (:class:`LayeredMemorySource`). ``None`` when the manifest lacks a ``base_scan`` spec or nothing
+    landed on a plausible player struct at all.
     """
     spec = manifest.base_scan
     if spec is None:
         return None
     image = parse_module_image(_module_reader(source, module_base))
+    _emit(
+        progress,
+        f"  parsed PE: SizeOfImage {image.size_of_image // 1024} KiB, "
+        f"{len(image.sections)} sections",
+    )
 
     if hint is not None:
         hinted = find_by_signature(source, module_base, image, hint)
@@ -328,24 +408,35 @@ def locate_player_struct(
                 manifest=manifest,
             )
             if match is not None and match.strong:
+                _emit(progress, "  re-found via seed AOB signature (fast path); sweep skipped")
                 return Located(match=match, image=image, from_signature=True)
 
     weak: list[OracleMatch] = []
-    for base_offset in find_candidate_slots(source, module_base, image, spec):
-        match = validate_candidate(
+    for label, sections in _section_passes(image, spec):
+        if not sections:
+            continue
+        _emit(progress, f"  sweeping {label} ...")
+        candidates = find_candidate_slots(source, module_base, sections, progress=progress)
+        _emit(progress, f"  validating {len(candidates)} candidates in {label} ...")
+        strong, pass_weak = _validate_all(
             source,
+            candidates,
             module=module,
             module_base=module_base,
-            base_offset=base_offset,
             spec=spec,
             manifest=manifest,
+            progress=progress,
         )
-        if match is None:
-            continue
-        if match.strong:
-            return Located(match=match, image=image)
-        weak.append(match)
+        if strong is not None:
+            _emit(
+                progress,
+                f"  strong match in {label}: base_offset 0x{strong.base_offset:x}, "
+                f"stride 0x{strong.stride:x}",
+            )
+            return Located(match=strong, image=image)
+        weak.extend(pass_weak)
     if not weak:
+        _emit(progress, "  no candidate landed on a plausible player struct")
         return None
     landings = {m.p1_base for m in weak}
     return Located(match=weak[0], image=image, ambiguous_weak=len(landings) > 1)
@@ -493,6 +584,8 @@ def derive_base_layout(
     manifest: ProbeManifest,
     seed: OffsetTable,
     source_after: MemorySource | None = None,
+    located: Located | None = None,
+    progress: Progress | None = None,
 ) -> DerivationResult:
     """Run the full C4d code-signature derivation and return a :class:`DerivationResult`.
 
@@ -502,6 +595,11 @@ def derive_base_layout(
     :class:`DerivationResult` the builder consumes. The **global** anchor is carried from ``seed`` —
     C4d locates the heap player struct; global/match anchoring is a separate concern (see the
     runbook), so it is seeded and flagged for calibration, not re-derived here.
+
+    ``located`` lets the caller pass a struct location it already swept for (the live orchestration
+    runs :func:`locate_player_struct` once to know where to freeze the round-start snapshot); when
+    given, the expensive sweep is not repeated here. ``progress`` threads to the sweep for a
+    live-observable log.
     """
     result = DerivationResult(module=module, module_base=module_base)
     spec = manifest.base_scan
@@ -511,13 +609,16 @@ def derive_base_layout(
         return result
 
     # The previous table's AOB signature is a fast re-find hint; it still has to pass the oracle.
-    located = locate_player_struct(
-        source,
-        module=module,
-        module_base=module_base,
-        manifest=manifest,
-        hint=seed.players.anchor.signature,
-    )
+    # A caller that already located the struct (live path) passes it in to avoid re-sweeping.
+    if located is None:
+        located = locate_player_struct(
+            source,
+            module=module,
+            module_base=module_base,
+            manifest=manifest,
+            hint=seed.players.anchor.signature,
+            progress=progress,
+        )
 
     result.global_anchor = seed.global_struct.anchor
     if located is None:

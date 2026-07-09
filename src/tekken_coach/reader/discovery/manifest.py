@@ -79,6 +79,9 @@ class BaseScanSpec(BaseModel):
     aob_window_before: int = 16  # signature context bytes before the slot
     aob_window_after: int = 16  # ... and after (beyond the 8 wildcarded pointer bytes)
     scan_data_only: bool = True  # sweep only readable initialized-data sections for slots
+    scan_writable_first: bool = (
+        True  # sweep writable .data first (likely + cheap), .rdata as fallback
+    )
 
 
 class ProbeManifest(BaseModel):
