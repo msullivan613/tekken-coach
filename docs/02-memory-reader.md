@@ -75,21 +75,55 @@ reader:
    silently produces garbage `FrameRecord`s, which is worse than not running.
 
 ### Anchoring strategy
-Prefer **module-base + static offset** and, where the ancestral tool uses them, **AOB/pattern
-signatures** over absolute addresses, because signatures survive minor relocations better. Our
-clean-room `update-offsets` (§4, §5) is the tool that regenerates both.
+Prefer **module-base + static offset**, optionally followed by a **pointer chain**, and store an
+**AOB/pattern signature** alongside it — never an absolute address, because signatures survive minor
+relocations better. Our clean-room `update-offsets` (§4, §5) regenerates all three.
+
+**Tekken 8 forces the pointer chain.** The per-player entity struct is **heap-allocated and
+reallocates** on every character change and round (confirmed live: an address found by heap scanning
+went stale after a character swap). No module-relative window reaches it. The reader therefore
+anchors the player struct as:
+
+```
+module_base + base_offset   ->  deref +o1 -> deref +o2 -> ... ->  player-struct base
+```
+
+`base_offset` (the static slot holding the root pointer) shifts every build; the **chain offsets and
+the within-struct field offsets are far more stable**. So `update-offsets --base-scan` re-derives
+only `base_offset`, by scanning the module's static data for a slot whose chain lands on a struct
+that satisfies the **known field layout** — a plausible `char_id`, a plausible `move_id`,
+`damage_taken == 0` at round start, and P1/P2 resolving to Jin and Kazuya. That mutual two-struct
+consistency is the acceptance test. Around the accepted slot it captures an **AOB signature** (the
+pointer bytes wildcarded) and stores it in the table so a subsequent run re-finds the slot directly.
+
+`decode.resolve_anchor` already follows a multi-level `pointer_path`, so the reader consumes such an
+anchor with no code change; the chain is re-resolved on every read, which is precisely what makes it
+survive reallocation.
 
 ## 4. Patch handling (the maintenance story)
 
 A Season/balance patch can shift **both** offsets **and** move data (summary §7). The runbook:
 
 1. Game updates → reader detects an unknown version → **fails closed** with instructions.
-2. User opens **practice mode, P1 Jin vs P2 Kazuya**, runs the clean-room `update-offsets` command
-   (§5 — a re-implementation of the fork's re-discovery *technique*, not its script). It scans the
-   setup and writes a candidate `assets/offsets/<version>.json` keyed to the detected exe version.
+2. User opens **practice mode, P1 Jin vs P2 Kazuya**, at **round start** (full health, no damage
+   taken), and runs the clean-room `update-offsets --base-scan` command (§5 — a re-implementation of
+   the fork's re-discovery *technique*, not its script). It re-derives the player anchor
+   (`base_offset` + pointer chain + AOB signature) and writes a candidate
+   `assets/offsets/<version>.json` keyed to the detected exe version. The tool prompts the user to
+   walk P1 and press a button between two snapshots; the resulting position delta locates
+   `pos_{x,y,z}`, and an in-struct scan for round-start max HP locates `health`.
+   (`update-offsets` without `--base-scan` is the older heap value-scan; it cannot reach a struct
+   behind a pointer chain.)
 3. **Invalidate move/frame data** for the new version (mirror the fork's "wipe frame_data"
    guidance) — see [05](05-frame-data-and-move-map.md) for the data side of the same patch event.
 4. Re-run the reader's **self-check** (§6). Green → capture is usable again.
+
+What the base scan proves vs. what still needs a human: it derives the **player** anchor, stride,
+`char_id`, `move_id`, `health`, `pos_{x,y,z}`. The **global/match** anchor and the remaining
+per-player fields (flags, heat, input, state-code maps) are carried from the previous table and
+flagged for calibration in the diagnostic report. If P2 turns out **not** to sit at a constant stride
+from P1 (a two-level `p2_data_offset`), the tool reports the P1 anchor and **refuses to write a
+table** — expressing that needs a per-player-anchor schema change, not an invented stride.
 
 This is the primary ongoing maintenance sink and is expected to recur every Season/patch. It is
 deliberately a **data + tooling** operation, not a source-code edit.
@@ -99,6 +133,7 @@ deliberately a **data + tooling** operation, not a source-code edit.
 | Take (read-only) | Leave |
 |---|---|
 | `GameState`/`Entry.py` memory-layout knowledge | The bot / decision / input-injection layer |
+| The field-offset map + chain shape from its `memory_address.ini` **data** | Its shipped `base_offset` (stale, per-build — we re-derive it) |
 | The Jin-vs-Kazuya re-discovery *technique*, clean-room as `update-offsets` | The fork's `update_memory_address.py` script text (GUI/overlay too) |
 | Process-attach + read primitives | The fork's real-time frame-data display |
 | Offset table format (adapted to `assets/offsets/`) | Its match against our schema is re-mapped, not copied |
@@ -119,12 +154,16 @@ The lineage splits into two legally distinct pieces:
 
 What this means concretely for the port:
 
-1. **Offsets, addresses, and AOB signatures are facts/data, not copyrightable expression** — we
-   can use the *knowledge* of the T8 memory layout the fork surfaces (into our own
-   `assets/offsets/`, §3) freely.
+1. **Offsets, addresses, pointer-chain shapes, and AOB signatures are facts/data, not copyrightable
+   expression** — we can use the *knowledge* of the T8 memory layout the fork surfaces (into our own
+   `assets/offsets/`, §3) freely. Concretely, the within-struct field map and chain shape seeded into
+   `assets/offsets/probe-manifest.json` (`base_scan`) come from the fork's committed
+   `memory_address.ini` **data file**, credited in `NOTICE`.
 2. The **method** of `update_memory_address.py` (open Jin vs Kazuya in practice, scan to re-derive
    addresses) is an idea/technique, not protected — we **clean-room re-implement** it as
-   `update-offsets` rather than copying the fork's script text.
+   `update-offsets` rather than copying the fork's script text. Its script is deliberately **not
+   read**: our candidate-generate-and-validate base scan (sweep static data slots, follow the seed
+   chain, accept on the field-layout oracle) is written from the technique's description, not ported.
 3. **MIT-root code** we port directly, with attribution.
 4. We do **not** pursue a license grant from the fork author. The repo has been **inactive for
    ~2 years**, so an issue/PR is unlikely to be answered — and, more importantly, we don't need

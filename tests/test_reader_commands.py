@@ -56,3 +56,12 @@ def test_parser_wires_subcommand_funcs() -> None:
     assert args.func is commands.capture_main
     assert args.count == 10
     assert isinstance(args, argparse.Namespace)
+
+
+def test_parser_update_offsets_base_scan_flag() -> None:
+    # C4d: --base-scan selects the code-signature/pointer-chain derivation; default stays C4c.
+    parser = commands.build_parser()
+    assert parser.parse_args(["update-offsets"]).base_scan is False
+    args = parser.parse_args(["update-offsets", "--base-scan"])
+    assert args.base_scan is True
+    assert args.func is commands.update_offsets_main

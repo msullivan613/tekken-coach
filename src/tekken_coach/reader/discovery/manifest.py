@@ -46,11 +46,50 @@ class ScanWindow(BaseModel):
     absolute: bool = False
 
 
+class BaseScanSpec(BaseModel):
+    """The seed layout that drives C4d's code-signature base derivation (docs/02 §3, facts/data).
+
+    C4d locates the heap-allocated player struct by scanning the module's static data for the
+    pointer that leads to it, then following a **seed pointer chain** and validating the landing
+    against the **known field layout** (the oracle). Everything here is facts/data (docs/02 §5),
+    seeded from the community-known Tekken 8 layout — the durable within-struct offsets and the
+    stable-ish chain shape — never the base address itself (that is re-derived every build).
+
+    * ``pointer_path`` — the chain from the static pointer slot to the player-data base. The chain
+      *offsets* are more stable than the ``base_offset`` slot (which shifts every build), so they
+      are seeded and the slot is discovered.
+    * ``char_id_offset`` / ``move_id_offset`` / ``damage_taken_offset`` — the oracle fields: a
+      candidate landing is accepted only if these read plausibly (char id in range, move id in
+      range, damage 0 at round start) for **both** players.
+    * ``struct_span`` — how far past the located base to scan for the in-struct health/position
+      fields (tractable inside one located struct; intractable over the whole heap).
+    * ``max_stride`` — the largest P1->P2 gap to accept as a constant stride before concluding P2 is
+      a separate allocation (the two-level case the runbook flags).
+    * ``aob_window_before`` / ``aob_window_after`` — bytes captured around the slot for the AOB
+      signature (the pointer bytes themselves are wildcarded).
+    """
+
+    pointer_path: list[int]
+    char_id_offset: int
+    move_id_offset: int
+    damage_taken_offset: int
+    round_start_health: int  # full HP under this build's regime (T8 ~200); the in-struct anchor
+    struct_span: int = 0x2000  # scan [base, base+span) for health/position
+    max_stride: int = 0x40000  # P1->P2 gap ceiling for the constant-stride model
+    aob_window_before: int = 16  # signature context bytes before the slot
+    aob_window_after: int = 16  # ... and after (beyond the 8 wildcarded pointer bytes)
+    scan_data_only: bool = True  # sweep only readable initialized-data sections for slots
+
+
 class ProbeManifest(BaseModel):
     """Everything the re-discovery search needs, as an editable data file (docs/02 §4)."""
 
     module: str
     notes: str = ""
+
+    # --- C4d code-signature base derivation (heap struct via a static pointer + chain) ---
+    # Optional so the C4c value-scan path loads without it; required for the C4d base scan.
+    base_scan: BaseScanSpec | None = None
 
     # --- Known anchors at the P1-Jin-vs-P2-Kazuya round-start setup (facts, docs/02 §5) ---
     kazuya_char_id: int  # 12 from the C1 move map; pins the player-struct base

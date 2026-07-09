@@ -76,13 +76,19 @@ def version_from_dwords(file_version_ms: int, file_version_ls: int) -> str:
     return normalize_version(f"{major}.{minor}.{build}")
 
 
-def signature_version(read: Any) -> str | None:  # pragma: no cover - C4c populates this hook
-    """Memory-signature version fallback (docs/02 §3) — a hook C4c fills in.
+def signature_version(read: Any) -> str | None:  # pragma: no cover - needs a live version pattern
+    """Memory-signature version fallback (docs/02 §3) — a named seam, still returning ``None``.
 
     When the executable product-version info is unreliable, a version can be recovered from a known
-    in-memory string/pattern. Deriving that pattern is the clean-room RE work owned by C4c
-    (``update-offsets``), so this returns ``None`` here rather than guessing. Kept as a named seam
-    so :func:`detect_running_version` has an obvious place to consult it once C4c lands.
+    in-memory string/pattern. C4d built the AOB machinery this would use — the same
+    :func:`~tekken_coach.reader.discovery.scanners.aob_scan` and
+    :func:`~tekken_coach.reader.discovery.basescan.find_by_signature` that re-find the player-struct
+    base signature can re-find a version-string pattern. What is still missing is the *pattern
+    itself*: a build-stable AOB around the version string, which can only be captured from a live
+    build (there is no offline oracle for it, unlike the player struct's field layout). So this
+    stays ``None`` — a clear "populate me from a calibrated live run" seam — rather than guessing.
+    Capture procedure: locate the product-version string in a data section on a known build,
+    wildcard the version digits, and store the AOB + a parse offset alongside the offset table.
     """
     return None
 

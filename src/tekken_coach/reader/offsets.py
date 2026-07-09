@@ -42,17 +42,35 @@ class FieldSpec(BaseModel):
     kind: ScalarKind
 
 
+class AobSignature(BaseModel):
+    """A code/data-signature that re-finds an anchor's static ``base_offset`` after a patch.
+
+    ``base_offset`` shifts every build, but the bytes *around* the static pointer slot are stable,
+    so ``update-offsets`` stores the surrounding window as a wildcard AOB pattern (docs/02 §3, C4d).
+    A re-run scans the module's data sections for ``pattern`` and recovers the slot at
+    ``match_address + slot_delta`` — a fast path that skips the full candidate scan. This is
+    facts/data (docs/02 §5), not code; the decoder ignores it (it resolves via ``base_offset``).
+    """
+
+    pattern: str  # wildcard AOB, e.g. "48 8B ?? ?? ?? ?? ?? 89" (the pointer bytes wildcarded)
+    slot_delta: int  # offset from a pattern match to the pointer slot (the static base_offset)
+
+
 class Anchor(BaseModel):
     """How to resolve a struct's base address (docs/02 §3 anchoring strategy).
 
     ``module_base(module) + base_offset`` gives the anchor; each entry in ``pointer_path`` then
     dereferences (reads a pointer) and adds its offset, giving a standard multi-level pointer.
     An empty ``pointer_path`` means the base is a plain static offset from the module.
+
+    ``signature`` (optional) is the AOB that re-derives ``base_offset`` after a patch (C4d); it is
+    metadata for ``update-offsets`` and is ignored by the decoder.
     """
 
     module: str
     base_offset: int
     pointer_path: list[int] = Field(default_factory=list)
+    signature: AobSignature | None = None
 
 
 class GlobalStruct(BaseModel):

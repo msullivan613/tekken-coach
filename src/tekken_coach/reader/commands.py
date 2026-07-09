@@ -135,16 +135,27 @@ def capture_main(args: argparse.Namespace) -> int:
 def update_offsets_main(args: argparse.Namespace) -> int:
     """Attach read-only, re-discover offsets at the Jin-vs-Kazuya setup, write a candidate table.
 
-    C4c clean-room re-discovery (docs/02 §4/§5). Prints the diagnostic report either way; returns
-    nonzero when the confident core did not resolve (the report then says which anchors to widen).
+    Clean-room re-discovery (docs/02 §4/§5). Two techniques share this command:
+
+    * default — C4c heap value-scan (module-relative windows).
+    * ``--base-scan`` — C4d code-signature: scan the module's static data for the pointer that leads
+      to the heap-allocated player struct and follow a pointer chain. This is the robust path on
+      Tekken 8, whose entity struct reallocates on every character change / round (docs/02 §3).
+
+    Prints the diagnostic report either way; returns nonzero when the confident core did not resolve
+    (the report then says which anchors to widen).
     """
-    from tekken_coach.reader.discovery.orchestrate import run_update_offsets  # noqa: PLC0415
+    from tekken_coach.reader.discovery.orchestrate import (  # noqa: PLC0415
+        run_update_offsets,
+        run_update_offsets_base,
+    )
 
     def act_prompt(message: str) -> None:
         input("\n" + message + "\n")
 
+    runner = run_update_offsets_base if args.base_scan else run_update_offsets
     try:
-        table, report = run_update_offsets(
+        table, report = runner(
             args.process,
             offsets_dir=args.offsets,
             manifest_path=args.manifest,
@@ -194,6 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--manifest", default="assets/offsets/probe-manifest.json", help="probe manifest path"
     )
     p_update.add_argument("--version", default=None, help="override detected version")
+    p_update.add_argument(
+        "--base-scan",
+        action="store_true",
+        help="C4d: locate the heap player struct via a static-pointer code signature + chain "
+        "(robust on Tekken 8's reallocating entity struct) instead of the C4c heap value-scan",
+    )
     p_update.set_defaults(func=update_offsets_main)
 
     return parser

@@ -37,5 +37,31 @@
   "health_kind": "i32",
   "move_id_kind": "u32",
   "pos_kind": "f32",
-  "frame_counter_kind": "u32"
+  "frame_counter_kind": "u32",
+
+  "_base_scan_comment": [
+    "C4d code-signature base derivation (docs/02 §3): locate the HEAP-allocated player struct by",
+    "scanning the module's static data for the pointer that leads to it, follow the pointer chain,",
+    "and validate the landing against the known within-struct field layout (the ORACLE). All values",
+    "here are FACTS/DATA (docs/02 §5): the within-struct field offsets and the stable-ish chain shape",
+    "were SEEDED from the community-known Tekken 8 layout (dcep93/TekkenBot's committed",
+    "memory_address.ini) — NOT the fork's update_memory_address.py script. `base_offset` (the static",
+    "slot) is NOT seeded: it shifts every build and is re-derived by the scan.",
+    "",
+    "`pointer_path` = module+base_offset -> deref +0x10 -> +0x68 -> +0x8 -> +0x30. round_start_health",
+    "here is the base-scan regime's full HP (T8 ~200, distinct from the placeholder 150 above). These",
+    "are the durable values; the runbook covers what to recalibrate if a field reads wrong."
+  ],
+  "base_scan": {
+    "pointer_path": [16, 104, 8, 48],
+    "char_id_offset": 360,
+    "move_id_offset": 1320,
+    "damage_taken_offset": 4704,
+    "round_start_health": 200,
+    "struct_span": 8192,
+    "max_stride": 262144,
+    "aob_window_before": 16,
+    "aob_window_after": 16,
+    "scan_data_only": true
+  }
 }

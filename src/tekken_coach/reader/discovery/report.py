@@ -25,23 +25,51 @@ CALIBRATION_RUNBOOK = """\
 Windows calibration runbook (docs/02 §4) — run in native Python, not WSL:
 
   1. Launch Tekken 8. Open PRACTICE mode with P1 = Jin, P2 = Kazuya. Let the round START (both
-     health bars full) before capturing — the round-start full-health value is the stride anchor.
-  2. Run:  python -m tekken_coach.reader.commands update-offsets
-     The tool takes a first snapshot at round start, prompts you to ACT (walk P1 forward a step and
-     press a button), then takes a second snapshot. The move/position/frame-counter CHANGES between
-     the two snapshots are what locate move_id, position, and the frame counter.
-     It writes assets/offsets/<detected-version>.json and registers the version in index.json.
+     health bars full, neither player has taken damage) before capturing — round-start full health
+     and damage_taken == 0 are the anchors both techniques rely on.
+  2. Run ONE of:
+
+     a) python -m tekken_coach.reader.commands update-offsets --base-scan     [C4d, PREFERRED]
+        Code-signature derivation. Parses the module's PE header, sweeps its .data sections for the
+        static pointer that leads to the player struct, follows the pointer chain, and accepts the
+        candidate only when BOTH players resolve (P1 char id plausible, P2 = Kazuya's id 12,
+        move ids plausible, damage_taken == 0). This is the technique to use on Tekken 8: the
+        entity struct is HEAP-ALLOCATED and reallocates on every character change / round, so a
+        module-relative window or a raw heap address goes stale immediately. The derived anchor is
+        module_base + base_offset + pointer_path, which the reader re-resolves every frame.
+
+     b) python -m tekken_coach.reader.commands update-offsets                 [C4c, heap value-scan]
+        Only useful if the struct happens to sit at a fixed module-relative offset.
+
+     Either way the tool prompts you to ACT between two snapshots (walk P1 forward a step and press
+     a button); the position/move changes are what locate pos_{x,y,z} (and, for C4c, move_id and
+     the frame counter). It writes assets/offsets/<detected-version>.json and registers the version.
   3. Invalidate move/frame data for the new version if the balance patch also changed (see docs/05).
   4. Validate:  python -m tekken_coach.reader.commands doctor
      Green -> the derived core (char ids, health, frame counter, move id, positions) is correct and
      capture is usable. Then run `capture` to produce the first real FrameRecord fixtures.
 
-If a DERIVED field is wrong or an anchor is UNRESOLVED:
+If the BASE SCAN (--base-scan) found nothing:
+  - Confirm the setup really is P1 Jin vs P2 Kazuya at round start with 0 damage taken.
+  - The chain shape may have moved. Edit base_scan.pointer_path in probe-manifest.json (it is DATA).
+  - Check base_scan.round_start_health matches this build's full HP, and char_id/move_id/
+    damage_taken offsets still describe the struct (these are the oracle; if they are wrong,
+    nothing can validate).
+
+If it reports the TWO-LEVEL P2 case (P1 located, no constant stride to Kazuya):
+  - Raise base_scan.max_stride if P2 is merely farther away than the ceiling.
+  - Otherwise P2 is a separate allocation and the single-anchor + stride PlayerStruct cannot express
+    it. That needs a per-player-anchor SCHEMA change — stop and report; do not hand-edit a stride.
+
+If a DERIVED field is wrong or an anchor is UNRESOLVED (C4c path):
   - Widen or relocate the scan window in assets/offsets/probe-manifest.json (player_window /
     global_window). Player structs behind a pointer chain will not fall in a module-relative
-    window — set that window `absolute` to an address you located, or calibrate the anchor manually.
+    window — that is exactly what --base-scan exists to solve.
   - Adjust plausibility bounds (stride_min/max, char_id_max, move_id_max) if the scan locked onto a
     coincidental match.
+
+Note: the base scan derives the PLAYER anchor. The global/match anchor (frame counter, phase, round,
+timer) is carried from the seed table and still needs calibration.
 Paste the report below back so we can adjust the probe manifest together.
 """
 
@@ -78,10 +106,19 @@ class DiagnosticReport:
             jin, kaz = r.player_char_ids
             lines.append(f"  char ids              : P1(Jin)={jin}  P2(Kazuya)={kaz}")
         if r.player_anchor is not None:
+            chain = r.player_anchor.pointer_path
+            chain_txt = (
+                " -> " + " -> ".join(f"+0x{o:x}" for o in chain) if chain else " (static, no chain)"
+            )
             lines.append(
                 f"  player anchor         : {r.player_anchor.module}"
-                f"+0x{r.player_anchor.base_offset:x}"
+                f"+0x{r.player_anchor.base_offset:x}{chain_txt}"
             )
+            if r.player_anchor.signature is not None:
+                sig = r.player_anchor.signature
+                lines.append(
+                    f"  base AOB signature    : slot_delta 0x{sig.slot_delta:x}  {sig.pattern}"
+                )
         if r.global_anchor is not None:
             lines.append(
                 f"  global anchor         : {r.global_anchor.module}"
