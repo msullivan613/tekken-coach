@@ -86,7 +86,7 @@
     }
   },
   "sanity": {
-    "round_start_health": 150,
+    "round_start_health": 200,
     "health_plausible_min": 1,
     "health_plausible_max": 250,
     "move_id_max": 60000

@@ -77,8 +77,8 @@ def _healthy_frames() -> list[FrameRecord]:
     a stable non-garbage move id, and the dummy moving (distance changes)."""
     frames = []
     for i in range(6):
-        p1 = _player(12, 2145, 150, 1.5)  # stationary attacker, jab held (stable move id)
-        p2 = _player(7, 800, 150, -1.5 + 0.1 * i)  # dummy walking -> distance changes
+        p1 = _player(12, 2145, 200, 1.5)  # stationary attacker, jab held (stable move id)
+        p2 = _player(7, 800, 200, -1.5 + 0.1 * i)  # dummy walking -> distance changes
         frames.append(_frame(100 + i, p1, p2))
     return frames
 

@@ -43,7 +43,7 @@ PLANTED_GLOBAL_BASE_OFFSET = 0x200  # distinct from the seed's 0
 
 JIN_CHAR_ID = 1
 KAZUYA_CHAR_ID = 12
-ROUND_START_HEALTH = 150
+ROUND_START_HEALTH = 200
 
 # The planted player layout. Derived (discoverable) fields sit in the free high region so the seed's
 # non-derived fields (which the builder carries forward) never collide with them.

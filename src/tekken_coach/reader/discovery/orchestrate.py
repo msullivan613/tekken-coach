@@ -34,7 +34,7 @@ from tekken_coach.reader.discovery.manifest import (
 )
 from tekken_coach.reader.discovery.report import DiagnosticReport, build_report
 from tekken_coach.reader.discovery.scanners import Region, snapshot_region
-from tekken_coach.reader.faults import OffsetTableError
+from tekken_coach.reader.faults import MemoryReadError, OffsetTableError
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import DEFAULT_OFFSETS_DIR, OffsetTable, load_offset_index
 
@@ -277,6 +277,7 @@ def run_update_offsets_base(
     # the user act, then read the moved struct live. The static chain re-resolves either way — that
     # is exactly why C4d anchors in code, not the heap.
     before_source: MemorySource = live
+    after_source: MemorySource = live
     located = locate_player_struct(
         live,
         module=manifest.module,
@@ -285,6 +286,9 @@ def run_update_offsets_base(
         hint=seed.players.anchor.signature,
     )
     if located is not None and manifest.base_scan is not None:
+        from tekken_coach.reader.decode import resolve_anchor  # noqa: PLC0415
+        from tekken_coach.reader.offsets import Anchor  # noqa: PLC0415
+
         span = manifest.base_scan.struct_span
         frozen = Region(base=located.match.p1_base, data=live.read(located.match.p1_base, span))
         before_source = LayeredMemorySource([frozen], live)
@@ -292,6 +296,24 @@ def run_update_offsets_base(
             "Struct located at round start. Now walk P1 (Jin) forward a step and press a button, "
             "then press Enter to capture the second snapshot for the position scan..."
         )
+        # Freeze the *after* struct too. The position scan reads thousands of individual 4-byte
+        # floats; against a live handle each lands at a different instant, so a float that merely
+        # fluctuates frame-to-frame (an animation weight, a timer) can look like it "moved" and be
+        # mistaken for pos_x — and _derive_position takes the first match scanning upward. One bulk
+        # read at a single instant makes both snapshots coherent (and ~6000x fewer live reads).
+        after_anchor = Anchor(
+            module=manifest.module,
+            base_offset=located.match.base_offset,
+            pointer_path=list(manifest.base_scan.pointer_path),
+        )
+        try:
+            after_base = resolve_anchor(live, after_anchor)
+            frozen_after = Region(base=after_base, data=live.read(after_base, span))
+            after_source = LayeredMemorySource([frozen_after], live)
+        except MemoryReadError:
+            # Chain died between snapshots; leave the live source so derive_base_layout reports
+            # "chain did not re-resolve" rather than silently scanning stale bytes.
+            after_source = live
 
     table, report = discover_base(
         before_source,
@@ -301,7 +323,7 @@ def run_update_offsets_base(
         manifest=manifest,
         seed=seed,
         seed_version=seed_version,
-        source_after=live,
+        source_after=after_source,
     )
     if table is not None:
         persist(table, report, offsets_dir=offsets_dir)

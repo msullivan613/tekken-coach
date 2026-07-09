@@ -15,7 +15,7 @@
   "notes": "Default manifest — calibrate scan windows on the real build (docs/02 §4).",
 
   "kazuya_char_id": 12,
-  "round_start_health": 150,
+  "round_start_health": 200,
 
   "char_id_min": 0,
   "char_id_max": 200,
