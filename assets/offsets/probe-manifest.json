@@ -125,8 +125,14 @@
   "_global_scan_comment": [
     "C4e global/match anchor derivation (docs/02 §3). The global struct is heap-allocated behind its",
     "own static pointer, exactly like the player struct, so the anchor is re-derived per build. What",
-    "is seeded is FACTS/DATA: the chain shape (0x1468 from the layout source; [] and [0] are cheap",
-    "fallback hypotheses tried after it) and the within-struct offsets known to carry match state.",
+    "is seeded is FACTS/DATA: the chain shape and the within-struct offsets known to carry match",
+    "state. The layout source records the frame counter as the offset run",
+    "  0x1220 0x1298 0x1468 0xd260 0xd2d8 0xd4a8",
+    "but does NOT say where the pointer chain ends and the field offsets begin. So `pointer_paths` is",
+    "a LIST of candidate chain shapes, tried longest-first; the behavioral oracle rejects the wrong",
+    "ones, which is exactly what makes guessing here safe. [0] and [] cover the degenerate cases (a",
+    "single deref, and a global struct sitting directly at the slot).",
+    "  0x1220 = 4640, 0x1298 = 4760, 0x1468 = 5224",
     "",
     "`field_offsets` is deliberately UNASSIGNED: 0xd260/0xd2d8/0xd4a8 (53856/53976/54440) are known",
     "to carry frame counter, round, timer and phase, but not in a known order. The scan assigns them",
@@ -140,7 +146,7 @@
     "and not used."
   ],
   "global_scan": {
-    "pointer_paths": [[5224], [0], []],
+    "pointer_paths": [[4640, 4760, 5224], [4760, 5224], [5224], [0], []],
     "field_offsets": [53856, 53976, 54440],
     "field_kind": "u32",
     "frame_delta_min": 1,

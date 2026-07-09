@@ -391,9 +391,18 @@ def _global_spec() -> GlobalScanSpec:
 
 
 def test_locates_the_planted_global_anchor_and_chain() -> None:
+    # The manifest seeds SEVERAL candidate chain shapes, because the layout source records the frame
+    # counter as one long offset run and does not say where the chain ends and the fields begin. The
+    # longer shapes are tried first and dereference into nothing here; the oracle rejects them and
+    # the scan keeps going. That is what makes listing guesses safe.
+    spec = _global_spec()
+    assert len(spec.pointer_paths) > 1
+    assert GLOBAL_POINTER_PATH in spec.pointer_paths
+    assert spec.pointer_paths[0] != GLOBAL_POINTER_PATH
+
     chain = planted_chain()
     located = locate_global_struct(
-        chain.before, chain.after, module=MODULE, module_base=MODULE_BASE, spec=_global_spec()
+        chain.before, chain.after, module=MODULE, module_base=MODULE_BASE, spec=spec
     )
     assert located is not None
     assert located.match.base_offset == GLOBAL_BASE_OFFSET

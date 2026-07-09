@@ -125,6 +125,12 @@ in the source data cannot silently mislabel the frame counter. `frame_counter` +
 the acceptance: a ticking `u32` is common in any game process, but a ticking `u32` beside a steady
 round number at a known match-state offset is not.
 
+The **chain shape** is likewise seeded as a *list of hypotheses*, tried longest-first. The layout
+source records the frame counter as one long offset run and does not say where the pointer chain ends
+and the field offsets begin. Listing several candidate splits is safe precisely because the oracle
+rejects the wrong ones — a wrong chain dereferences into nothing, or lands somewhere with no ticking
+counter beside a plausible round.
+
 ### Position is not in the player struct
 
 A full-struct scan across a walking snapshot pair finds **no moving float triple** anywhere in the
