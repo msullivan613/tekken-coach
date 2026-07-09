@@ -20,6 +20,14 @@ from dataclasses import dataclass, field
 from tekken_coach.reader.discovery.derive import Confidence, DerivationResult
 from tekken_coach.reader.offsets import OffsetTable
 
+# How each confidence tier reads in the report's field table. ``??`` marks an offset the scan wrote
+# from layout *facts* without proving it this run (the encoded state words) — the calibration focus.
+_CONFIDENCE_TAG: dict[Confidence, str] = {
+    Confidence.high: "ok",
+    Confidence.medium: "!!",
+    Confidence.seeded: "??",
+}
+
 # The Windows calibration runbook, carried on every report so the paste-back loop is self-contained.
 CALIBRATION_RUNBOOK = """\
 Windows calibration runbook (docs/02 §4) — run in native Python, not WSL:
@@ -61,6 +69,20 @@ If it reports the TWO-LEVEL P2 case (P1 located, no constant stride to Kazuya):
   - Otherwise P2 is a separate allocation and the single-anchor + stride PlayerStruct cannot express
     it. That needs a per-player-anchor SCHEMA change — stop and report; do not hand-edit a stride.
 
+If the GLOBAL anchor did not resolve (frame_counter unresolved; `doctor` fails frame_monotonic):
+  - The global struct is behind its own static pointer + chain. Widen global_scan.pointer_paths in
+    probe-manifest.json (a list of candidate chain shapes; the first that validates wins).
+  - global_scan.field_offsets is an UNASSIGNED list of within-struct offsets: the tool decides which
+    is frame_counter / round / timer_ms / match_phase by BEHAVIOR (one ticks up, one holds a round
+    number, one counts down). Add offsets there rather than assigning them by hand.
+  - Practice mode often freezes the round clock, so timer_ms is frequently unassignable. That is
+    expected and does not block the anchor: frame_counter + round are what the oracle requires.
+
+If POSITION is unresolved (`doctor` fails positions_change):
+  - You must actually WALK P1 between the two snapshots — a step, not a twitch.
+  - Position is not in the entity struct on Tekken 8; it lives in a transform component the entity
+    points at. Widen base_scan.component_scan (slot_span / probe_span / inner_span / max_depth).
+
 If a DERIVED field is wrong or an anchor is UNRESOLVED (C4c path):
   - Widen or relocate the scan window in assets/offsets/probe-manifest.json (player_window /
     global_window). Player structs behind a pointer chain will not fall in a module-relative
@@ -68,8 +90,11 @@ If a DERIVED field is wrong or an anchor is UNRESOLVED (C4c path):
   - Adjust plausibility bounds (stride_min/max, char_id_max, move_id_max) if the scan locked onto a
     coincidental match.
 
-Note: the base scan derives the PLAYER anchor. The global/match anchor (frame counter, phase, round,
-timer) is carried from the seed table and still needs calibration.
+The ENCODED STATE MAP is a separate, one-time calibration (docs/02 §8). The scan proves WHERE the
+state words are; only observation proves what their VALUES mean. Until you run that protocol
+(`update-offsets` prints "encoded state map: NOT CALIBRATED"), every action_state decodes to
+`neutral` and the stun/throw/juggle flags are always false — structurally valid, semantically empty.
+Run: python -m tekken_coach.reader.commands probe-state
 Paste the report below back so we can adjust the probe manifest together.
 """
 
@@ -120,19 +145,43 @@ class DiagnosticReport:
                     f"  base AOB signature    : slot_delta 0x{sig.slot_delta:x}  {sig.pattern}"
                 )
         if r.global_anchor is not None:
+            gchain = r.global_anchor.pointer_path
+            gtxt = (
+                " -> " + " -> ".join(f"+0x{o:x}" for o in gchain)
+                if gchain
+                else " (static, no chain)"
+            )
             lines.append(
                 f"  global anchor         : {r.global_anchor.module}"
-                f"+0x{r.global_anchor.base_offset:x}"
+                f"+0x{r.global_anchor.base_offset:x}{gtxt}"
+            )
+
+        for name, comp in sorted(r.components.items()):
+            hops = " -> ".join(f"+0x{o:x}" for o in comp.pointer_path) or "(direct)"
+            label = f"{name} component"
+            lines.append(
+                f"  {label:<21} : deref(player+0x{comp.slot_offset:x}) {hops}"
+                f"  fields {sorted(comp.fields)}"
             )
 
         lines.append("")
         lines.append("  derived this run (doctor validates these):")
         for df in sorted(r.fields, key=lambda f: (f.scope, f.offset)):
-            tag = "!!" if df.confidence is Confidence.medium else "ok"
+            tag = _CONFIDENCE_TAG[df.confidence]
             lines.append(
-                f"    [{tag}] {df.scope:<6} {df.name:<14} +0x{df.offset:<4x} {df.kind:<6}"
+                f"    [{tag}] {df.scope:<6} {df.name:<19} +0x{df.offset:<5x} {df.kind:<6}"
                 f" @0x{df.example_address:x}  ({df.confidence.value}: {df.method})"
             )
+
+        if r.encoded_state is not None:
+            status = "CALIBRATED" if r.encoded_state.calibrated else "NOT CALIBRATED"
+            lines.append("")
+            lines.append(f"  encoded state map    : {status} ({len(r.encoded_state.flags)} fields)")
+            if not r.encoded_state.calibrated:
+                lines.append(
+                    "    -> every state decodes to `neutral` until you run the docs/02 §8 "
+                    "observation protocol. The reader will run; its stun/hit flags will be empty."
+                )
 
         if r.unresolved:
             lines.append("")
@@ -173,8 +222,13 @@ def build_report(
     seed: OffsetTable,
     seed_version: str,
 ) -> DiagnosticReport:
-    """Build a :class:`DiagnosticReport`, computing which table fields were seeded vs derived."""
-    derived_player = set(result.player_offsets())
+    """Build a :class:`DiagnosticReport`, computing which table fields were seeded vs derived.
+
+    A field the derivation *dropped* (the placeholder booleans an encoded state map supersedes) is
+    neither derived nor seeded — it is gone from the written table, so listing it as "verify this"
+    would send calibration after an offset that no longer exists.
+    """
+    derived_player = set(result.player_offsets()) | set(result.drop_player_fields)
     derived_global = set(result.global_offsets())
     seeded_player = [f for f in seed.players.fields if f not in derived_player]
     seeded_global = [f for f in seed.global_struct.fields if f not in derived_global]

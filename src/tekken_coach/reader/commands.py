@@ -11,6 +11,9 @@ live game today:
 * ``capture`` — attach, detect version, poll ``N`` frames, write a FrameRecord JSON fixture.
 * ``update-offsets`` — attach, re-discover offsets at the Jin-vs-Kazuya setup, and write a
   candidate ``assets/offsets/<version>.json`` + diagnostic report (C4c, docs/02 §4).
+* ``probe-state`` — stream the raw encoded state words while the user performs each state, so the
+  value -> meaning map can be filled in by observation (C4e, docs/02 §8). The offsets say *where*
+  the state lives; only this says what it *means*.
 
 Silent-producer boundary (docs/02 §2): the reader *library* prints nothing; **this command layer**
 does. All rendering lives here, not in ``decode``/``doctor``/``faults``. ``doctor``/``capture`` only
@@ -31,7 +34,10 @@ import json
 import sys
 from pathlib import Path
 
+from tekken_coach.reader.decode import read_scalar, resolve_anchor
 from tekken_coach.reader.faults import ReaderError, classify_fault
+from tekken_coach.reader.memory_source import MemorySource
+from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.reader.version import GAME_PROCESS_NAME
 
 DEFAULT_OFFSETS_DIR = "assets/offsets"
@@ -179,6 +185,90 @@ def update_offsets_main(args: argparse.Namespace) -> int:
     return 0
 
 
+def _probe_targets(table: OffsetTable) -> list[str]:
+    """The player fields ``probe-state`` watches: the encoded state words plus move context."""
+    spec = table.state_codes.encoded_state
+    assert spec is not None  # caller checks
+    context = [n for n in ("move_id", "move_frame", "counter_state") if n in table.players.fields]
+    return context + sorted(spec.flags)
+
+
+def _probe_row(
+    source: MemorySource, table: OffsetTable, anchor: int, index: int, names: list[str]
+) -> tuple[int, ...]:
+    """Read one player's watched fields as raw integers."""
+    base = anchor + index * table.players.stride
+    fields = table.players.fields
+    return tuple(int(read_scalar(source, base + fields[n].offset, fields[n].kind)) for n in names)
+
+
+def probe_state_main(args: argparse.Namespace) -> int:
+    """Stream the raw encoded state words for both players (the docs/02 §8 calibration protocol).
+
+    The scan proves *where* the state words live; only observation proves what their **values** mean
+    — no round-start oracle can, because nobody is in blockstun at round start. So this prints a
+    line every time any watched value changes, and the user performs each state in turn (block a
+    jab, eat a jab, get staggered, get thrown, ...) and reads off the raw values to bake into
+    ``assets/offsets/state-map.json``.
+
+    Read-only and derivative: it resolves the same anchor the decoder uses and reads the same
+    fields. It deliberately does **not** call ``decode_frame`` — that would need the very map we are
+    here to build.
+    """
+    import time  # noqa: PLC0415
+
+    from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
+    from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
+    from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
+
+    try:
+        source = WinMemorySource(args.process)
+        version = args.version or detect_running_version(args.process)
+        table = select_offset_table(version, args.offsets)
+    except ReaderError as exc:
+        return _report_fault(exc)
+
+    if table.state_codes.encoded_state is None:
+        print(
+            f"offset table {version} has no encoded-state map; nothing to probe. Run "
+            "`update-offsets --base-scan` first (it writes the state-word offsets into the table).",
+            file=sys.stderr,
+        )
+        return 1
+
+    names = _probe_targets(table)
+    print(f"probing {len(names)} fields x 2 players (Ctrl-C to stop): {', '.join(names)}")
+    print("perform one state at a time (block a jab, eat a jab, stagger, get thrown, jump, ...)")
+    print(f"\n{'time':>7}  {'player':<6}  " + "  ".join(f"{n:>18}" for n in names))
+
+    previous: dict[int, tuple[int, ...]] = {}
+    started = time.monotonic()
+    try:
+        while args.seconds <= 0 or time.monotonic() - started < args.seconds:
+            # The chain is re-resolved every poll: the entity struct reallocates on every round and
+            # character change, which is exactly what the anchor exists to survive (docs/02 §3).
+            try:
+                anchor = resolve_anchor(source, table.players.anchor)
+                rows = [_probe_row(source, table, anchor, index, names) for index in (0, 1)]
+            except ReaderError as exc:
+                return _report_fault(exc)
+            for index, values in enumerate(rows):
+                if previous.get(index) == values:
+                    continue
+                previous[index] = values
+                elapsed = time.monotonic() - started
+                row = "  ".join(f"{v:>18}" for v in values)
+                print(f"{elapsed:>7.2f}  P{index + 1:<5}  {row}", flush=True)
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\nstopped.")
+    print(
+        "\nNow map the raw values into assets/offsets/state-map.json and set `calibrated: true` "
+        "(docs/02 §8). Re-run `doctor` to confirm."
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m tekken_coach.reader.commands",
@@ -220,6 +310,16 @@ def build_parser() -> argparse.ArgumentParser:
         "(robust on Tekken 8's reallocating entity struct) instead of the C4c heap value-scan",
     )
     p_update.set_defaults(func=update_offsets_main)
+
+    p_probe = sub.add_parser(
+        "probe-state",
+        help="stream the raw encoded state words while you act (docs/02 §8 state-map calibration)",
+    )
+    p_probe.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR)
+    p_probe.add_argument("--version", default=None, help="override detected version")
+    p_probe.add_argument("--interval", type=float, default=0.05, help="poll interval, seconds")
+    p_probe.add_argument("--seconds", type=float, default=0.0, help="stop after N seconds (0 = ∞)")
+    p_probe.set_defaults(func=probe_state_main)
 
     return parser
 

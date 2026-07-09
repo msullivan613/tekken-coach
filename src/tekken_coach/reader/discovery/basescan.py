@@ -1,4 +1,4 @@
-"""Locate the heap-allocated player struct via a static code/data pointer (C4d, docs/02 §3).
+"""Locate Tekken 8's heap structs via static code/data pointers (C4d/C4e, docs/02 §3).
 
 C4c's value-scan derivation finds *field offsets* but locates the player struct by scanning the heap
 for a known value — which fails on Tekken 8 because the entity struct is heap-allocated and
@@ -28,6 +28,22 @@ The clean-room core is **candidate-generate-and-validate with the known field la
 5. **Fill in** health + position with C4c's value/position scans, now tractable *inside the located
    struct* rather than over the whole heap.
 
+C4e applies the same shape to the two things the player scan left seeded, changing only the oracle:
+
+* the **global/match struct** (:func:`locate_global_struct`) is behind its own static pointer, but a
+  frame counter has no structural signature — nothing about one instant identifies a ``u32``. Its
+  oracle is therefore *behavioral*, read across the two snapshots: one offset ticks up, one holds a
+  round number steady. The offsets are seeded **unassigned**; :func:`assign_global_fields` decides
+  which is which from behavior, so a reordering in the source data cannot mislabel the counter.
+* the **transform component** (:func:`find_transform_component`) holds ``pos_{x,y,z}``, which is not
+  in the entity struct at all. The entity's own stable pointer slots are the candidates, a moving
+  float triple in the pointee is the oracle, and P2 resolving through the identical path to a
+  different plausible coordinate is the acceptance — the same two-struct consistency argument.
+
+What C4e does **not** derive: the *meanings* of the encoded state values. Their offsets are seeded
+facts (:func:`_seed_state_fields`); no round-start oracle can prove what ``stun_type == 3`` means,
+because nobody is in stun at round start. That is the observation protocol of docs/02 §8.
+
 Read-only throughout: it reads process memory through the :class:`MemorySource` seam and follows
 pointers; it never writes (docs/02 §2).
 """
@@ -37,6 +53,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from tekken_coach.reader.decode import resolve_anchor
 from tekken_coach.reader.discovery.derive import (
@@ -45,12 +62,26 @@ from tekken_coach.reader.discovery.derive import (
     DerivedField,
     _plausible_coord,
 )
-from tekken_coach.reader.discovery.manifest import BaseScanSpec, ProbeManifest
+from tekken_coach.reader.discovery.manifest import (
+    BaseScanSpec,
+    ComponentScanSpec,
+    GlobalScanSpec,
+    ProbeManifest,
+)
 from tekken_coach.reader.discovery.pe import ModuleImage, Reader, Section, parse_module_image
 from tekken_coach.reader.discovery.scanners import Region, aob_scan, value_scan
 from tekken_coach.reader.faults import MemoryReadError
 from tekken_coach.reader.memory_source import MemorySource
-from tekken_coach.reader.offsets import Anchor, AobSignature, OffsetTable, ScalarKind
+from tekken_coach.reader.offsets import (
+    POSITION_COMPONENT,
+    Anchor,
+    AobSignature,
+    ComponentAnchor,
+    EncodedStateSpec,
+    FieldSpec,
+    OffsetTable,
+    ScalarKind,
+)
 
 # x64 Windows user-space bounds — a value outside this is not a live pointer, so it is not worth
 # following a chain from. Deliberately generous; the oracle does the real rejection.
@@ -304,15 +335,23 @@ class Located:
     from_signature: bool = False  # re-found via the previous table's AOB, skipping the full sweep
 
 
-def _section_passes(
-    image: ModuleImage, spec: BaseScanSpec
-) -> list[tuple[str, tuple[Section, ...]]]:
+class SweepSpec(Protocol):
+    """The two knobs :func:`_section_passes` needs; both scan specs supply them (docs/02 §3)."""
+
+    scan_data_only: bool
+    scan_writable_first: bool
+
+
+def _section_passes(image: ModuleImage, spec: SweepSpec) -> list[tuple[str, tuple[Section, ...]]]:
     """The ordered section sweeps: writable ``.data`` first, then read-only ``.rdata`` as fallback.
 
     The root pointer is a runtime-written global, so it lives in writable ``.data`` — usually far
     smaller than ``.rdata``, so sweeping it first is both likelier to hit and much cheaper. A second
     pass over ``.rdata`` only runs if ``.data`` yields no match, so correctness is unchanged if the
     assumption is ever wrong. ``scan_writable_first=False`` restores the single all-data sweep.
+
+    Shared by the player-struct sweep (:func:`locate_player_struct`) and the global/match-struct
+    sweep (:func:`global_candidates`) — both chase a runtime-written global pointer.
     """
     if not spec.scan_data_only:
         return [("all sections", image.sections)]
@@ -500,6 +539,255 @@ def find_by_signature(
 
 
 # ---------------------------------------------------------------------------
+# The global/match struct: the same technique, one struct over (C4e Phase 1)
+# ---------------------------------------------------------------------------
+#
+# The player oracle is *structural* — a struct whose fields read plausibly at one instant. The
+# global struct has no such signature: a frame counter is just a u32. Its oracle is therefore
+# **behavioral**, and needs two snapshots taken seconds apart: one offset ticks up (the frame
+# counter), one holds steady in 1..k (the round). Coincidence is cheap for either alone and
+# expensive for both at once, at offsets the fork's data file already says carry match state.
+
+# The fields the behavioral oracle can assign, in the order it assigns them: most constrained
+# first, so a small-int round is never mistaken for a small-int phase code.
+_GLOBAL_ASSIGN_ORDER = ("frame_counter", "round", "timer_ms", "match_phase")
+_GLOBAL_REQUIRED = ("frame_counter", "round")
+
+
+@dataclass(frozen=True)
+class GlobalCandidate:
+    """A resolved global-struct landing at the *before* instant, awaiting the temporal oracle."""
+
+    base_offset: int  # the static slot RVA
+    pointer_path: tuple[int, ...]  # the chain shape that resolved it
+    gbase: int  # absolute struct base in the before snapshot
+    before: dict[int, int]  # field_offset -> value at round start
+
+
+@dataclass(frozen=True)
+class GlobalMatch:
+    """An accepted global anchor: the slot, the chain, and the behavior-assigned field offsets."""
+
+    base_offset: int
+    pointer_path: tuple[int, ...]
+    gbase: int
+    offsets: dict[str, int]  # frame_counter/round[/timer_ms/match_phase] -> within-struct offset
+    before: dict[int, int]  # raw values at both instants, for the diagnostic report
+    after: dict[int, int]
+
+
+@dataclass(frozen=True)
+class GlobalLocated:
+    """The accepted global match plus how many distinct landings passed the oracle."""
+
+    match: GlobalMatch
+    accepted: int
+
+    @property
+    def ambiguous(self) -> bool:
+        """More than one landing satisfied frame-counter + round; the pick is not trustworthy."""
+        return self.accepted > 1
+
+
+def assign_global_fields(
+    before: dict[int, int], after: dict[int, int], spec: GlobalScanSpec
+) -> dict[str, int]:
+    """Assign the seeded offsets to match fields **by behavior** across two snapshots (pure).
+
+    We know these offsets carry match state; we do not know which is which, and guessing would bake
+    a coincidence into a data file. So each field is claimed by the behavior only it exhibits, most
+    constrained first:
+
+    * ``frame_counter`` — strictly increased, by a plausible delta (a live counter, not a checksum).
+    * ``round`` — held **constant** in ``[round_min, round_max]`` (the round does not turn over
+      while the user walks a step).
+    * ``timer_ms`` — strictly **decreased** and within ``[0, timer_ms_max]``: a round clock counts
+      down. Optional — practice mode often freezes the clock, and a frozen clock is not
+      distinguishable from any other constant.
+    * ``match_phase`` — whatever is left that reads as a small code. Weakest, hence last, hence
+      optional.
+
+    Returns the offsets it could claim. Missing ``frame_counter`` or ``round`` means this landing is
+    not the global struct; the caller rejects it (see :data:`_GLOBAL_REQUIRED`).
+    """
+    claimed: dict[str, int] = {}
+    taken: set[int] = set()
+
+    def claim(name: str, predicate: Callable[[int, int], bool]) -> None:
+        for offset in sorted(before):
+            if offset in taken or offset not in after:
+                continue
+            if predicate(before[offset], after[offset]):
+                claimed[name] = offset
+                taken.add(offset)
+                return
+
+    for name in _GLOBAL_ASSIGN_ORDER:
+        if name == "frame_counter":
+            claim(name, lambda old, new: spec.frame_delta_min <= new - old <= spec.frame_delta_max)
+        elif name == "round":
+            claim(name, lambda old, new: old == new and spec.round_min <= old <= spec.round_max)
+        elif name == "timer_ms":
+            claim(name, lambda old, new: new < old and 0 <= old <= spec.timer_ms_max)
+        else:
+            claim(name, lambda old, _new: 0 <= old < spec.match_phase_max)
+    return claimed
+
+
+def _read_global_fields(
+    source: MemorySource, gbase: int, spec: GlobalScanSpec
+) -> dict[int, int] | None:
+    """Read every seeded field offset at ``gbase``; ``None`` if any is unreadable (dead landing)."""
+    values: dict[int, int] = {}
+    for offset in spec.field_offsets:
+        value = _read_scalar(source, gbase + offset, spec.field_kind)
+        if value is None:
+            return None
+        values[offset] = value
+    return values
+
+
+def global_candidates(
+    source: MemorySource,
+    *,
+    module: str,
+    module_base: int,
+    image: ModuleImage,
+    spec: GlobalScanSpec,
+    progress: Progress | None = None,
+) -> list[GlobalCandidate]:
+    """Sweep static data for pointer slots whose chain lands on a *plausible* global struct.
+
+    The **instant-A** half of the oracle, run at round start: follow every seeded chain shape from
+    every candidate slot and keep the landings where all seeded field offsets are readable and at
+    least one reads as a plausible round number. That is a weak filter by design — it exists only to
+    shrink the set the temporal oracle (:func:`confirm_global`) has to re-read after the user acts,
+    and a weak filter cannot produce a false accept, only extra work.
+
+    Split from :func:`confirm_global` because the two halves must observe **different instants**: a
+    single live process handle only ever reads *now*, so the frame-counter delta the oracle needs
+    only exists across the user's action prompt.
+    """
+    candidates: list[GlobalCandidate] = []
+    seen: set[tuple[int, tuple[int, ...]]] = set()
+    for label, sections in _section_passes(image, spec):
+        if not sections:
+            continue
+        _emit(progress, f"  sweeping {label} for global-struct pointers ...")
+        slots = find_candidate_slots(source, module_base, sections, progress=progress)
+        for i, base_offset in enumerate(slots):
+            if i >= spec.max_candidates:
+                _emit(progress, f"    candidate ceiling {spec.max_candidates} reached; stopping")
+                break
+            for path in spec.pointer_paths:
+                gbase = _follow_chain(source, module, module_base, base_offset, path)
+                if gbase is None:
+                    continue
+                key = (gbase, tuple(path))
+                if key in seen:
+                    continue
+                values = _read_global_fields(source, gbase, spec)
+                if values is None:
+                    continue
+                if not any(spec.round_min <= v <= spec.round_max for v in values.values()):
+                    continue
+                seen.add(key)
+                candidates.append(
+                    GlobalCandidate(
+                        base_offset=base_offset,
+                        pointer_path=tuple(path),
+                        gbase=gbase,
+                        before=values,
+                    )
+                )
+        if candidates:
+            _emit(progress, f"  {len(candidates)} global candidates from {label}")
+            break
+    return candidates
+
+
+def confirm_global(
+    source_after: MemorySource,
+    candidates: Sequence[GlobalCandidate],
+    *,
+    module: str,
+    module_base: int,
+    spec: GlobalScanSpec,
+    progress: Progress | None = None,
+) -> GlobalLocated | None:
+    """The **instant-B** half: re-resolve each candidate and apply the temporal oracle.
+
+    Re-resolves the chain from the *slot* rather than reusing the recorded ``gbase`` — the global
+    struct may have been reallocated between the snapshots, exactly as the player struct is, and
+    re-walking the chain is what makes the anchor survive that (docs/02 §3).
+
+    Several distinct landings satisfying the oracle is reported (:attr:`GlobalLocated.ambiguous`)
+    rather than silently resolved by taking the first.
+    """
+    accepted: list[GlobalMatch] = []
+    for candidate in candidates:
+        gbase = _follow_chain(
+            source_after, module, module_base, candidate.base_offset, list(candidate.pointer_path)
+        )
+        if gbase is None:
+            continue
+        after = _read_global_fields(source_after, gbase, spec)
+        if after is None:
+            continue
+        offsets = assign_global_fields(candidate.before, after, spec)
+        if any(name not in offsets for name in _GLOBAL_REQUIRED):
+            continue
+        accepted.append(
+            GlobalMatch(
+                base_offset=candidate.base_offset,
+                pointer_path=candidate.pointer_path,
+                gbase=gbase,
+                offsets=offsets,
+                before=candidate.before,
+                after=after,
+            )
+        )
+    if not accepted:
+        _emit(progress, "  no global candidate passed the frame-counter/round oracle")
+        return None
+    _emit(progress, f"  global anchor: +0x{accepted[0].base_offset:x} ({len(accepted)} accepted)")
+    return GlobalLocated(match=accepted[0], accepted=len(accepted))
+
+
+def locate_global_struct(
+    before: MemorySource,
+    after: MemorySource,
+    *,
+    module: str,
+    module_base: int,
+    spec: GlobalScanSpec,
+    image: ModuleImage | None = None,
+    progress: Progress | None = None,
+) -> GlobalLocated | None:
+    """Compose both halves against two snapshot sources (the offline/simple path).
+
+    The live orchestration cannot use this — it must run :func:`global_candidates` at round start,
+    prompt the user to act, and only then run :func:`confirm_global` — but every offline test and
+    any caller holding two frozen snapshots can.
+    """
+    if image is None:
+        image = parse_module_image(_module_reader(before, module_base))
+    candidates = global_candidates(
+        before, module=module, module_base=module_base, image=image, spec=spec, progress=progress
+    )
+    if not candidates:
+        return None
+    return confirm_global(
+        after,
+        candidates,
+        module=module,
+        module_base=module_base,
+        spec=spec,
+        progress=progress,
+    )
+
+
+# ---------------------------------------------------------------------------
 # In-struct health + position (tractable once the struct is located)
 # ---------------------------------------------------------------------------
 
@@ -584,8 +872,339 @@ def _read_f32(source: MemorySource, address: int) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# The transform component: position lives outside the entity struct (C4e Phase 3)
+# ---------------------------------------------------------------------------
+#
+# `_derive_position` above scans the entity struct itself and, on the real Tekken 8 build, finds
+# nothing: there is no moving float triple anywhere in the struct, and the fork's layout data has no
+# position field either. Position lives in a separate Unreal transform component that the entity
+# points at. So the search goes one (or two) pointers deep: sweep the entity's own pointer slots for
+# one whose pointee holds a triple that moves when the player walks.
+
+
+def _moving_triple(
+    before: Region, after: Region, base: int, span: int, spec: ComponentScanSpec, m: ProbeManifest
+) -> int | None:
+    """Offset within ``[base, base+span)`` of an (x,y,z) f32 triple whose ``x`` really moved (pure).
+
+    ``min_delta`` is what separates a coordinate from a float that merely jitters (an animation
+    weight, a blend factor); ``_plausible_coord`` rejects ints reinterpreted as denormals.
+    """
+    for off in range(0, span - 8, spec.probe_align):
+        values: list[tuple[float, float]] = []
+        for k in range(3):
+            va = before.read_scalar(base + off + 4 * k, "f32")
+            vb = after.read_scalar(base + off + 4 * k, "f32")
+            if va is None or vb is None:
+                break
+            if not _plausible_coord(float(va), m) or not _plausible_coord(float(vb), m):
+                break
+            values.append((float(va), float(vb)))
+        if len(values) != 3:
+            continue
+        if abs(values[0][1] - values[0][0]) >= spec.min_delta:
+            return off
+    return None
+
+
+def _probe_regions(
+    before: MemorySource, after: MemorySource, address: int, span: int
+) -> tuple[Region, Region] | None:
+    """Bulk-read the same span from both snapshots, or ``None`` if either is too short to hold a
+    triple. Bulk reads keep the two snapshots *coherent* — a per-float live read would sample each
+    axis at a different instant."""
+    data_b = _read_region(before, address, span)
+    data_a = _read_region(after, address, span)
+    usable = min(len(data_b), len(data_a))
+    if usable < 12:
+        return None
+    return Region(base=address, data=data_b[:usable]), Region(base=address, data=data_a[:usable])
+
+
+def _stable_pointers(
+    before: Region, after: Region, span: int, align: int, limit: int
+) -> list[tuple[int, int]]:
+    """``(slot_offset, pointer)`` for slots holding the *same* plausible pointer in both snapshots.
+
+    A component object does not reallocate while the player takes a step, so a slot whose pointer
+    changed is not the one we want — and this prunes the overwhelming majority of slots before any
+    further read happens.
+    """
+    out: list[tuple[int, int]] = []
+    usable = min(len(before.data), len(after.data), span)
+    for off in range(0, usable - _PTR_SIZE + 1, align):
+        (pb,) = struct.unpack_from("<Q", before.data, off)
+        (pa,) = struct.unpack_from("<Q", after.data, off)
+        if pb != pa or not _plausible_pointer(pb):
+            continue
+        out.append((off, pb))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _triple_in_component(
+    before: MemorySource,
+    after: MemorySource,
+    component: int,
+    spec: ComponentScanSpec,
+    m: ProbeManifest,
+) -> int | None:
+    """Scan one component object for the moving triple."""
+    regions = _probe_regions(before, after, component, spec.probe_span)
+    if regions is None:
+        return None
+    rb, ra = regions
+    return _moving_triple(rb, ra, component, len(rb.data), spec, m)
+
+
+def _confirm_on_p2(
+    source: MemorySource,
+    p2_base: int,
+    slot_offset: int,
+    path: Sequence[int],
+    triple_offset: int,
+    p1_pos: tuple[float, float, float],
+    m: ProbeManifest,
+) -> bool:
+    """The same component path must resolve for P2 to a *different*, plausible position.
+
+    Mutual two-struct consistency, exactly as the player oracle uses: a coincidental float triple in
+    P1's neighborhood will not also be a plausible, distinct coordinate at the identical path from
+    P2's base. The two characters stand apart at round start, so identical positions mean we
+    resolved the same object twice — a path through a shared/global object, not a per-player one.
+    """
+    address = _read_scalar(source, p2_base + slot_offset, "ptr")
+    if address is None or not _plausible_pointer(address):
+        return False
+    for offset in path:
+        address = _read_scalar(source, address + offset, "ptr")
+        if address is None or not _plausible_pointer(address):
+            return False
+    p2_pos: list[float] = []
+    for k in range(3):
+        value = _read_f32(source, address + triple_offset + 4 * k)
+        if value is None or not _plausible_coord(value, m):
+            return False
+        p2_pos.append(value)
+    return tuple(p2_pos) != p1_pos
+
+
+def find_transform_component(
+    before: MemorySource,
+    after: MemorySource,
+    *,
+    p1_base: int,
+    p1_after_base: int,
+    p2_base: int,
+    spec: ComponentScanSpec,
+    manifest: ProbeManifest,
+    progress: Progress | None = None,
+) -> ComponentAnchor | None:
+    """Locate the component holding ``pos_{x,y,z}`` behind a pointer in the entity struct.
+
+    Candidate-generate-and-validate again, one indirection out: the entity's stable pointer slots
+    are the candidates, a moving float triple inside the pointee is the oracle, and P2 resolving via
+    the *same* path to a different plausible position is the acceptance (:func:`_confirm_on_p2`).
+    ``max_depth >= 2`` also follows one more hop, for the Unreal ``actor -> object -> component``
+    shape. Returns the :class:`ComponentAnchor` the decoder consumes, or ``None``.
+    """
+    structs = _probe_regions(before, after, p1_base, spec.slot_span)
+    if structs is None:
+        return None
+    sb, sa = structs
+    # `sa` is P1's struct in the after snapshot, which may sit at a different address; re-base it so
+    # slot offsets line up with `sb`.
+    if p1_after_base != p1_base:
+        sa_data = _read_region(after, p1_after_base, len(sb.data))
+        sa = Region(base=p1_base, data=sa_data[: len(sb.data)])
+    slots = _stable_pointers(sb, sa, spec.slot_span, spec.slot_align, spec.max_slots)
+    _emit(progress, f"  transform scan: {len(slots)} stable pointer slots in the entity struct")
+
+    for slot_offset, pointer in slots:
+        triple = _triple_in_component(before, after, pointer, spec, manifest)
+        if triple is not None and _confirm_on_p2(
+            before, p2_base, slot_offset, (), triple, _pos_at(before, pointer, triple), manifest
+        ):
+            return _component_anchor(slot_offset, (), triple, manifest)
+        if spec.max_depth < 2:
+            continue
+        inner = _probe_regions(before, after, pointer, spec.inner_span)
+        if inner is None:
+            continue
+        ib, ia = inner
+        for inner_offset, inner_pointer in _stable_pointers(
+            ib, ia, spec.inner_span, spec.slot_align, spec.max_slots
+        ):
+            triple = _triple_in_component(before, after, inner_pointer, spec, manifest)
+            if triple is None:
+                continue
+            p1_pos = _pos_at(before, inner_pointer, triple)
+            if _confirm_on_p2(
+                before, p2_base, slot_offset, (inner_offset,), triple, p1_pos, manifest
+            ):
+                return _component_anchor(slot_offset, (inner_offset,), triple, manifest)
+    return None
+
+
+def _pos_at(source: MemorySource, component: int, triple: int) -> tuple[float, float, float]:
+    """P1's coordinate triple, for the P2 distinctness check. Unreadable axes read as ``nan``."""
+    values = [_read_f32(source, component + triple + 4 * k) for k in range(3)]
+    return tuple(float("nan") if v is None else v for v in values)  # type: ignore[return-value]
+
+
+def _component_anchor(
+    slot_offset: int, path: Sequence[int], triple: int, m: ProbeManifest
+) -> ComponentAnchor:
+    return ComponentAnchor(
+        slot_offset=slot_offset,
+        pointer_path=list(path),
+        fields={
+            axis: FieldSpec(offset=triple + delta, kind=m.pos_kind)
+            for axis, delta in (("pos_x", 0), ("pos_y", 4), ("pos_z", 8))
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Top-level: derive the whole player anchor + fields into a DerivationResult
 # ---------------------------------------------------------------------------
+
+
+def _derive_global(
+    result: DerivationResult,
+    source: MemorySource,
+    source_after: MemorySource | None,
+    *,
+    module: str,
+    module_base: int,
+    manifest: ProbeManifest,
+    seed: OffsetTable,
+    global_located: GlobalLocated | None,
+    sweep_global: bool,
+    progress: Progress | None,
+) -> None:
+    """Fill ``result``'s global anchor + match fields, falling back to the seed anchor (C4e §1).
+
+    The global struct is behind its own static pointer, so it gets the same treatment as the player
+    struct: sweep, chain, oracle. Only the oracle differs (behavioral, not structural — see
+    :func:`assign_global_fields`). Failing to locate it is **not** fatal: the seed anchor is carried
+    and the field is flagged, exactly as C4d did for every global field.
+    """
+    spec = manifest.global_scan
+    result.global_anchor = seed.global_struct.anchor
+    if spec is None:
+        result.notes.append(
+            "no global_scan spec in the probe manifest; global/match anchor carried from the seed "
+            "table and still needs calibration."
+        )
+        return
+    if global_located is None and sweep_global and source_after is not None:
+        global_located = locate_global_struct(
+            source,
+            source_after,
+            module=module,
+            module_base=module_base,
+            spec=spec,
+            progress=progress,
+        )
+    if global_located is None:
+        result.unresolved.append("frame_counter")
+        result.notes.append(
+            "no static pointer slot's chain landed on a struct with a ticking frame counter and a "
+            "plausible round; the global/match anchor is SEEDED (the reader's frame-monotonic "
+            "check will fail). Widen global_scan.pointer_paths / field_offsets in the probe "
+            "manifest — they are DATA (see runbook)."
+        )
+        return
+
+    match = global_located.match
+    result.global_anchor = Anchor(
+        module=module, base_offset=match.base_offset, pointer_path=list(match.pointer_path)
+    )
+    chain = " -> ".join(f"+0x{o:x}" for o in match.pointer_path) or "(static)"
+    for name, offset in match.offsets.items():
+        result.fields.append(
+            DerivedField(
+                name=name,
+                scope="global",
+                offset=offset,
+                kind=spec.field_kind,
+                example_address=match.gbase + offset,
+                confidence=Confidence.high,
+                method=f"behavioral oracle: {match.before[offset]} -> {match.after[offset]} "
+                f"across the two snapshots (chain {chain})",
+            )
+        )
+    unassigned = [o for o in spec.field_offsets if o not in match.offsets.values()]
+    if unassigned:
+        raws = ", ".join(f"+0x{o:x}={match.before[o]}" for o in unassigned)
+        result.notes.append(
+            f"global offsets the behavioral oracle could not claim ({raws}) are left SEEDED. "
+            "timer_ms is often unclaimable in practice mode (the round clock is frozen, so it is "
+            "indistinguishable from any other constant); match_phase needs its state_codes map "
+            "calibrated regardless."
+        )
+    if "match_phase" not in match.offsets:
+        result.notes.append(
+            "match_phase not assigned; the seeded offset + state_codes.match_phase map are "
+            "unverified. Capture will decode a MatchState from whatever that offset holds."
+        )
+    if global_located.ambiguous:
+        result.notes.append(
+            f"{global_located.accepted} distinct landings satisfied the global oracle; the first "
+            "was taken. Verify via the doctor's frame-monotonic check, and narrow "
+            "global_scan.pointer_paths if it is wrong."
+        )
+
+
+def _seed_state_fields(result: DerivationResult, spec: BaseScanSpec, p1_base: int) -> None:
+    """Write the encoded state words into the table at their known offsets (C4e §2, facts/data).
+
+    These are **not derived**. No two-snapshot oracle can prove where ``stun_type`` lives — its
+    value only changes when the player is *hit*, which the Jin-vs-Kazuya round-start setup
+    deliberately never is. So the offsets come from the layout data (docs/02 §5 facts), are marked
+    :attr:`~.derive.Confidence.seeded`, and the *meanings* of their values are calibrated by
+    observation (docs/02 §8).
+
+    The C4a placeholder's per-flag booleans are dropped **only when a state map is present to
+    replace them**: they describe a struct that does not exist, and carrying them forward would look
+    like working offsets — but removing them without installing the encoded path would leave the
+    decoder with no way to read state at all.
+    """
+    if not spec.state_fields:
+        return
+    # Three kinds of seeded field, and the report must not blur them: an encoded state word whose
+    # values need the §8 observation protocol; `counter_state`, whose values are read through the
+    # table's own state_codes map (seeded, verifiable by inspection); and `move_frame`, a plain
+    # integer where the offset is all there is to know. Saying "calibrate this" about the last one
+    # sends the user chasing a meaning that does not exist.
+    encoded = set(result.encoded_state.flags) if result.encoded_state is not None else set()
+    for name, field_spec in spec.state_fields.items():
+        if name in encoded:
+            method = (
+                "seeded from the T8 layout data; its VALUES need the docs/02 §8 observation "
+                "calibration"
+            )
+        elif name == "counter_state":
+            method = (
+                "seeded from the T8 layout data; its values decode via state_codes.counter_state"
+            )
+        else:
+            method = "seeded from the T8 layout data (the offset is the whole fact)"
+        result.fields.append(
+            DerivedField(
+                name=name,
+                scope="player",
+                offset=field_spec.offset,
+                kind=field_spec.kind,
+                example_address=p1_base + field_spec.offset,
+                confidence=Confidence.seeded,
+                method=method,
+            )
+        )
+    if result.encoded_state is not None:
+        result.drop_player_fields.extend(spec.legacy_state_fields)
 
 
 def derive_base_layout(
@@ -597,23 +1216,29 @@ def derive_base_layout(
     seed: OffsetTable,
     source_after: MemorySource | None = None,
     located: Located | None = None,
+    global_located: GlobalLocated | None = None,
+    sweep_global: bool = True,
+    state_map: EncodedStateSpec | None = None,
     progress: Progress | None = None,
 ) -> DerivationResult:
-    """Run the full C4d code-signature derivation and return a :class:`DerivationResult`.
+    """Run the full code-signature derivation and return a :class:`DerivationResult`.
 
     Reuses C4c's result/build/report ecosystem: the derived player :class:`Anchor` (with pointer
     chain + AOB signature), the stride, the char ids, and the derivable field offsets (``char_id``,
-    ``move_id`` from the oracle; ``health``/``pos`` from the in-struct scans) go into the same
-    :class:`DerivationResult` the builder consumes. The **global** anchor is carried from ``seed`` —
-    C4d locates the heap player struct; global/match anchoring is a separate concern (see the
-    runbook), so it is seeded and flagged for calibration, not re-derived here.
+    ``move_id`` from the oracle; ``health``/``pos`` from the in-struct and component scans) go into
+    the same :class:`DerivationResult` the builder consumes. C4e adds the **global/match anchor**
+    (:func:`_derive_global`), the seeded **encoded state words** (:func:`_seed_state_fields`), and
+    the **transform component** position lives in (:func:`find_transform_component`).
 
-    ``located`` lets the caller pass a struct location it already swept for (the live orchestration
-    runs :func:`locate_player_struct` once to know where to freeze the round-start snapshot); when
-    given, the expensive sweep is not repeated here. ``progress`` threads to the sweep for a
-    live-observable log.
+    ``located`` / ``global_located`` let the caller pass locations it already swept for; when given,
+    the expensive sweeps are not repeated. The live orchestration **must** pre-sweep the global
+    (its oracle needs two instants straddling the user's action, which a single live handle cannot
+    manufacture after the fact) and therefore passes ``sweep_global=False`` — so that "swept, found
+    nothing" is not confused with "not swept yet". ``state_map`` is the value -> meaning data the
+    builder writes into the table. ``progress`` threads to the sweeps for a live-observable log.
     """
     result = DerivationResult(module=module, module_base=module_base)
+    result.encoded_state = state_map
     spec = manifest.base_scan
     if spec is None:
         result.notes.append("no base_scan spec in the probe manifest; cannot run the code scan.")
@@ -632,7 +1257,18 @@ def derive_base_layout(
             progress=progress,
         )
 
-    result.global_anchor = seed.global_struct.anchor
+    _derive_global(
+        result,
+        source,
+        source_after,
+        module=module,
+        module_base=module_base,
+        manifest=manifest,
+        seed=seed,
+        global_located=global_located,
+        sweep_global=sweep_global,
+        progress=progress,
+    )
     if located is None:
         result.notes.append(
             "no static pointer slot's chain landed on a plausible player struct. Verify the "
@@ -661,10 +1297,6 @@ def derive_base_layout(
         base_offset=match.base_offset,
         pointer_path=list(spec.pointer_path),
         signature=signature,
-    )
-    result.notes.append(
-        "global/match anchor carried from the seed table — C4d locates the heap PLAYER struct; "
-        "global anchoring is a separate calibration (see runbook)."
     )
 
     if not match.strong:
@@ -749,49 +1381,117 @@ def derive_base_layout(
             f"{spec.round_start_health} for this build."
         )
 
-    if source_after is not None:
-        after_base = _follow_chain(
-            source_after, module, module_base, match.base_offset, spec.pointer_path
-        )
-        if after_base is None:
-            result.unresolved.append("pos_x")
-            result.notes.append("chain did not re-resolve in the second snapshot; position seeded.")
-        else:
-            if after_base != match.p1_base:
-                result.notes.append(
-                    f"player struct reallocated between snapshots (0x{match.p1_base:x} -> "
-                    f"0x{after_base:x}); the static chain tracked it — this is exactly why C4d "
-                    "anchors in code, not the heap."
-                )
-            pos_off = _derive_position(
-                source, source_after, match, after_base, spec, manifest, span
-            )
-            if pos_off is None:
-                result.unresolved.append("pos_x")
-                result.notes.append(
-                    f"no moving float triple found in P1's struct (scanned 0x{span:x} bytes = the "
-                    "full stride); position is seeded. Either P1 did not actually move between the "
-                    "two snapshots, or position lives in a separate transform component reachable "
-                    "by its own pointer (a follow-up; not in the single entity struct)."
-                )
-            else:
-                for axis, delta in (("pos_x", 0), ("pos_y", 4), ("pos_z", 8)):
-                    result.fields.append(
-                        DerivedField(
-                            name=axis,
-                            scope="player",
-                            offset=pos_off + delta,
-                            kind=manifest.pos_kind,
-                            example_address=match.p1_base + pos_off + delta,
-                            confidence=Confidence.medium,
-                            method=f"moving finite float triple at +0x{pos_off:x} (x/y/z)",
-                        )
-                    )
-    else:
+    # The encoded state words + move_frame + counter_state, seeded at their known offsets (C4e §2).
+    _seed_state_fields(result, spec, match.p1_base)
+
+    if source_after is None:
         result.unresolved.append("pos_x")
         result.notes.append("no second snapshot; position seeded (run with an act-then-capture).")
+        return result
 
+    after_base = _follow_chain(
+        source_after, module, module_base, match.base_offset, spec.pointer_path
+    )
+    if after_base is None:
+        result.unresolved.append("pos_x")
+        result.notes.append("chain did not re-resolve in the second snapshot; position seeded.")
+        return result
+    if after_base != match.p1_base:
+        result.notes.append(
+            f"player struct reallocated between snapshots (0x{match.p1_base:x} -> "
+            f"0x{after_base:x}); the static chain tracked it — this is exactly why C4d "
+            "anchors in code, not the heap."
+        )
+    _derive_position_fields(
+        result,
+        source,
+        source_after,
+        match=match,
+        after_base=after_base,
+        spec=spec,
+        manifest=manifest,
+        span=span,
+        progress=progress,
+    )
     return result
+
+
+def _derive_position_fields(
+    result: DerivationResult,
+    source: MemorySource,
+    source_after: MemorySource,
+    *,
+    match: OracleMatch,
+    after_base: int,
+    spec: BaseScanSpec,
+    manifest: ProbeManifest,
+    span: int,
+    progress: Progress | None,
+) -> None:
+    """Locate ``pos_{x,y,z}``: in the entity struct if it is there, else in a transform component.
+
+    The in-struct scan runs first because it is cheap and, where it works, yields a flat field the
+    decoder reads without an extra dereference. On the real Tekken 8 build it finds nothing, and the
+    component scan (C4e Phase 3) takes over — position sits behind the entity's own pointer.
+    """
+    pos_off = _derive_position(source, source_after, match, after_base, spec, manifest, span)
+    if pos_off is not None:
+        for axis, delta in (("pos_x", 0), ("pos_y", 4), ("pos_z", 8)):
+            result.fields.append(
+                DerivedField(
+                    name=axis,
+                    scope="player",
+                    offset=pos_off + delta,
+                    kind=manifest.pos_kind,
+                    example_address=match.p1_base + pos_off + delta,
+                    confidence=Confidence.medium,
+                    method=f"moving finite float triple at +0x{pos_off:x} (x/y/z)",
+                )
+            )
+        return
+
+    component_spec = spec.component_scan
+    if component_spec is None:
+        result.unresolved.append("pos_x")
+        result.notes.append(
+            f"no moving float triple found in P1's struct (scanned 0x{span:x} bytes = the full "
+            "stride) and no base_scan.component_scan spec to look one pointer further; position is "
+            "seeded."
+        )
+        return
+
+    assert match.stride is not None  # only reached on a strong match
+    component = find_transform_component(
+        source,
+        source_after,
+        p1_base=match.p1_base,
+        p1_after_base=after_base,
+        p2_base=match.p1_base + match.stride,
+        spec=component_spec,
+        manifest=manifest,
+        progress=progress,
+    )
+    if component is None:
+        result.unresolved.append("pos_x")
+        result.notes.append(
+            f"no moving float triple in P1's struct (0x{span:x} bytes) and none in any component "
+            f"it points at (depth {component_spec.max_depth}); position is seeded. Either P1 did "
+            "not actually move between the two snapshots, or the transform is deeper / further "
+            "into the component than base_scan.component_scan bounds allow — widen slot_span / "
+            "probe_span / max_depth (they are DATA)."
+        )
+        return
+
+    result.components[POSITION_COMPONENT] = component
+    result.drop_player_fields.extend(["pos_x", "pos_y", "pos_z"])
+    triple = component.fields["pos_x"].offset
+    hops = " -> ".join(f"+0x{o:x}" for o in component.pointer_path) or "(direct)"
+    result.notes.append(
+        f"position is NOT in the entity struct; it lives in a transform component reached via "
+        f"+0x{component.slot_offset:x} {hops}, triple at +0x{triple:x}. Confirmed by resolving the "
+        "same path from P2's base to a different, plausible coordinate. The table carries it as a "
+        f"{POSITION_COMPONENT!r} component anchor (schema change, docs/03 §1)."
+    )
 
 
 class LayeredMemorySource:

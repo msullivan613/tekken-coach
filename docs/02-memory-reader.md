@@ -46,6 +46,11 @@ Categories read:
   throw state, airborne/juggle state, Heat state (active + timer), Rage state, and the current
   **input** (buttons/direction) where available.
 
+Three of those read differently than the naive layout suggests, and §3 explains how:
+**health** is computed from `damage_taken`; the stun/throw/airborne **flags** are decoded from a few
+encoded state words rather than read as booleans (§8); and **position** lives in a separate transform
+component, not in the player struct.
+
 **Read-only, always.** The reader opens the process for read access, reads, and closes. It never
 calls a write primitive and never synthesizes input. The entire input/bot half of the ancestral
 TekkenBot is **removed from the port, not merely unused** ([00](00-architecture.md) §7), so there
@@ -100,6 +105,46 @@ pointer bytes wildcarded) and stores it in the table so a subsequent run re-find
 anchor with no code change; the chain is re-resolved on every read, which is precisely what makes it
 survive reallocation.
 
+**The global/match struct is behind its own static pointer too**, so it gets the same treatment —
+sweep the static data, follow a seeded chain shape, validate the landing. What differs is the
+**oracle**. The player struct has a *structural* signature (a plausible char id next to a plausible
+move id next to a zero damage counter). A frame counter is just a `u32`; nothing about one instant
+identifies it. So the global oracle is **behavioral**, read across the same two snapshots the
+position scan uses:
+
+| field | behavior across the two snapshots | required? |
+|---|---|---|
+| `frame_counter` | strictly increases, by a plausible delta | yes |
+| `round` | holds constant, in 1..k | yes |
+| `timer_ms` | strictly decreases (a round clock counts down) | no — practice mode freezes it |
+| `match_phase` | reads as a small code | no |
+
+Crucially, the within-struct offsets are seeded as an **unassigned list**: we know those offsets
+carry match state, not which is which. The scan assigns offset → field *by behavior*, so a reordering
+in the source data cannot silently mislabel the frame counter. `frame_counter` + `round` together are
+the acceptance: a ticking `u32` is common in any game process, but a ticking `u32` beside a steady
+round number at a known match-state offset is not.
+
+### Position is not in the player struct
+
+A full-struct scan across a walking snapshot pair finds **no moving float triple** anywhere in the
+entity struct (confirmed live), and the fork's layout data has no position field either. Position
+lives in a separate Unreal **transform component**, reached by a pointer stored inside the entity
+struct. `PlayerStruct` therefore carries an optional named `components` map, each a
+`ComponentAnchor` resolved *relative to that player's base*:
+
+```
+address = deref(player_base + slot_offset)   # the component object
+for o in pointer_path: address = deref(address + o)   # further hops (an Unreal actor -> scene component)
+# fields are read at address + field.offset
+```
+
+`update-offsets` locates it the same way it locates everything else: the entity's own pointer slots
+are the candidates (filtered to those holding the *same* pointer in both snapshots — a component does
+not reallocate while the player takes a step), a moving `(x,y,z)` float triple inside the pointee is
+the oracle, and **P2 resolving through the identical path to a different, plausible coordinate** is
+the acceptance. That is the same two-struct mutual-consistency argument the player oracle rests on.
+
 ## 4. Patch handling (the maintenance story)
 
 A Season/balance patch can shift **both** offsets **and** move data (summary §7). The runbook:
@@ -108,22 +153,34 @@ A Season/balance patch can shift **both** offsets **and** move data (summary §7
 2. User opens **practice mode, P1 Jin vs P2 Kazuya**, at **round start** (full health, no damage
    taken), and runs the clean-room `update-offsets --base-scan` command (§5 — a re-implementation of
    the fork's re-discovery *technique*, not its script). It re-derives the player anchor
-   (`base_offset` + pointer chain + AOB signature) and writes a candidate
-   `assets/offsets/<version>.json` keyed to the detected exe version. The tool prompts the user to
-   walk P1 and press a button between two snapshots; the resulting position delta locates
-   `pos_{x,y,z}`, and an in-struct scan for round-start max HP locates `health`.
-   (`update-offsets` without `--base-scan` is the older heap value-scan; it cannot reach a struct
-   behind a pointer chain.)
+   (`base_offset` + pointer chain + AOB signature) and the global/match anchor, and writes a
+   candidate `assets/offsets/<version>.json` keyed to the detected exe version. The tool prompts the
+   user to walk P1 and press a button between two snapshots; that single action does triple duty —
+   the position delta locates the transform component, the frame-counter delta identifies the global
+   struct, and an in-struct scan for round-start max HP locates `health` (or falls back to
+   `damage_taken`). (`update-offsets` without `--base-scan` is the older heap value-scan; it cannot
+   reach a struct behind a pointer chain.)
 3. **Invalidate move/frame data** for the new version (mirror the fork's "wipe frame_data"
    guidance) — see [05](05-frame-data-and-move-map.md) for the data side of the same patch event.
-4. Re-run the reader's **self-check** (§6). Green → capture is usable again.
+4. **Verify the state map** (§8). It is *not* per-version and is normally carried across a patch
+   untouched — but if the report says `NOT CALIBRATED`, or a state decodes wrong, run the §8
+   observation protocol. This is a one-time cost at bring-up, not a per-patch one.
+5. Re-run the reader's **self-check** (§6). Green → capture is usable again.
 
-What the base scan proves vs. what still needs a human: it derives the **player** anchor, stride,
-`char_id`, `move_id`, `health`, `pos_{x,y,z}`. The **global/match** anchor and the remaining
-per-player fields (flags, heat, input, state-code maps) are carried from the previous table and
-flagged for calibration in the diagnostic report. If P2 turns out **not** to sit at a constant stride
-from P1 (a two-level `p2_data_offset`), the tool reports the P1 anchor and **refuses to write a
-table** — expressing that needs a per-player-anchor schema change, not an invented stride.
+What the base scan proves vs. what still needs a human. It **derives**: the player anchor, the
+stride, `char_id`, `move_id`, `health` (as `max_health - damage_taken`), `pos_{x,y,z}` (via the
+transform component), the **global/match anchor**, and `frame_counter` / `round` (and `timer_ms`
+where the clock is running). It **seeds** the encoded state-word offsets from the layout facts —
+where `stun_type` lives is knowable, but no round-start oracle can prove it, because nobody is in
+stun at round start. It leaves **carried from the previous table**: heat, rage, input, facing, the
+`state_codes` maps, and `match_phase`'s offset. All of that is named in the diagnostic report, tiered
+by confidence, so calibration is focused rather than a hunt.
+
+Two things the tool refuses to guess. If P2 turns out **not** to sit at a constant stride from P1 (a
+two-level `p2_data_offset`), it reports the P1 anchor and **writes no table** — expressing that needs
+a per-player-anchor schema change, not an invented stride. And the **meanings** of the encoded state
+values are never inferred: they come from the §8 observation protocol, and until they do the reader
+decodes every state as `neutral` and says so loudly.
 
 This is the primary ongoing maintenance sink and is expected to recur every Season/patch. It is
 deliberately a **data + tooling** operation, not a source-code edit.
@@ -211,6 +268,80 @@ the offsets, rather than discovering it as corrupt interactions three matches la
 | Process not found / closed mid-capture | attach/read error | live: fail silent-closed, surface after match ([01](01-capture-modes.md) §3.2); clean: stop batch, report |
 | Dropped frames (poll slower than 60fps) | frame-counter gaps | record gap markers in the stream; segmenter tolerates small gaps ([04](04-segmenter.md)) |
 | Anti-cheat / access denied | attach error | report clearly; do not retry-hammer |
+
+## 8. State-map calibration (the one thing no scan can prove)
+
+Our `PlayerFrame` ([03](03-data-schemas.md) §1) asks for booleans — `block_stun`, `hit_stun`,
+`airborne`, `juggle`, … — because that is what the segmenter reasons with ([04](04-segmenter.md)
+§4.1 distinguishes blockstun from hitstun from stagger *by the specific flag*). **Tekken 8 does not
+store them.** It stores a handful of **encoded state words** — `simple_move_state`, `stun_type`,
+`complex_move_state`, `throw_tech_state`, `recovery_state` — whose integer values each denote a
+whole situation.
+
+So the reader needs two separate pieces of knowledge, and they have very different provenance:
+
+1. **Where** the state words live. Offsets — facts/data (§5), seeded into the probe manifest,
+   written into the offset table by `update-offsets`.
+2. **What their values mean.** `stun_type == 3` is *stagger* only if someone observed it. No
+   two-snapshot oracle at the Jin-vs-Kazuya round-start setup can derive this, because at round start
+   nobody is in stun, staggered, thrown, or airborne — the setup deliberately excludes every state we
+   want to name.
+
+Piece 2 lives in `assets/offsets/state-map.json`: a `field → raw value → [semantic flags]` map,
+validated at load (an unknown flag name is rejected, not silently dropped at 60fps). The decoder
+reads every mapped word, **unions** the flags across fields, and folds the union into the
+`PlayerFrame`. Unioning is what lets overlapping axes compose — `stun_type=hit_stun` together with
+`complex_move_state=airborne+juggle` is a juggle combo — without the map enumerating the product.
+
+It is kept **separate from the per-version offset tables** on purpose: `update-offsets` rewrites the
+*addresses* every build, but the value semantics are calibrated once and carried forward.
+
+### It ships uncalibrated, and says so
+
+The checked-in map is an empty skeleton (`"calibrated": false`). An unmapped raw value contributes no
+flags, so as shipped the reader **runs** but every `action_state` decodes to `neutral` and every stun
+flag is false: structurally valid, semantically empty. `update-offsets` prints
+`encoded state map: NOT CALIBRATED` and the calibration runbook. This is deliberate — a *guessed*
+map would produce a reader that looks like it works and mislabels every interaction, which is exactly
+the failure mode §3 refuses stale offsets to avoid.
+
+### The observation protocol
+
+The raw words ride out on `PlayerFrame.raw_state` ([03](03-data-schemas.md) §1), so this is a matter
+of watching values change while you cause each state:
+
+```
+python -m tekken_coach.reader.commands probe-state
+```
+
+It streams a line whenever any watched word changes, for both players. In practice mode (P1 you, P2
+the dummy), perform each state in turn and record the value:
+
+| do this | expect a distinct value in | maps to |
+|---|---|---|
+| stand still | `simple_move_state` | `neutral` |
+| throw a jab | `simple_move_state` | `attack`, then `recovery` |
+| hold down-back | `simple_move_state` | `crouch` |
+| set the dummy to attack; **block** it | `stun_type` | `block_stun` |
+| set the dummy to attack; **get hit** | `stun_type` | `hit_stun` |
+| take a stagger-on-block move | `stun_type` | `stagger` |
+| jump | `complex_move_state` | `airborne` |
+| get juggled | `complex_move_state` | `airborne` + `juggle` |
+| get knocked down; then wake up | `complex_move_state` | `knockdown`, `wakeup` |
+| sidestep | `complex_move_state` | `sidestep` |
+| throw the dummy / get thrown / break a throw | `throw_tech_state` | `throw_active` / `thrown` / `throw_tech` |
+
+Write the observed integers into `state-map.json`, set `"calibrated": true`, and re-run `doctor`.
+A `capture`d fixture is the cross-check: its `raw_state` shows exactly which values are still
+unmapped.
+
+> **Licensing note — an open choice, deliberately not made here.** The fork's source presumably
+> contains these enum values. Under §5 rule 1 the *values* would be facts/data, like the offsets — but
+> we have not read them, and the clean-room posture we took for `update-offsets` (§5 rule 2) argues
+> for deriving the map by observation instead, which the protocol above does at the cost of ~15
+> minutes in practice mode. **We ship the observation path and no fork-derived values.** If a
+> reviewer prefers to seed the map from the fork's enums as facts, that is a defensible reading of
+> rule 1 — but it should be an explicit decision recorded here, not something that happened silently.
 
 ## Sources
 - TekkenBot Tekken 8 fork: <https://github.com/dcep93/TekkenBot>

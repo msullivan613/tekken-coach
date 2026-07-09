@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "Encoded-state value -> meaning map (docs/02 §8). Tekken 8's entity struct does not carry the",
+    "per-flag booleans PlayerFrame wants (block_stun, hit_stun, airborne, ...). It carries a handful",
+    "of ENCODED STATE WORDS whose integer values each denote a whole situation. This file is the",
+    "value -> meaning map: outer key = the player field, inner key = the raw integer as a string,",
+    "value = the semantic flags that value implies.",
+    "",
+    "It is a SEPARATE file from assets/offsets/<version>.json on purpose. `update-offsets` rewrites",
+    "the ADDRESSES every build; these SEMANTICS are calibrated once by observation and carried",
+    "forward. The builder copies this map into each table it writes.",
+    "",
+    "It ships UNCALIBRATED (`calibrated: false`, every `flags` map empty). An unmapped raw value",
+    "contributes no flags, so with this file as shipped the reader RUNS but every action_state",
+    "decodes to `neutral` and every stun/throw/juggle flag is false — structurally valid, semantically",
+    "empty. `update-offsets` and `doctor` say so loudly. The raw integers ride out on",
+    "PlayerFrame.raw_state (docs/03 §1) so a captured frame tells you exactly what is unmapped.",
+    "",
+    "WHY OBSERVATION AND NOT A LOOKUP: the offsets above are facts derivable from a layout data file,",
+    "but the round-start Jin-vs-Kazuya oracle cannot prove what stun_type==3 MEANS, because nobody is",
+    "in stun at round start. See docs/02 §8 for the protocol that fills this in (block a jab, eat a",
+    "jab, get staggered, get thrown, ... and record the raw values), and docs/02 §5 for why the",
+    "source of these values is a licensing question, not just an engineering one.",
+    "",
+    "Known flags (offsets.STATE_FLAGS): neutral, attack, recovery, block_stun, hit_stun, stagger,",
+    "throw_active, throw_tech, thrown, airborne, juggle, knockdown, wakeup, sidestep, crouch.",
+    "An unknown flag name is rejected at load time, not silently dropped at 60fps."
+  ],
+  "calibrated": false,
+  "notes": "Uncalibrated skeleton. Fill via the docs/02 §8 observation protocol: `python -m tekken_coach.reader.commands probe-state` while performing each state, then map the raw values here.",
+  "flags": {
+    "simple_move_state": {},
+    "stun_type": {},
+    "complex_move_state": {},
+    "throw_tech_state": {},
+    "recovery_state": {}
+  }
+}

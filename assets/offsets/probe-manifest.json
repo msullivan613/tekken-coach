@@ -39,6 +39,8 @@
   "pos_kind": "f32",
   "frame_counter_kind": "u32",
 
+  "state_map": "state-map.json",
+
   "_base_scan_comment": [
     "C4d code-signature base derivation (docs/02 §3): locate the HEAP-allocated player struct by",
     "scanning the module's static data for the pointer that leads to it, follow the pointer chain,",
@@ -52,7 +54,26 @@
     "is full HP (200, confirmed live). The struct has no direct HP field, so health is computed as",
     "round_start_health - damage_taken (the fork's model). struct_span is the in-struct health/position",
     "scan bound; it is capped to the derived stride at runtime, so setting it >= max_stride just means",
-    "'scan the whole player struct'. These are durable; the runbook covers what to recalibrate."
+    "'scan the whole player struct'. These are durable; the runbook covers what to recalibrate.",
+    "",
+    "`state_fields` (C4e): Tekken 8 stores ENCODED state words, not the per-flag booleans our schema",
+    "assumed. These offsets are facts/data from the same layout source; their decimal values are",
+    "move_frame 0x370, counter_state (hit_outcome) 0x5f0, recovery_state 0x5b4, simple_move_state",
+    "0x640, stun_type 0x644, throw_tech_state 0x668, complex_move_state 0x68c. The scalar KINDS are",
+    "hypotheses (u32 for the 4-aligned words) — calibrate if a field reads implausibly. The VALUE",
+    "semantics live in state-map.json and are calibrated by observation (docs/02 §8): no round-start",
+    "two-snapshot oracle can prove what stun_type==3 means, because nobody is in stun at round start.",
+    "The layout also carries attack_type at 0x4f1 (u8, high/mid/low); PlayerFrame has no home for it,",
+    "so it is deliberately not read.",
+    "",
+    "`legacy_state_fields` are the C4a placeholder's per-flag booleans. They describe a struct that",
+    "does not exist on the real build, so the derivation DROPS them from the table it writes rather",
+    "than carrying forward offsets that would look like they work.",
+    "",
+    "`component_scan` (C4e): position is NOT in the entity struct — a full-struct scan across a",
+    "walking snapshot pair finds no moving float triple, and the layout data has no position field.",
+    "It lives in a separate Unreal transform component the entity points at, so the scan sweeps the",
+    "entity's own pointer slots and looks for the moving (x,y,z) triple inside the pointee."
   ],
   "base_scan": {
     "pointer_path": [16, 104, 8, 48],
@@ -64,6 +85,70 @@
     "max_stride": 262144,
     "aob_window_before": 16,
     "aob_window_after": 16,
+    "scan_data_only": true,
+    "state_fields": {
+      "move_frame": { "offset": 880, "kind": "u32" },
+      "counter_state": { "offset": 1520, "kind": "u32" },
+      "recovery_state": { "offset": 1460, "kind": "u32" },
+      "simple_move_state": { "offset": 1600, "kind": "u32" },
+      "stun_type": { "offset": 1604, "kind": "u32" },
+      "throw_tech_state": { "offset": 1640, "kind": "u32" },
+      "complex_move_state": { "offset": 1676, "kind": "u32" }
+    },
+    "legacy_state_fields": [
+      "simple_state",
+      "block_stun",
+      "hit_stun",
+      "stagger",
+      "throw_active",
+      "throw_tech",
+      "thrown",
+      "airborne",
+      "juggle",
+      "knockdown",
+      "wakeup",
+      "sidestep",
+      "crouch"
+    ],
+    "component_scan": {
+      "slot_span": 16384,
+      "slot_align": 8,
+      "probe_span": 1024,
+      "probe_align": 4,
+      "max_depth": 2,
+      "inner_span": 512,
+      "min_delta": 0.0001,
+      "max_slots": 4096
+    }
+  },
+
+  "_global_scan_comment": [
+    "C4e global/match anchor derivation (docs/02 §3). The global struct is heap-allocated behind its",
+    "own static pointer, exactly like the player struct, so the anchor is re-derived per build. What",
+    "is seeded is FACTS/DATA: the chain shape (0x1468 from the layout source; [] and [0] are cheap",
+    "fallback hypotheses tried after it) and the within-struct offsets known to carry match state.",
+    "",
+    "`field_offsets` is deliberately UNASSIGNED: 0xd260/0xd2d8/0xd4a8 (53856/53976/54440) are known",
+    "to carry frame counter, round, timer and phase, but not in a known order. The scan assigns them",
+    "BY BEHAVIOR across two snapshots — one ticks up, one holds a round number, one counts down —",
+    "which is both clean-room and robust to the source data being reordered. Practice mode usually",
+    "freezes the round clock, so timer_ms is often unassignable; frame_counter + round is what the",
+    "oracle requires. Add offsets here rather than assigning them by hand.",
+    "",
+    "The layout source also carries a static `opponent_side` at 0x9ad7060 +0x4. Static offsets like",
+    "that shift every build (that is why base_offset is re-derived), so it is recorded here as a fact",
+    "and not used."
+  ],
+  "global_scan": {
+    "pointer_paths": [[5224], [0], []],
+    "field_offsets": [53856, 53976, 54440],
+    "field_kind": "u32",
+    "frame_delta_min": 1,
+    "frame_delta_max": 100000,
+    "round_min": 1,
+    "round_max": 8,
+    "timer_ms_max": 300000,
+    "match_phase_max": 64,
     "scan_data_only": true
   }
 }

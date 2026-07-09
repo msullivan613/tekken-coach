@@ -53,6 +53,10 @@ The raw, uninterpreted state of one frame. Produced by [02](02-memory-reader.md)
   "input": {                 // may be null if inputs are not resolvable this frame
     "dir": 6,                // numpad notation direction (1-9), 5 = neutral
     "buttons": ["2"]         // pressed attack buttons this frame: subset of 1,2,3,4 (+ combos)
+  },
+  "raw_state": {             // may be null; the encoded state words the flags above were decoded from
+    "simple_move_state": 1,
+    "stun_type": 0
   }
 }
 ```
@@ -61,6 +65,17 @@ The raw, uninterpreted state of one frame. Produced by [02](02-memory-reader.md)
 - `action_state` is a *thin* normalization the reader can derive cheaply from memory flags. The
   segmenter does the real interpretation; it does not trust `action_state` alone (see
   [04](04-segmenter.md) §4 on why raw flags around stagger/tech are ambiguous).
+- `raw_state` (added C4e, additive) exists because **Tekken 8 does not store the booleans above**.
+  It stores a handful of *encoded state words* (`simple_move_state`, `stun_type`,
+  `complex_move_state`, …) whose integer values each denote a whole situation; the reader maps
+  value → meaning through a calibratable data file ([02](02-memory-reader.md) §8) and folds the
+  result into the flags. Carrying the raw integers alongside makes that map **debuggable**: a
+  mis-decoded state is diagnosable from a captured `FrameRecord` alone, and the calibration protocol
+  reads these values directly. It is `null` on the legacy boolean layout. **Nothing downstream reads
+  it** — the segmenter keys on the decoded flags — so it is a diagnostic, not a second contract.
+- `pos` may be read from a **separate transform component** rather than from the player struct
+  ([02](02-memory-reader.md) §3). That is an addressing detail, invisible here: `pos` is the same
+  `[x,y,z]` either way.
 - `move_frame` is essential: it distinguishes "a new move started" from "same move, next frame,"
   which is how the segmenter detects move boundaries without name lookups.
 - `input` may be `null` in clean/replay capture if inputs aren't exposed during playback; the
@@ -236,3 +251,9 @@ layer refuses logs with an unknown major version.
 - `game_version` + `framedata_snapshot` in the header make every log **reproducible**: you can
   re-run xref/coaching against the exact data set that produced it, which matters across Season
   patches ([05](05-frame-data-and-move-map.md)).
+
+> **`schema_version` gates the on-disk session log (§5), not every record type.** The C4e addition
+> of `PlayerFrame.raw_state` (§1) changes the *reader → segmenter* seam, which is in-process and
+> never persisted — no `LabeledInteraction`, `Interaction`, or header field changed — so
+> `schema_version` stays **1.2.0**. Bumping it would tell consumers a log they can already read is
+> a different shape. The rule: bump when a **persisted** record gains or changes a field.

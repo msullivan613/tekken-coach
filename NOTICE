@@ -31,14 +31,22 @@ THIRD_PARTY_LICENSES (MIT is irrevocable for the code it covered).
   - Offsets, addresses, and AOB signatures are FACTS/DATA, not code: they live under
     `assets/offsets/` as versioned tables, never hard-coded in source.
   - The within-struct field-offset map and pointer-chain shape seeded into
-    `assets/offsets/probe-manifest.json` (`base_scan`) are FACTS/DATA taken from the community-known
-    Tekken 8 layout as recorded in the dcep93 fork's committed `memory_address.ini` data file — NOT
-    from its `update_memory_address.py` script, which was not read, copied, or paraphrased.
-  - The `update-offsets` re-discovery command (C4c/C4d, src/tekken_coach/reader/discovery/) is a
+    `assets/offsets/probe-manifest.json` (`base_scan`, `global_scan`) are FACTS/DATA taken from the
+    community-known Tekken 8 layout as recorded in the dcep93 fork's committed `memory_address.ini`
+    data file — NOT from its `update_memory_address.py` script, which was not read, copied, or
+    paraphrased. This includes the encoded state-word offsets (`state_fields`) and the global/match
+    struct's chain shape and field offsets. The global field offsets are seeded UNASSIGNED (we take
+    the addresses as facts; which one is the frame counter is re-derived by behavior).
+  - `assets/offsets/state-map.json` — the encoded state VALUE -> meaning map — contains NO
+    fork-derived values. It ships as an empty, uncalibrated skeleton and is filled in by first-party
+    observation of the running game (the protocol in docs/02 §8). The fork's enum values were not
+    read or used, even though docs/02 §5 rule 1 would arguably permit them as facts.
+  - The `update-offsets` re-discovery command (C4c/C4d/C4e, src/tekken_coach/reader/discovery/) is a
     CLEAN-ROOM re-implementation of the Jin-vs-Kazuya practice-mode technique (open Jin vs Kazuya,
-    scan to re-derive addresses — an unprotected idea): both the C4c heap value-scan and the C4d
-    code-signature / pointer-chain base derivation (candidate-generate-and-validate with the field
-    layout as the oracle) are original; neither reads, copies, or paraphrases the fork's
+    scan to re-derive addresses — an unprotected idea): the C4c heap value-scan, the C4d
+    code-signature / pointer-chain base derivation, and the C4e global-anchor and transform-component
+    scans (candidate-generate-and-validate with the field layout, or observed behavior, as the
+    oracle) are all original; none reads, copies, or paraphrases the fork's
     `update_memory_address.py`.
   - The reader is READ-ONLY by construction: no memory-write or input-injection primitive exists
     anywhere in the package (the bot/input half of the ancestral TekkenBot is not ported).

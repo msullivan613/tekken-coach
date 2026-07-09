@@ -24,10 +24,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from tekken_coach.reader.faults import OffsetTableError
-from tekken_coach.reader.offsets import DEFAULT_OFFSETS_DIR, ScalarKind
+from tekken_coach.reader.offsets import DEFAULT_OFFSETS_DIR, FieldSpec, ScalarKind
 
 DEFAULT_MANIFEST_PATH = DEFAULT_OFFSETS_DIR / "probe-manifest.json"
 
@@ -44,6 +44,69 @@ class ScanWindow(BaseModel):
     base_offset: int
     size: int
     absolute: bool = False
+
+
+class GlobalScanSpec(BaseModel):
+    """The seed layout that drives C4e's global/match anchor derivation (docs/02 §3, facts/data).
+
+    Same shape of argument as :class:`BaseScanSpec`, one level up: the global struct is *also*
+    heap-allocated behind a static pointer, so the anchor is candidate-generate-and-validate against
+    a **behavioral oracle** rather than a known address. What is seeded (facts/data, docs/02 §5):
+
+    * ``pointer_paths`` — candidate chain shapes from a static pointer slot to the global struct.
+      Several are allowed because the chain shape is the least certain seed; the first that
+      validates wins.
+    * ``field_offsets`` — within-struct offsets known to hold the match fields. The **assignment**
+      of offset -> field is deliberately *not* seeded: we know these offsets carry frame counter /
+      round / timer / phase, not which is which. The scan assigns them **by behavior** across two
+      snapshots (see :func:`~.basescan.assign_global_fields`), which is both clean-room and robust
+      to the fork's data being reordered.
+
+    The rest are plausibility bounds keeping the oracle off coincidental matches. A frame counter
+    that merely ticks is common in a game process; a struct where one offset ticks up, another holds
+    a round number in 1..k, and a third counts a round clock *down* is not.
+    """
+
+    pointer_paths: list[list[int]]
+    field_offsets: list[int]  # unassigned candidate offsets within the global struct
+    field_kind: ScalarKind = "u32"
+    frame_delta_min: int = 1  # a live frame counter advances by at least this between snapshots
+    frame_delta_max: int = 100_000  # ... and by at most this (above it, not a frame counter)
+    round_min: int = 1
+    round_max: int = 8
+    timer_ms_max: int = 300_000  # a round clock above this is not a round clock
+    match_phase_max: int = 64  # a phase code at/above this is not a phase code
+    max_candidates: int = 400_000  # hard ceiling on slots validated per sweep
+    scan_data_only: bool = True  # sweep only readable initialized-data sections for slots
+    scan_writable_first: bool = True  # writable .data first, .rdata as fallback
+
+
+class ComponentScanSpec(BaseModel):
+    """Locate the transform component holding ``pos_{x,y,z}`` (docs/02 §3, C4e Phase 3).
+
+    Position is **not** in the entity struct: a full-struct scan across a walking snapshot pair
+    finds no moving float triple, and the fork's layout data has no position field. It lives in a
+    separate Unreal transform component the entity points at. So the search is one level indirect —
+    sweep the entity struct's own pointer slots, follow each, and look for the moving triple inside
+    the pointee.
+
+    * ``slot_span`` — how far into the entity struct to look for the component pointer.
+    * ``probe_span`` — how far into the component to scan for the triple.
+    * ``max_depth`` — 1 follows ``entity -> component``; 2 additionally follows
+      ``entity -> object -> component`` (Unreal nests a scene component under an actor), scanning
+      ``inner_span`` bytes of the intermediate object for the second pointer.
+    * ``min_delta`` — the acting player must have moved at least this far in ``x`` between the two
+      snapshots, so a float that merely jitters is not mistaken for a coordinate.
+    """
+
+    slot_span: int = 0x2000
+    slot_align: int = 8
+    probe_span: int = 0x400
+    probe_align: int = 4
+    max_depth: int = 2
+    inner_span: int = 0x200
+    min_delta: float = 1.0e-4
+    max_slots: int = 4096  # ceiling on pointer slots followed per level
 
 
 class BaseScanSpec(BaseModel):
@@ -67,6 +130,14 @@ class BaseScanSpec(BaseModel):
       a separate allocation (the two-level case the runbook flags).
     * ``aob_window_before`` / ``aob_window_after`` — bytes captured around the slot for the AOB
       signature (the pointer bytes themselves are wildcarded).
+    * ``state_fields`` — the encoded state words + ``move_frame`` + ``counter_state`` at their known
+      within-struct offsets (facts/data). These are **seeded, not derived**: no two-snapshot oracle
+      can prove where ``stun_type`` lives, so the scan writes them into the table and the report
+      flags them for the observation-based calibration of docs/02 §8. Their *values*' meanings live
+      in the separate state map (:func:`~tekken_coach.reader.offsets.load_state_map`).
+    * ``legacy_state_fields`` — the C4a placeholder's per-flag boolean fields, dropped from the
+      built table when ``state_fields`` supersedes them (they do not exist in the real struct, and
+      carrying them forward would look like working offsets).
     """
 
     pointer_path: list[int]
@@ -82,6 +153,9 @@ class BaseScanSpec(BaseModel):
     scan_writable_first: bool = (
         True  # sweep writable .data first (likely + cheap), .rdata as fallback
     )
+    state_fields: dict[str, FieldSpec] = Field(default_factory=dict)
+    legacy_state_fields: list[str] = Field(default_factory=list)
+    component_scan: ComponentScanSpec | None = None
 
 
 class ProbeManifest(BaseModel):
@@ -93,6 +167,14 @@ class ProbeManifest(BaseModel):
     # --- C4d code-signature base derivation (heap struct via a static pointer + chain) ---
     # Optional so the C4c value-scan path loads without it; required for the C4d base scan.
     base_scan: BaseScanSpec | None = None
+
+    # --- C4e global/match anchor derivation (the same technique, one struct over) ---
+    global_scan: GlobalScanSpec | None = None
+
+    # The encoded-state value -> meaning map (docs/02 §8), resolved relative to the manifest's own
+    # directory. Kept a separate file from the offset tables: `update-offsets` rewrites addresses
+    # every build, but the state semantics are calibrated once and carried forward.
+    state_map: str = "state-map.json"
 
     # --- Known anchors at the P1-Jin-vs-P2-Kazuya round-start setup (facts, docs/02 §5) ---
     kazuya_char_id: int  # 12 from the C1 move map; pins the player-struct base
@@ -135,3 +217,10 @@ def load_probe_manifest(path: str | Path = DEFAULT_MANIFEST_PATH) -> ProbeManife
         raise OffsetTableError(f"probe manifest not found: {path}") from exc
     except ValidationError as exc:
         raise OffsetTableError(f"malformed probe manifest {path}: {exc}") from exc
+
+
+def state_map_path(
+    manifest: ProbeManifest, manifest_path: str | Path = DEFAULT_MANIFEST_PATH
+) -> Path:
+    """Resolve ``manifest.state_map`` relative to the manifest file's own directory."""
+    return Path(manifest_path).parent / manifest.state_map

@@ -63,6 +63,11 @@ def build_offset_table(
     player_fields: dict[str, FieldSpec] = dict(seed.players.fields)
     for df in result.player_offsets().values():
         player_fields[df.name] = FieldSpec(offset=df.offset, kind=df.kind)
+    # Fields the derivation *supersedes* are removed, not overwritten: the C4a placeholder's
+    # per-flag booleans describe a struct that does not exist, and in-struct pos_{x,y,z} are wrong
+    # once position is known to live in a component. Carrying them would read as working offsets.
+    for name in result.drop_player_fields:
+        player_fields.pop(name, None)
     # max_health (when set) makes the decoder compute health = max_health - damage_taken instead of
     # reading a direct HP field (docs/02 §3 — T8's struct has no HP field, only damage_taken).
     players = PlayerStruct(
@@ -70,6 +75,7 @@ def build_offset_table(
         stride=result.stride,
         fields=player_fields,
         max_health=result.max_health if result.max_health is not None else seed.players.max_health,
+        components=result.components or dict(seed.players.components),
     )
 
     global_fields: dict[str, FieldSpec] = dict(seed.global_struct.fields)
@@ -77,13 +83,26 @@ def build_offset_table(
         global_fields[df.name] = FieldSpec(offset=df.offset, kind=df.kind)
     global_struct = GlobalStruct(anchor=result.global_anchor, fields=global_fields)
 
+    # The encoded-state value -> meaning map is data the *scan* never derives (docs/02 §8); it is
+    # loaded from its own file and copied in, switching the decoder onto the encoded-state path.
+    state_codes = seed.state_codes
+    if result.encoded_state is not None:
+        missing = sorted(set(result.encoded_state.flags) - set(player_fields))
+        if missing:
+            raise OffsetTableError(
+                f"the state map names encoded field(s) {missing} that the derived player struct "
+                "does not carry. Add them to base_scan.state_fields in the probe manifest (they "
+                "are DATA), or drop them from the state map — the decoder would raise every frame."
+            )
+        state_codes = state_codes.model_copy(update={"encoded_state": result.encoded_state})
+
     return OffsetTable(
         game_version=game_version,
         discovered_at=discovered_at,
         notes=notes,
         global_struct=global_struct,  # populated by field name (alias "global" in JSON)
         players=players,
-        state_codes=seed.state_codes,
+        state_codes=state_codes,
         sanity=seed.sanity,
     )
 

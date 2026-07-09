@@ -14,6 +14,15 @@ Two things the spec is emphatic about (docs/03 §1 Notes):
 * ``input`` may be ``null`` (unresolvable during replay playback). We honor that: no input group,
   or a false ``input_valid`` flag, yields ``input=None``, and the segmenter never requires it.
 
+Two layout realities are decoded through one seam (:class:`PlayerStateFacts`). The C4c/legacy table
+carries one ``bool8`` per flag; the real Tekken 8 entity struct carries a few **encoded state
+words** whose integer values denote whole situations. When the table declares an
+:class:`~tekken_coach.reader.offsets.EncodedStateSpec`, the value -> meaning mapping is looked up in
+that **data** map (docs/02 §8) and the raw words ride out on ``PlayerFrame.raw_state`` so the map
+stays debuggable. Likewise ``pos_{x,y,z}`` come from a separate transform
+:class:`~tekken_coach.reader.offsets.ComponentAnchor` when the table declares one, and from plain
+in-struct fields when it does not.
+
 :class:`FrameReader` wraps :func:`decode_frame` with the dropped-frame handling of docs/02 §7:
 when the global frame counter jumps, it records a ``gap-tolerated:N`` marker whose ``N`` matches
 the segmenter's own gap accounting exactly (docs/04 §4.7 uses ``missed = frame - prev - 1``).
@@ -28,7 +37,14 @@ from dataclasses import dataclass
 
 from tekken_coach.reader.faults import DecodeError, MemoryReadError
 from tekken_coach.reader.memory_source import MemorySource
-from tekken_coach.reader.offsets import Anchor, FieldSpec, OffsetTable, ScalarKind
+from tekken_coach.reader.offsets import (
+    POSITION_COMPONENT,
+    Anchor,
+    ComponentAnchor,
+    FieldSpec,
+    OffsetTable,
+    ScalarKind,
+)
 from tekken_coach.reader.state import StateSignal, classify_state
 from tekken_coach.schemas import (
     ActionState,
@@ -90,6 +106,19 @@ def resolve_anchor(source: MemorySource, anchor: Anchor) -> int:
     return address
 
 
+def resolve_component(source: MemorySource, player_base: int, component: ComponentAnchor) -> int:
+    """Resolve a :class:`ComponentAnchor` against one player's struct base (docs/02 §3).
+
+    Dereferences the pointer slot inside the entity struct, then takes each ``pointer_path`` hop.
+    This is how ``pos_{x,y,z}`` are reached on Tekken 8, where position lives in a separate Unreal
+    transform component rather than in the entity struct itself.
+    """
+    address = _read_int(source, player_base + component.slot_offset, "ptr")
+    for offset in component.pointer_path:
+        address = _read_int(source, address + offset, "ptr")
+    return address
+
+
 def _field(fields: dict[str, FieldSpec], name: str) -> FieldSpec:
     spec = fields.get(name)
     if spec is None:
@@ -98,59 +127,171 @@ def _field(fields: dict[str, FieldSpec], name: str) -> FieldSpec:
 
 
 @dataclass(frozen=True)
-class _RawPlayer:
-    """Raw per-player reads before normalization (the flags feeding ``action_state``)."""
+class PlayerStateFacts:
+    """The per-player situation, normalized away from *how* the game encoded it.
 
-    simple_state: int
-    block_stun: bool
-    hit_stun: bool
-    stagger: bool
-    throw_active: bool
-    throw_tech: bool
-    thrown: bool
-    airborne: bool
-    juggle: bool
-    knockdown: bool
-    wakeup: bool
-    sidestep: bool
-    crouch: bool
+    Both layouts converge here before anything is derived: the C4c/legacy table's
+    one-boolean-per-flag fields (:func:`_legacy_facts`), and Tekken 8's real encoded state words
+    (:func:`_encoded_facts`). ``simple`` is the mutually-exclusive attack/recovery/neutral posture;
+    everything else is a situational flag that may overlap. Keeping this seam means
+    :func:`_derive_action_state` and the ``PlayerFrame`` fold are written once, against meaning
+    rather than against a byte layout.
+    """
+
+    simple: str  # "neutral" | "attack" | "recovery"
+    block_stun: bool = False
+    hit_stun: bool = False
+    stagger: bool = False
+    throw_active: bool = False
+    throw_tech: bool = False
+    thrown: bool = False
+    airborne: bool = False
+    juggle: bool = False
+    knockdown: bool = False
+    wakeup: bool = False
+    sidestep: bool = False
+    crouch: bool = False
 
 
-def _derive_action_state(table: OffsetTable, raw: _RawPlayer) -> ActionState:
+def _derive_action_state(facts: PlayerStateFacts) -> ActionState:
     """The *thin* ``action_state`` normalization (docs/03 §1 Notes).
 
-    A cheap, fixed-priority fold of the raw flags into the coarse ``action_state`` enum. It is
+    A cheap, fixed-priority fold of the state facts into the coarse ``action_state`` enum. It is
     deliberately shallow: the segmenter re-derives the truth from the raw flags carried alongside
     (docs/04 §4.1), so this only needs to be a useful hint, not authoritative. Priority runs from
     the most specific/overriding states (thrown, stuns) down to the simple attack/recovery/neutral
-    code that the game itself exposes (docs/02 §2).
+    posture the game itself exposes (docs/02 §2).
     """
-    if raw.thrown:
+    if facts.thrown:
         return ActionState.thrown
-    if raw.throw_tech:
+    if facts.throw_tech:
         return ActionState.throw_tech_window
-    if raw.block_stun:
+    if facts.block_stun:
         return ActionState.blockstun
-    if raw.hit_stun:
+    if facts.hit_stun:
         return ActionState.hitstun
-    if raw.stagger:
+    if facts.stagger:
         return ActionState.stagger
-    if raw.knockdown:
+    if facts.knockdown:
         return ActionState.knockdown
-    if raw.wakeup:
+    if facts.wakeup:
         return ActionState.wakeup
-    if raw.airborne:
+    if facts.airborne:
         return ActionState.airborne
-    if raw.sidestep:
+    if facts.sidestep:
         return ActionState.sidestep
-    simple = table.state_codes.simple_state.get(str(raw.simple_state))
-    if simple == "attack":
+    if facts.simple == "attack":
         return ActionState.attack
-    if simple == "recovery":
+    if facts.simple == "recovery":
         return ActionState.recovery
-    if raw.crouch:
+    if facts.crouch:
         return ActionState.crouch
     return ActionState.neutral
+
+
+# The three mutually-exclusive postures, in the priority a flag union resolves them by: a state that
+# implies both "attack" and "recovery" (a move's active frames bleeding into recovery) reads as the
+# more specific "attack".
+_SIMPLE_PRIORITY: tuple[str, ...] = ("attack", "recovery", "neutral")
+
+
+def _facts_from_flags(flags: set[str]) -> PlayerStateFacts:
+    """Fold a union of :data:`~tekken_coach.reader.offsets.STATE_FLAGS` into the facts record."""
+    simple = next((name for name in _SIMPLE_PRIORITY if name in flags), "neutral")
+    return PlayerStateFacts(
+        simple=simple,
+        block_stun="block_stun" in flags,
+        hit_stun="hit_stun" in flags,
+        stagger="stagger" in flags,
+        throw_active="throw_active" in flags,
+        throw_tech="throw_tech" in flags,
+        thrown="thrown" in flags,
+        airborne="airborne" in flags,
+        juggle="juggle" in flags,
+        knockdown="knockdown" in flags,
+        wakeup="wakeup" in flags,
+        sidestep="sidestep" in flags,
+        crouch="crouch" in flags,
+    )
+
+
+def _legacy_facts(
+    source: MemorySource, table: OffsetTable, base: int, fields: dict[str, FieldSpec]
+) -> PlayerStateFacts:
+    """Read the C4c/legacy layout: one ``bool8`` per flag plus a ``simple_state`` code."""
+
+    def b(name: str) -> bool:
+        spec = _field(fields, name)
+        return bool(read_scalar(source, base + spec.offset, "bool8"))
+
+    simple_spec = _field(fields, "simple_state")
+    simple_raw = _read_int(source, base + simple_spec.offset, simple_spec.kind)
+    simple = table.state_codes.simple_state.get(str(simple_raw), "neutral")
+    return PlayerStateFacts(
+        simple=simple,
+        block_stun=b("block_stun"),
+        hit_stun=b("hit_stun"),
+        stagger=b("stagger"),
+        throw_active=b("throw_active"),
+        throw_tech=b("throw_tech"),
+        thrown=b("thrown"),
+        airborne=b("airborne"),
+        juggle=b("juggle"),
+        knockdown=b("knockdown"),
+        wakeup=b("wakeup"),
+        sidestep=b("sidestep"),
+        crouch=b("crouch"),
+    )
+
+
+def _encoded_facts(
+    source: MemorySource, table: OffsetTable, base: int, fields: dict[str, FieldSpec]
+) -> tuple[PlayerStateFacts, dict[str, int]]:
+    """Read Tekken 8's encoded state words and map them to facts (docs/02 §3/§8, C4e Phase 2).
+
+    Each mapped field holds an integer denoting a whole situation; the data map
+    (:class:`~tekken_coach.reader.offsets.EncodedStateSpec`) says which flags each value implies,
+    and the union across fields is the frame's state. An **unmapped** value contributes nothing —
+    the raw integers are returned alongside and ride out on ``PlayerFrame.raw_state`` (docs/03 §1),
+    which is how the calibration protocol (docs/02 §8) discovers what it still has to map.
+    """
+    spec = table.state_codes.encoded_state
+    assert spec is not None  # only called when the table declares an encoded-state map
+    flags: set[str] = set()
+    raw_state: dict[str, int] = {}
+    for name, codes in spec.flags.items():
+        field_spec = _field(fields, name)
+        raw = _read_int(source, base + field_spec.offset, field_spec.kind)
+        raw_state[name] = raw
+        flags.update(codes.get(str(raw), ()))
+    return _facts_from_flags(flags), raw_state
+
+
+def _read_position(
+    source: MemorySource, table: OffsetTable, base: int
+) -> tuple[float, float, float]:
+    """Read ``pos_{x,y,z}``, from the transform component when the table declares one (§3).
+
+    Tekken 8 keeps position outside the entity struct, behind the struct's own pointer to an Unreal
+    transform component; the C4c/legacy tables keep it as plain in-struct fields. The table says
+    which world it is in, and the decoder follows.
+    """
+    component = table.players.components.get(POSITION_COMPONENT)
+    if component is None:
+        fields = table.players.fields
+        return tuple(  # type: ignore[return-value]
+            _read_float(source, base + _field(fields, axis).offset, _field(fields, axis).kind)
+            for axis in ("pos_x", "pos_y", "pos_z")
+        )
+    cbase = resolve_component(source, base, component)
+    return tuple(  # type: ignore[return-value]
+        _read_float(
+            source,
+            cbase + _field(component.fields, axis).offset,
+            _field(component.fields, axis).kind,
+        )
+        for axis in ("pos_x", "pos_y", "pos_z")
+    )
 
 
 _BUTTON_BITS: tuple[tuple[int, str], ...] = ((0, "1"), (1, "2"), (2, "3"), (3, "4"))
@@ -187,29 +328,17 @@ def _decode_player(source: MemorySource, table: OffsetTable, index: int) -> Play
         spec = _field(fields, name)
         return _read_int(source, base + spec.offset, spec.kind)
 
-    def f(name: str) -> float:
-        spec = _field(fields, name)
-        return _read_float(source, base + spec.offset, spec.kind)
-
     def b(name: str) -> bool:
         spec = _field(fields, name)
         return bool(read_scalar(source, base + spec.offset, "bool8"))
 
-    raw = _RawPlayer(
-        simple_state=i("simple_state"),
-        block_stun=b("block_stun"),
-        hit_stun=b("hit_stun"),
-        stagger=b("stagger"),
-        throw_active=b("throw_active"),
-        throw_tech=b("throw_tech"),
-        thrown=b("thrown"),
-        airborne=b("airborne"),
-        juggle=b("juggle"),
-        knockdown=b("knockdown"),
-        wakeup=b("wakeup"),
-        sidestep=b("sidestep"),
-        crouch=b("crouch"),
-    )
+    # Two state layouts converge on PlayerStateFacts: T8's encoded state words when the table
+    # carries a value -> meaning map, else the C4c/legacy one-boolean-per-flag fields (docs/02 §3).
+    raw_state: dict[str, int] | None = None
+    if table.state_codes.encoded_state is not None:
+        facts, raw_state = _encoded_facts(source, table, base, fields)
+    else:
+        facts = _legacy_facts(source, table, base, fields)
 
     counter_raw = i("counter_state")
     counter_name = table.state_codes.counter_state.get(str(counter_raw), CounterState.none.value)
@@ -228,16 +357,16 @@ def _decode_player(source: MemorySource, table: OffsetTable, index: int) -> Play
         char_id=i("char_id"),
         move_id=i("move_id"),
         move_frame=i("move_frame"),
-        action_state=_derive_action_state(table, raw),
+        action_state=_derive_action_state(facts),
         health=health,
-        pos=(f("pos_x"), f("pos_y"), f("pos_z")),
+        pos=_read_position(source, table, base),
         facing=facing,
-        block_stun=raw.block_stun,
-        hit_stun=raw.hit_stun,
+        block_stun=facts.block_stun,
+        hit_stun=facts.hit_stun,
         counter_state=CounterState(counter_name),
-        throw_active=raw.throw_active,
-        airborne=raw.airborne,
-        juggle=raw.juggle,
+        throw_active=facts.throw_active,
+        airborne=facts.airborne,
+        juggle=facts.juggle,
         heat=HeatState(
             active=b("heat_active"),
             timer_ms=i("heat_timer_ms"),
@@ -245,6 +374,7 @@ def _decode_player(source: MemorySource, table: OffsetTable, index: int) -> Play
         ),
         rage=b("rage"),
         input=_decode_input(source, base, fields),
+        raw_state=raw_state,
     )
 
 
@@ -367,10 +497,12 @@ __all__ = [
     "FrameRead",
     "FrameReader",
     "MemoryReadError",
+    "PlayerStateFacts",
     "decode_frame",
     "decode_state",
     "poll_frames",
     "read_scalar",
     "read_state_signal",
     "resolve_anchor",
+    "resolve_component",
 ]

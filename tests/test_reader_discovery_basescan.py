@@ -1,11 +1,15 @@
-"""C4d code-signature base derivation: candidate scan + layout oracle (docs/02 §3/§4).
+"""C4d/C4e code-signature derivation: candidate scan + layout/behavioral oracles (docs/02 §3/§4).
 
 The planted world (``tests/fixtures/reader/planted_chain.py``) hides the player struct behind a
 static pointer in the module's ``.data`` plus a 4-level pointer chain — the shape Tekken 8's
-reallocating heap struct forces. Nothing tells the scan where the slot is: ``BASE_OFFSET``, the
-``STRIDE``, and the ``health``/``pos`` offsets are planted at values the manifest does not carry.
-So a passing derivation proves the scan *found* them, and the final acceptance test proves the
-resulting table drives the real C4a decoder through the chain.
+reallocating heap struct forces — and hides the global/match struct behind a second static pointer
+and its own chain. Nothing tells the scan where either slot is: ``BASE_OFFSET``,
+``GLOBAL_BASE_OFFSET``, the ``STRIDE``, and the ``health``/``pos`` offsets are planted at values the
+manifest does not carry. So a passing derivation proves the scan *found* them, and the final
+acceptance test proves the resulting table drives the real C4a decoder through the chains.
+
+The global struct's field offsets *are* seeded, but deliberately **scrambled** relative to the field
+list, so only the behavioral oracle (ticks up / holds / counts down) can name them.
 """
 
 from __future__ import annotations
@@ -17,24 +21,43 @@ import pytest
 from tekken_coach.reader.decode import decode_frame, resolve_anchor
 from tekken_coach.reader.discovery.basescan import (
     _section_passes,
+    assign_global_fields,
     derive_base_layout,
     extract_signature,
     find_by_signature,
     find_candidate_slots,
+    locate_global_struct,
     locate_player_struct,
 )
-from tekken_coach.reader.discovery.derive import DerivationResult
-from tekken_coach.reader.discovery.manifest import ProbeManifest, load_probe_manifest
+from tekken_coach.reader.discovery.builder import build_offset_table
+from tekken_coach.reader.discovery.derive import Confidence, DerivationResult
+from tekken_coach.reader.discovery.manifest import (
+    GlobalScanSpec,
+    ProbeManifest,
+    load_probe_manifest,
+)
 from tekken_coach.reader.discovery.orchestrate import discover_base, persist
 from tekken_coach.reader.discovery.pe import parse_module_image
+from tekken_coach.reader.discovery.report import build_report
+from tekken_coach.reader.faults import OffsetTableError
 from tekken_coach.reader.offsets import (
+    POSITION_COMPONENT,
     AobSignature,
+    EncodedStateSpec,
     OffsetTable,
     load_offset_table,
+    load_state_map,
     select_offset_table,
 )
 from tests.fixtures.reader.planted_chain import (
     BASE_OFFSET,
+    COMPONENT_SLOT_OFFSET,
+    COMPONENT_TRIPLE_OFFSET,
+    GLOBAL_BASE_OFFSET,
+    GLOBAL_FRAME_OFFSET,
+    GLOBAL_POINTER_PATH,
+    GLOBAL_ROUND_OFFSET,
+    GLOBAL_TIMER_OFFSET,
     HEALTH_OFFSET,
     JIN,
     KAZUYA,
@@ -47,9 +70,11 @@ from tests.fixtures.reader.planted_chain import (
     decode_source,
     expected_frame,
     planted_chain,
+    planted_component,
     relocated_pointer_source,
     two_level_source,
 )
+from tests.fixtures.reader.state_map import calibrated_state_map
 
 SEED_PATH = Path("assets/offsets/2.01.01.json")
 MANIFEST_PATH = Path("assets/offsets/probe-manifest.json")
@@ -355,6 +380,249 @@ def test_two_level_p2_reports_the_p1_anchor_and_writes_no_table() -> None:
 
 
 # ---------------------------------------------------------------------------
+# C4e Phase 1: the global/match anchor, assigned by behavior
+# ---------------------------------------------------------------------------
+
+
+def _global_spec() -> GlobalScanSpec:
+    spec = _manifest().global_scan
+    assert spec is not None
+    return spec
+
+
+def test_locates_the_planted_global_anchor_and_chain() -> None:
+    chain = planted_chain()
+    located = locate_global_struct(
+        chain.before, chain.after, module=MODULE, module_base=MODULE_BASE, spec=_global_spec()
+    )
+    assert located is not None
+    assert located.match.base_offset == GLOBAL_BASE_OFFSET
+    assert list(located.match.pointer_path) == GLOBAL_POINTER_PATH
+    assert not located.ambiguous
+
+
+def test_global_fields_are_assigned_by_behavior_not_by_order() -> None:
+    # The planted offsets are deliberately scrambled relative to the field list: the frame counter
+    # sits at the MIDDLE offset. Only the two-snapshot behavior (ticks up / holds / counts down)
+    # tells them apart, which is the whole point — we know these offsets carry match state, we do
+    # not know which is which, and a positional guess would bake a coincidence into a data file.
+    chain = planted_chain()
+    located = locate_global_struct(
+        chain.before, chain.after, module=MODULE, module_base=MODULE_BASE, spec=_global_spec()
+    )
+    assert located is not None
+    assert located.match.offsets == {
+        "frame_counter": GLOBAL_FRAME_OFFSET,
+        "round": GLOBAL_ROUND_OFFSET,
+        "timer_ms": GLOBAL_TIMER_OFFSET,
+    }
+
+
+def test_a_frozen_round_clock_does_not_block_the_global_anchor() -> None:
+    # Practice mode usually freezes the round clock, making timer_ms indistinguishable from any
+    # other constant. frame_counter + round is what the oracle requires; timer_ms is a bonus.
+    spec = _global_spec()
+    before = {GLOBAL_TIMER_OFFSET: 41200, GLOBAL_FRAME_OFFSET: 100, GLOBAL_ROUND_OFFSET: 2}
+    after = {GLOBAL_TIMER_OFFSET: 41200, GLOBAL_FRAME_OFFSET: 128, GLOBAL_ROUND_OFFSET: 2}
+    assigned = assign_global_fields(before, after, spec)
+    assert assigned["frame_counter"] == GLOBAL_FRAME_OFFSET
+    assert assigned["round"] == GLOBAL_ROUND_OFFSET
+    assert "timer_ms" not in assigned
+
+
+def test_a_ticking_counter_alone_is_not_a_global_struct() -> None:
+    # Any long-running process has u32s that tick. Without a steady, in-range round beside it, the
+    # landing is rejected rather than accepted as "probably the frame counter".
+    spec = _global_spec()
+    before = {GLOBAL_TIMER_OFFSET: 900000, GLOBAL_FRAME_OFFSET: 100, GLOBAL_ROUND_OFFSET: 77}
+    after = {GLOBAL_TIMER_OFFSET: 900001, GLOBAL_FRAME_OFFSET: 128, GLOBAL_ROUND_OFFSET: 77}
+    assert "round" not in assign_global_fields(before, after, spec)
+
+
+def test_global_anchor_seeded_and_flagged_when_the_chain_shapes_are_wrong() -> None:
+    # A wrong chain shape must leave the seed anchor in place, name frame_counter unresolved, and
+    # say so — never invent an anchor the doctor would then silently fail on.
+    manifest = _manifest()
+    assert manifest.global_scan is not None
+    manifest.global_scan.pointer_paths = [[0x999]]
+    chain = planted_chain()
+    result = derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=manifest,
+        seed=_seed(),
+        source_after=chain.after,
+    )
+    assert result.global_anchor == _seed().global_struct.anchor
+    assert "frame_counter" in result.unresolved
+    assert "global_scan.pointer_paths" in " ".join(result.notes)
+
+
+def test_live_path_may_pre_sweep_the_global_without_derive_re_sweeping() -> None:
+    # The live orchestration must straddle the user's action prompt to observe a frame delta, so it
+    # sweeps itself and passes sweep_global=False. "Swept, found nothing" must then stay None rather
+    # than triggering a second (same-instant, useless) sweep inside derive.
+    chain = planted_chain()
+    result = derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        seed=_seed(),
+        source_after=chain.after,
+        sweep_global=False,
+    )
+    assert result.global_anchor == _seed().global_struct.anchor
+    assert "frame_counter" in result.unresolved
+
+
+# ---------------------------------------------------------------------------
+# C4e Phase 2: the encoded state words are seeded, and supersede the legacy booleans
+# ---------------------------------------------------------------------------
+
+
+def test_encoded_state_offsets_are_seeded_into_the_table() -> None:
+    result = _derive()
+    fields = result.player_offsets()
+    assert fields["simple_move_state"].offset == 0x640
+    assert fields["stun_type"].offset == 0x644
+    assert fields["complex_move_state"].offset == 0x68C
+    assert fields["move_frame"].offset == 0x370
+    assert fields["counter_state"].offset == 0x5F0
+    # They are facts, not findings: no round-start oracle can prove where stun_type lives, so the
+    # report must not present them as derived alongside char_id/move_id.
+    assert fields["stun_type"].confidence is Confidence.seeded
+    assert fields["char_id"].confidence is Confidence.high
+
+
+def test_legacy_booleans_survive_when_no_state_map_replaces_them() -> None:
+    # Dropping the placeholder's per-flag booleans without installing the encoded path would leave
+    # the decoder unable to read state at all.
+    result = _derive()
+    assert result.drop_player_fields == []
+
+
+def test_a_state_map_supersedes_the_legacy_booleans() -> None:
+    chain = planted_chain()
+    result = derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        seed=_seed(),
+        source_after=chain.after,
+        state_map=calibrated_state_map(),
+    )
+    assert "block_stun" in result.drop_player_fields
+    assert "simple_state" in result.drop_player_fields
+    table = build_offset_table(result, _seed(), game_version="x", discovered_at="now", notes="test")
+    assert table.state_codes.encoded_state is not None
+    assert "block_stun" not in table.players.fields
+    assert table.players.fields["stun_type"].offset == 0x644
+
+
+def test_a_state_map_naming_an_absent_field_is_refused() -> None:
+    # The decoder would raise on every frame; fail at build time with an actionable message instead.
+    chain = planted_chain()
+    result = derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        seed=_seed(),
+        source_after=chain.after,
+        state_map=EncodedStateSpec(calibrated=True, flags={"no_such_field": {"0": []}}),
+    )
+    with pytest.raises(OffsetTableError, match="no_such_field"):
+        build_offset_table(result, _seed(), game_version="x", discovered_at="now", notes="test")
+
+
+def test_shipped_state_map_is_an_uncalibrated_skeleton() -> None:
+    # It ships empty on purpose (docs/02 §8): only observation can say what stun_type == 3 means,
+    # and a guess would be worse than nothing. Every field it names must exist in the manifest's
+    # state_fields, or the built table would be unreadable.
+    shipped = load_state_map(Path("assets/offsets/state-map.json"))
+    spec = _manifest().base_scan
+    assert spec is not None
+    assert not shipped.calibrated
+    assert set(shipped.flags) <= set(spec.state_fields)
+    assert all(codes == {} for codes in shipped.flags.values())
+
+
+# ---------------------------------------------------------------------------
+# C4e Phase 3: position lives in a transform component, not the entity struct
+# ---------------------------------------------------------------------------
+
+
+def _derive_component() -> DerivationResult:
+    chain = planted_component()
+    return derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        seed=_seed(),
+        source_after=chain.after,
+        state_map=calibrated_state_map(),
+    )
+
+
+def test_position_is_found_in_a_component_when_the_struct_has_none() -> None:
+    result = _derive_component()
+    component = result.components[POSITION_COMPONENT]
+    assert component.slot_offset == COMPONENT_SLOT_OFFSET
+    assert component.pointer_path == []
+    assert component.fields["pos_x"].offset == COMPONENT_TRIPLE_OFFSET
+    assert component.fields["pos_z"].offset == COMPONENT_TRIPLE_OFFSET + 8
+    assert "pos_x" not in result.unresolved
+    # In-struct pos_{x,y,z} are dropped: they would be wrong, not merely absent.
+    assert "pos_x" in result.drop_player_fields
+    assert "transform component" in " ".join(result.notes)
+
+
+def test_component_scan_requires_p2_to_resolve_through_the_same_path() -> None:
+    # A coincidental moving triple near P1 will not also be a plausible, distinct coordinate at the
+    # identical path from P2's base. Without a component_scan spec there is nowhere to look at all.
+    manifest = _manifest()
+    assert manifest.base_scan is not None
+    manifest.base_scan.component_scan = None
+    chain = planted_component()
+    result = derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=manifest,
+        seed=_seed(),
+        source_after=chain.after,
+    )
+    assert result.components == {}
+    assert "pos_x" in result.unresolved
+
+
+def test_built_component_table_carries_the_anchor_through_json(tmp_path: Path) -> None:
+    result = _derive_component()
+    table = build_offset_table(
+        result, _seed(), game_version=DETECTED_EXE_VERSION, discovered_at="now", notes="test"
+    )
+    persist(
+        table,
+        build_report(
+            result,
+            game_version=DETECTED_EXE_VERSION,
+            module_base=MODULE_BASE,
+            seed=_seed(),
+            seed_version="2.01.01",
+        ),
+        offsets_dir=tmp_path,
+    )
+    selected = select_offset_table(DETECTED_EXE_VERSION, tmp_path)
+    component = selected.players.components[POSITION_COMPONENT]
+    assert component.slot_offset == COMPONENT_SLOT_OFFSET
+    assert "pos_x" not in selected.players.fields
+
+
+# ---------------------------------------------------------------------------
 # Full acceptance: derive -> build -> write -> select -> decode a real FrameRecord
 # ---------------------------------------------------------------------------
 
@@ -389,8 +657,10 @@ def test_built_table_overlays_derived_offsets_on_the_seed(tmp_path: Path) -> Non
     # Seeded: a field the scan cannot prove is carried forward unchanged, flagged for calibration.
     seeded = selected.players.fields["heat_timer_ms"].offset
     assert seeded == seed.players.fields["heat_timer_ms"].offset
-    # The global anchor is not re-derived by the base scan; it comes from the seed.
-    assert selected.global_struct.anchor == seed.global_struct.anchor
+    # The global anchor IS re-derived (C4e): its own static slot + chain, not the seed's static 0.
+    assert selected.global_struct.anchor != seed.global_struct.anchor
+    assert selected.global_struct.anchor.base_offset == GLOBAL_BASE_OFFSET
+    assert selected.global_struct.anchor.pointer_path == GLOBAL_POINTER_PATH
 
 
 def test_signature_survives_the_json_round_trip(tmp_path: Path) -> None:
@@ -429,4 +699,7 @@ def test_report_shows_the_chain_and_the_signature(tmp_path: Path) -> None:
     assert f"+0x{BASE_OFFSET:x} -> +0x10 -> +0x68 -> +0x8 -> +0x30" in text
     assert "base AOB signature" in text
     assert f"P1(Jin)={JIN}" in text and f"P2(Kazuya)={KAZUYA}" in text
-    assert "global anchoring is a separate calibration" in " ".join(report.result.notes)
+    assert f"global anchor         : {MODULE}+0x{GLOBAL_BASE_OFFSET:x}" in text
+    # The oracle could only claim three of the four match fields (three seeded offsets); the fourth
+    # is named as still-seeded rather than quietly left looking derived.
+    assert "match_phase not assigned" in " ".join(report.result.notes)

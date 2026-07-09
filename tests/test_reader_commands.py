@@ -65,3 +65,22 @@ def test_parser_update_offsets_base_scan_flag() -> None:
     args = parser.parse_args(["update-offsets", "--base-scan"])
     assert args.base_scan is True
     assert args.func is commands.update_offsets_main
+
+
+def test_parser_wires_probe_state() -> None:
+    # C4e: the executable half of the docs/02 §8 state-map calibration protocol.
+    parser = commands.build_parser()
+    args = parser.parse_args(["probe-state", "--seconds", "3"])
+    assert args.func is commands.probe_state_main
+    assert args.seconds == 3.0
+    assert args.interval == 0.05  # ~3 polls per game frame; changes are what get printed
+
+
+def test_probe_targets_watch_the_state_words_plus_move_context() -> None:
+    # The raw words alone are unreadable: "which move was I in when stun_type went to 3" is the
+    # question the calibration protocol actually answers, so move_id/move_frame ride along.
+    from tests.test_reader_decode_encoded import _encoded_table
+
+    names = commands._probe_targets(_encoded_table())
+    assert names[:3] == ["move_id", "move_frame", "counter_state"]
+    assert "stun_type" in names and "simple_move_state" in names

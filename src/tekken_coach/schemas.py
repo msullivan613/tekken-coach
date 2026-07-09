@@ -188,6 +188,14 @@ class PlayerFrame(BaseModel):
     heat: HeatState
     rage: bool  # Rage available
     input: InputState | None = None  # may be null if inputs are not resolvable this frame
+    # The raw encoded state words this frame's flags were decoded from (03 §1). Tekken 8 stores
+    # encoded state (``simple_move_state``, ``stun_type``, ...), not the per-flag booleans above, so
+    # the reader maps value -> meaning through a calibratable data map (02 §8). Carrying the raw
+    # integers makes that map debuggable — a mis-decoded state is diagnosable from a captured
+    # FrameRecord alone, and the calibration protocol reads these values directly. ``None`` on the
+    # legacy boolean layout. Additive minor (03 §6): consumers ignore it; nothing downstream reads
+    # it, and the segmenter keys on the decoded flags, never on the raw words.
+    raw_state: dict[str, int] | None = None
 
 
 class FrameRecord(BaseModel):

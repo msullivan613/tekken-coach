@@ -36,7 +36,7 @@ from typing import Literal
 
 from tekken_coach.reader.discovery.manifest import ProbeManifest
 from tekken_coach.reader.discovery.scanners import Region, change_scan, value_scan
-from tekken_coach.reader.offsets import Anchor, ScalarKind
+from tekken_coach.reader.offsets import Anchor, ComponentAnchor, EncodedStateSpec, ScalarKind
 
 # The fields one Jin-vs-Kazuya setup can prove (docs/02 §4 anchors); the rest are builder-seeded.
 DERIVABLE_PLAYER_FIELDS = ("char_id", "health", "move_id", "pos_x", "pos_y", "pos_z")
@@ -79,6 +79,15 @@ class DerivationResult:
     unresolved: list[str] = field(default_factory=list)
     frame_counter_candidates: list[int] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # C4e: fields living outside the entity struct, behind its own pointer (position, docs/02 §3).
+    components: dict[str, ComponentAnchor] = field(default_factory=dict)
+    # C4e: the encoded-state value -> meaning map to write into the table (docs/02 §8). Loaded from
+    # its data file rather than derived — the scan proves *where* the state words are, never what
+    # their values mean; that is the observation-based calibration.
+    encoded_state: EncodedStateSpec | None = None
+    # Seed-table fields the derivation supersedes and must NOT carry forward (the C4a placeholder's
+    # per-flag booleans, and in-struct pos_{x,y,z} once a transform component is located).
+    drop_player_fields: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
