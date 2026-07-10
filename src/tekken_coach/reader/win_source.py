@@ -25,6 +25,7 @@ offline-tested with a fake pymem surface (``tests/test_reader_win_source.py``).
 
 from __future__ import annotations
 
+import ctypes
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from types import ModuleType
@@ -67,6 +68,37 @@ _ENUM_MIN_ADDRESS = 0x10000
 _ENUM_MAX_ADDRESS = 0x7FFF_FFFF_FFFF
 _ENUM_MAX_REGION_BYTES = 512 * 1024 * 1024
 _ENUM_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
+
+
+class _MemoryBasicInformation(ctypes.Structure):
+    """The x64 ``MEMORY_BASIC_INFORMATION`` (winnt.h) that ``VirtualQueryEx`` fills in.
+
+    Defined with **fixed-width** ``ctypes`` scalars — ``c_uint64`` for the x64 pointers/``SIZE_T``,
+    ``c_uint32`` for the ``DWORD``\\ s — not ``ctypes.wintypes`` (Windows-only, would break this
+    module's Linux import) and *not* ``c_ulong``: ``c_ulong`` is 4 bytes on Windows but 8 on Linux
+    (LP64), which silently changes the layout off-Windows. ``DWORD`` is always 32-bit, so pinning it
+    makes the struct byte-identical on every platform — this is a fixed OS ABI, not a native type.
+    The ``__alignment`` members are the 8-byte padding the 64-bit layout carries (``RegionSize`` is
+    8-aligned; the struct is padded to a multiple of 8 → 48 bytes). Only the actual
+    ``ctypes.windll.kernel32`` call in :meth:`WinMemorySource.regions` is Windows-only, never
+    reached offline; the layout itself is offline-tested (``test_reader_win_source``).
+
+    We bind ``VirtualQueryEx`` directly rather than through a pymem helper: ``pymem`` exposes no
+    ``virtual_query`` on the installed version (an ``AttributeError`` the old binding swallowed,
+    yielding "0 readable regions"), and this raw binding was validated live before it landed.
+    """
+
+    _fields_ = (
+        ("BaseAddress", ctypes.c_uint64),
+        ("AllocationBase", ctypes.c_uint64),
+        ("AllocationProtect", ctypes.c_uint32),
+        ("__alignment1", ctypes.c_uint32),
+        ("RegionSize", ctypes.c_uint64),
+        ("State", ctypes.c_uint32),
+        ("Protect", ctypes.c_uint32),
+        ("Type", ctypes.c_uint32),
+        ("__alignment2", ctypes.c_uint32),
+    )
 
 
 @dataclass(frozen=True)
@@ -276,16 +308,32 @@ class WinMemorySource:
     def regions(self) -> Sequence[MemoryRegion]:  # pragma: no cover - needs a live VirtualQueryEx
         """Enumerate committed readable heap via ``VirtualQueryEx`` (read-only, docs/02 §2, C4h).
 
-        Binds :func:`enumerate_committed_regions` to pymem's ``virtual_query``. This is a *query* of
-        the process map — one ``MEMORY_BASIC_INFORMATION`` per region — and reads no region content;
-        the sweep reads bytes afterwards through :meth:`read`. The walk logic is offline-tested via
-        :func:`enumerate_committed_regions` with a fake map; only this pymem binding is live-only.
+        Binds :func:`enumerate_committed_regions` to ``kernel32.VirtualQueryEx`` directly (the
+        installed pymem has no ``virtual_query`` helper). This is a *query* of the process map — one
+        ``MEMORY_BASIC_INFORMATION`` per region — and reads no region content; the sweep reads bytes
+        afterwards through :meth:`read`. The walk logic is offline-tested via
+        :func:`enumerate_committed_regions` with a fake map; only this ``VirtualQueryEx`` binding is
+        live-only (and was validated against the running game before it landed).
         """
+        # ``ctypes.windll`` exists only on Windows, so it is resolved here (never offline) rather
+        # than at import; typeshed hides it off-win32, hence the localized ignore.
+        virtual_query_ex = ctypes.windll.kernel32.VirtualQueryEx  # type: ignore[attr-defined]
+        virtual_query_ex.restype = ctypes.c_size_t
+        virtual_query_ex.argtypes = (
+            ctypes.c_void_p,  # hProcess
+            ctypes.c_void_p,  # lpAddress
+            ctypes.POINTER(_MemoryBasicInformation),  # lpBuffer
+            ctypes.c_size_t,  # dwLength
+        )
+        handle = self._pm.process_handle
+        buffer_size = ctypes.sizeof(_MemoryBasicInformation)
 
         def query(address: int) -> _BasicRegion | None:
-            try:
-                mbi = self._pm.virtual_query(address)
-            except Exception:  # noqa: BLE001 - a query past the top of the map ends enumeration
+            mbi = _MemoryBasicInformation()
+            written = virtual_query_ex(
+                handle, ctypes.c_void_p(address), ctypes.byref(mbi), buffer_size
+            )
+            if written == 0:  # past the top of the address space (or unqueryable) — end the walk
                 return None
             return _BasicRegion(
                 base=int(mbi.BaseAddress),

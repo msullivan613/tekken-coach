@@ -53,6 +53,30 @@ def test_read_only_open_flags_are_read_plus_query_only() -> None:
     assert ws.PROCESS_READ_ACCESS == 0x0410
 
 
+def test_memory_basic_information_matches_the_x64_winnt_layout() -> None:
+    # regions() binds VirtualQueryEx directly against this struct; the live call can't run offline,
+    # but its size/field offsets can. If the padding is wrong, VirtualQueryEx writes fields we then
+    # read at the wrong offsets and every region comes back as garbage (the failure mode that a
+    # struct-layout mistake produces). x64 MEMORY_BASIC_INFORMATION is 48 bytes; RegionSize sits at
+    # +0x18 (8-aligned after the DWORD AllocationProtect), State/Protect/Type follow it.
+    import ctypes
+
+    from tekken_coach.reader.win_source import _MemoryBasicInformation as Mbi
+
+    # Fixed-width fields make this hold on Linux too (c_ulong would be 8 bytes here and break it —
+    # the very regression this guards). 48 bytes total, DWORDs 4 wide, x64 pointers/SIZE_T 8 wide.
+    assert ctypes.sizeof(Mbi) == 48
+    fields = dict(Mbi._fields_)
+    assert ctypes.sizeof(fields["BaseAddress"]) == 8
+    assert ctypes.sizeof(fields["RegionSize"]) == 8
+    assert ctypes.sizeof(fields["Protect"]) == 4
+    assert Mbi.BaseAddress.offset == 0x00
+    assert Mbi.RegionSize.offset == 0x18
+    assert Mbi.State.offset == 0x20
+    assert Mbi.Protect.offset == 0x24
+    assert Mbi.Type.offset == 0x28
+
+
 @pytest.mark.skipif(not _PYMEM_ABSENT, reason="pymem is installed; the no-pymem path can't be hit")
 def test_instantiating_without_pymem_raises_clear_error() -> None:
     with pytest.raises(MemoryReadError) as exc:
