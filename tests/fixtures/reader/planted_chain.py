@@ -19,11 +19,19 @@ module's data plus a pointer chain. To prove that offline we plant exactly such 
 
 The base offsets, the stride, and the health/position offsets are all planted at values the manifest
 does not know a priori, so a passing derivation proves the scan *found* them (not that they were
-seeded). The before/after pair moves P1's ``pos_x`` so the position scan has a real delta.
+seeded). The before/after pair models the user's action: P1's ``pos_x`` moves (locating the
+transform), P1's ``move_id`` changes (jab + jump), and P2's ``move_id`` / ``damage_taken`` change
+(the jab connected).
 
 :func:`planted_component` is the same world minus any in-struct position, plus a **transform
 component** behind a pointer in each entity struct — the real Tekken 8 shape (C4e Phase 3), where
 the in-struct scan must come up empty and the component scan must take over.
+
+:func:`planted_decoy` adds what only the live game had: a **second** struct that satisfies the
+structural oracle at round start and never moves. It is the C4f regression — the single-instant
+oracle takes it, the behavioral one rejects it. Likewise ``match_phase`` in the decode fixtures
+holds :data:`GARBAGE_MATCH_PHASE` by default, because the seeded offset holds garbage on the real
+build and a fixture that planted a valid phase hid a decoder that fails closed on every live frame.
 """
 
 from __future__ import annotations
@@ -74,8 +82,15 @@ POS_OFFSET = 0x80
 JIN = 1
 KAZUYA = 12
 ROUND_START_HEALTH = 200
+# The action the user performs between the snapshots: P1 jabs and jumps (move_id changes), and the
+# connecting jab drives P2's damage_taken off 0. This is the *behavioral* half of the C4f oracle —
+# without it every planted struct is a frozen instant, which is precisely what the live run showed
+# a scan cannot distinguish from the real thing.
 P1_MOVE_ID = 2145
+P1_MOVE_ID_AFTER = 133  # Jin mid-jump
 P2_MOVE_ID = 800
+P2_MOVE_ID_AFTER = 812  # the dummy's hit reaction
+P2_DAMAGE_AFTER = 14  # the jab connected
 P1_POS_BEFORE = (1.5, 0.0, -0.31)
 P1_POS_AFTER = (2.0, 0.0, -0.31)  # x moved
 P2_POS = (-1.0, 0.0, 0.5)
@@ -168,15 +183,18 @@ def _put_player(
     move_id: int,
     pos: tuple[float, float, float] | None,
     component: int | None = None,
+    damage: int = 0,
 ) -> None:
     """Write one player struct at ``off`` within ``buf`` (oracle fields + health + position).
 
     ``pos=None`` plants **no** in-struct position triple — the real Tekken 8 case, where the
     in-struct scan must find nothing. ``component`` plants a pointer to a transform object instead.
+    ``damage`` is 0 at round start (the structural oracle requires it) and rises in the *after*
+    snapshot when the jab connected.
     """
     _blit(buf, off + CHAR_ID_OFFSET, _u32(char_id))
     _blit(buf, off + MOVE_ID_OFFSET, _u32(move_id))
-    _blit(buf, off + DAMAGE_OFFSET, struct.pack("<i", 0))  # round start: nothing taken yet
+    _blit(buf, off + DAMAGE_OFFSET, struct.pack("<i", damage))
     _blit(buf, off + HEALTH_OFFSET, struct.pack("<i", ROUND_START_HEALTH))
     if pos is not None:
         for k, v in enumerate(pos):
@@ -196,22 +214,43 @@ def _chain_nodes(buf: bytearray) -> None:
     _blit(buf, (_NODE2 + 0x8) - _HEAP_BASE, _u64(_NODE3))
 
 
-def _heap(pos: tuple[float, float, float], *, with_p2: bool = True) -> bytearray:
-    """The heap: chain nodes + P1 (Jin) and P2 (Kazuya) structs; ``pos`` is P1's position."""
+def _heap(
+    pos: tuple[float, float, float],
+    *,
+    with_p2: bool = True,
+    acted: bool = False,
+    jab_connected: bool = True,
+) -> bytearray:
+    """The heap: chain nodes + P1 (Jin) and P2 (Kazuya) structs; ``pos`` is P1's position.
+
+    ``acted`` is the *after* snapshot: P1 has jabbed and jumped (a new ``move_id``) and, when
+    ``jab_connected``, P2 has taken the hit (a new ``move_id`` and nonzero ``damage_taken``). A
+    whiffed jab leaves the dummy untouched — the oracle must still accept, since it requires only
+    the acting player's ``move_id`` to change.
+    """
     buf = bytearray(_HEAP_SPAN)
     _chain_nodes(buf)
-    _put_player(buf, P1_BASE - _HEAP_BASE, JIN, P1_MOVE_ID, pos)
+    p1_move = P1_MOVE_ID_AFTER if acted else P1_MOVE_ID
+    _put_player(buf, P1_BASE - _HEAP_BASE, JIN, p1_move, pos)
     if with_p2:
-        _put_player(buf, P2_BASE - _HEAP_BASE, KAZUYA, P2_MOVE_ID, P2_POS)
+        hit = acted and jab_connected
+        p2_move = P2_MOVE_ID_AFTER if hit else P2_MOVE_ID
+        damage = P2_DAMAGE_AFTER if hit else 0
+        _put_player(buf, P2_BASE - _HEAP_BASE, KAZUYA, p2_move, P2_POS, damage=damage)
     return buf
 
 
-def _component_heap(p1_pos: tuple[float, float, float]) -> bytearray:
+def _component_heap(p1_pos: tuple[float, float, float], *, acted: bool = False) -> bytearray:
     """A heap where position lives in a per-player transform component, not in the entity struct."""
     buf = bytearray(_HEAP_SPAN)
     _chain_nodes(buf)
-    _put_player(buf, P1_BASE - _HEAP_BASE, JIN, P1_MOVE_ID, None, component=_P1_COMPONENT)
-    _put_player(buf, P2_BASE - _HEAP_BASE, KAZUYA, P2_MOVE_ID, None, component=_P2_COMPONENT)
+    p1_move = P1_MOVE_ID_AFTER if acted else P1_MOVE_ID
+    p2_move = P2_MOVE_ID_AFTER if acted else P2_MOVE_ID
+    damage = P2_DAMAGE_AFTER if acted else 0
+    _put_player(buf, P1_BASE - _HEAP_BASE, JIN, p1_move, None, component=_P1_COMPONENT)
+    _put_player(
+        buf, P2_BASE - _HEAP_BASE, KAZUYA, p2_move, None, component=_P2_COMPONENT, damage=damage
+    )
     _put_triple(buf, (_P1_COMPONENT - _HEAP_BASE) + COMPONENT_TRIPLE_OFFSET, p1_pos)
     _put_triple(buf, (_P2_COMPONENT - _HEAP_BASE) + COMPONENT_TRIPLE_OFFSET, P2_POS)
     return buf
@@ -227,22 +266,30 @@ def _global_segment(*, step: int = 0) -> bytearray:
     return buf
 
 
-def _source(pos: tuple[float, float, float], *, step: int = 0) -> FlatMemorySource:
+def _source(
+    pos: tuple[float, float, float],
+    *,
+    step: int = 0,
+    acted: bool = False,
+    jab_connected: bool = True,
+) -> FlatMemorySource:
     return FlatMemorySource(
         [
             (MODULE_BASE, bytes(_pe_module())),
-            (_HEAP_BASE, bytes(_heap(pos))),
+            (_HEAP_BASE, bytes(_heap(pos, acted=acted, jab_connected=jab_connected))),
             (_GLOBAL_SEG_BASE, bytes(_global_segment(step=step))),
         ],
         module_bases={MODULE: MODULE_BASE},
     )
 
 
-def _component_source(pos: tuple[float, float, float], *, step: int = 0) -> FlatMemorySource:
+def _component_source(
+    pos: tuple[float, float, float], *, step: int = 0, acted: bool = False
+) -> FlatMemorySource:
     return FlatMemorySource(
         [
             (MODULE_BASE, bytes(_pe_module())),
-            (_HEAP_BASE, bytes(_component_heap(pos))),
+            (_HEAP_BASE, bytes(_component_heap(pos, acted=acted))),
             (_GLOBAL_SEG_BASE, bytes(_global_segment(step=step))),
         ],
         module_bases={MODULE: MODULE_BASE},
@@ -259,14 +306,120 @@ class PlantedChain:
 
 def planted_chain() -> PlantedChain:
     """Build the before/after flat sources for the planted static-pointer-chain layout."""
-    return PlantedChain(before=_source(P1_POS_BEFORE), after=_source(P1_POS_AFTER, step=1))
+    return PlantedChain(
+        before=_source(P1_POS_BEFORE), after=_source(P1_POS_AFTER, step=1, acted=True)
+    )
 
 
 def planted_component() -> PlantedChain:
     """The Tekken 8 shape: no in-struct position, a transform component behind a pointer."""
     return PlantedChain(
         before=_component_source(P1_POS_BEFORE),
-        after=_component_source(P1_POS_AFTER, step=1),
+        after=_component_source(P1_POS_AFTER, step=1, acted=True),
+    )
+
+
+# --- the decoy: a struct that passes the structural oracle and never moves (C4f) ---------------
+#
+# This is the live 5.02.01 failure, planted. Its slot sits at a LOWER RVA than the real one, so a
+# sweep that accepts the first structurally-plausible landing takes it every time; its fields read
+# perfectly at round start (a plausible char id, a plausible move id, damage 0, a Kazuya-shaped
+# struct at a constant stride) and stay *identical* in the after snapshot, because nothing in the
+# game is writing them. Only asking "did the acting player's move_id change?" tells the two apart.
+
+DECOY_BASE_OFFSET = 0x3080  # swept before BASE_OFFSET (0x3100)
+DECOY_CHAR_ID = 5
+DECOY_MOVE_ID = 0  # frozen — as Jin's read live while he jumped
+_DECOY_HEAP_BASE = 0x210000000
+_DECOY_ROOT_PTR = _DECOY_HEAP_BASE
+_DECOY_NODE1 = 0x210002000
+_DECOY_NODE2 = 0x210003000
+DECOY_P1_BASE = 0x210010000
+_DECOY_NODE3 = DECOY_P1_BASE - 0x30
+DECOY_STRIDE = 0x4000
+_DECOY_P2_BASE = DECOY_P1_BASE + DECOY_STRIDE
+
+
+def _decoy_heap() -> bytearray:
+    """The decoy's own chain + a frozen Jin-shaped / Kazuya-shaped struct pair."""
+    buf = bytearray(_HEAP_SPAN)
+    _blit(buf, (_DECOY_ROOT_PTR + 0x10) - _DECOY_HEAP_BASE, _u64(_DECOY_NODE1))
+    _blit(buf, (_DECOY_NODE1 + 0x68) - _DECOY_HEAP_BASE, _u64(_DECOY_NODE2))
+    _blit(buf, (_DECOY_NODE2 + 0x8) - _DECOY_HEAP_BASE, _u64(_DECOY_NODE3))
+    _put_player(buf, DECOY_P1_BASE - _DECOY_HEAP_BASE, DECOY_CHAR_ID, DECOY_MOVE_ID, None)
+    _put_player(buf, _DECOY_P2_BASE - _DECOY_HEAP_BASE, KAZUYA, DECOY_MOVE_ID, None)
+    return buf
+
+
+def _decoy_module() -> bytearray:
+    buf = _pe_module()
+    _blit(buf, DECOY_BASE_OFFSET - _SIG_BEFORE, bytes(range(0x31, 0x31 + _SIG_BEFORE)))
+    _blit(buf, DECOY_BASE_OFFSET, _u64(_DECOY_ROOT_PTR))
+    _blit(buf, DECOY_BASE_OFFSET + 8, bytes(range(0x41, 0x41 + _SIG_AFTER)))
+    return buf
+
+
+def _decoy_source(
+    pos: tuple[float, float, float], *, step: int = 0, acted: bool = False
+) -> FlatMemorySource:
+    return FlatMemorySource(
+        [
+            (MODULE_BASE, bytes(_decoy_module())),
+            (_HEAP_BASE, bytes(_heap(pos, acted=acted))),
+            (_DECOY_HEAP_BASE, bytes(_decoy_heap())),
+            (_GLOBAL_SEG_BASE, bytes(_global_segment(step=step))),
+        ],
+        module_bases={MODULE: MODULE_BASE},
+    )
+
+
+def planted_decoy() -> PlantedChain:
+    """The real struct *and* a coincidental frozen one, both plausible at round start."""
+    return PlantedChain(
+        before=_decoy_source(P1_POS_BEFORE), after=_decoy_source(P1_POS_AFTER, step=1, acted=True)
+    )
+
+
+def planted_decoy_nobody_acted() -> PlantedChain:
+    """The same world where the user never acted: no move_id changed, so nothing is accepted."""
+    return PlantedChain(
+        before=_decoy_source(P1_POS_BEFORE), after=_decoy_source(P1_POS_AFTER, step=1)
+    )
+
+
+def planted_whiffed_jab() -> PlantedChain:
+    """P1 acted but the jab missed: the dummy never moved and took no damage.
+
+    The corroborating signals are absent and the anchor must still be accepted — requiring them
+    would reject the real struct on any run where the user's jab whiffed.
+    """
+    return PlantedChain(
+        before=_source(P1_POS_BEFORE),
+        after=_source(P1_POS_AFTER, step=1, acted=True, jab_connected=False),
+    )
+
+
+# --- two static slots reaching the SAME global struct by different chain shapes ------------------
+#
+# Distinct *slots* are not distinct *landings*: several globals in .data legitimately point into the
+# same match struct. Counting slots is what made the live run report "22 accepted" and look far more
+# ambiguous than it was. GLOBAL_DUP_BASE_OFFSET holds `GLOBAL_BASE` itself, so the seeded `[0]`
+# chain reaches the same struct the `[0x1468]` chain reaches from GLOBAL_BASE_OFFSET.
+GLOBAL_DUP_BASE_OFFSET = 0x3300
+
+
+def global_duplicate_slot_source(*, step: int = 0) -> FlatMemorySource:
+    buf = _pe_module()
+    _blit(buf, GLOBAL_DUP_BASE_OFFSET - _SIG_BEFORE, bytes(range(0x51, 0x51 + _SIG_BEFORE)))
+    _blit(buf, GLOBAL_DUP_BASE_OFFSET, _u64(GLOBAL_BASE))
+    _blit(buf, GLOBAL_DUP_BASE_OFFSET + 8, bytes(range(0x61, 0x61 + _SIG_AFTER)))
+    return FlatMemorySource(
+        [
+            (MODULE_BASE, bytes(buf)),
+            (_HEAP_BASE, bytes(_heap(P1_POS_BEFORE))),
+            (_GLOBAL_SEG_BASE, bytes(_global_segment(step=step))),
+        ],
+        module_bases={MODULE: MODULE_BASE},
     )
 
 
@@ -309,10 +462,27 @@ def two_level_source() -> FlatMemorySource:
     )
 
 
+# What the seeded match_phase offset (+0x4) actually read on the live 5.02.01 build: the high two
+# bytes of a pointer, not a phase code. The global scan derives frame_counter and round; nothing at
+# round start identifies a phase, so its offset stays seeded and reads garbage.
+GARBAGE_MATCH_PHASE = 0x7FF6
+
+
 def _encode_globals(
-    module: bytearray, glob: bytearray, table: OffsetTable, fr: FrameRecord, *, frame: int
+    module: bytearray,
+    glob: bytearray,
+    table: OffsetTable,
+    fr: FrameRecord,
+    *,
+    frame: int,
+    phase_raw: int | None = None,
 ) -> None:
-    """Lay ``fr``'s global fields out at the *derived* offsets, wherever the anchor now points."""
+    """Lay ``fr``'s global fields out at the *derived* offsets, wherever the anchor now points.
+
+    ``phase_raw`` overrides the phase code with a raw integer — used to plant the garbage the
+    uncalibrated ``match_phase`` offset holds on the real build, so the decoder is never handed a
+    valid phase for free.
+    """
     from tests.fixtures.reader.encode import _invert, pack_scalar
 
     g = table.global_struct
@@ -320,7 +490,11 @@ def _encode_globals(
         base, buf = GLOBAL_BASE - _GLOBAL_SEG_BASE, glob
     else:  # a seeded (static) global anchor: the struct sits inside the module image
         base, buf = g.anchor.base_offset, module
-    phase = _invert(table.state_codes.match_phase)[fr.match_state.value]
+    phase = (
+        _invert(table.state_codes.match_phase)[fr.match_state.value]
+        if phase_raw is None
+        else phase_raw
+    )
     mode = _invert(table.state_codes.game_mode)["practice"]
     for name, value in (
         ("frame_counter", frame),
@@ -372,11 +546,19 @@ def component_frame() -> FrameRecord:
     return fr.model_copy(update={"players": players})
 
 
-def component_decode_source(table: OffsetTable, *, step: int = 0) -> FlatMemorySource:
+def component_decode_source(
+    table: OffsetTable, *, step: int = 0, phase_raw: int | None = GARBAGE_MATCH_PHASE
+) -> FlatMemorySource:
     """``decode_source`` for a table whose ``pos`` lives in a transform component (C4e Phase 3).
 
     ``step`` advances the global frame counter and walks P1 forward, so a sequence of these replays
     as successive frames for the doctor's monotonic-frame and moving-position checks.
+
+    ``match_phase`` holds **garbage by default** (:data:`GARBAGE_MATCH_PHASE`), because that is what
+    the seeded offset holds on the real build: the global scan derives ``frame_counter`` and
+    ``round``, and nothing at round start identifies a phase. A fixture that handed the decoder a
+    valid phase would hide the fail-closed decode that blocked the whole live run. Pass an explicit
+    ``phase_raw=None`` for the calibrated case.
     """
     from tests.fixtures.reader.encode import encode_player_into
 
@@ -386,7 +568,7 @@ def component_decode_source(table: OffsetTable, *, step: int = 0) -> FlatMemoryS
     _chain_nodes(heap)
 
     fr = component_frame()
-    _encode_globals(module, glob, table, fr, frame=fr.frame + step)
+    _encode_globals(module, glob, table, fr, frame=fr.frame + step, phase_raw=phase_raw)
     for pf, base, component, pos in (
         (fr.players[0], P1_BASE, _P1_COMPONENT, (P1_POS_BEFORE[0] + step, *P1_POS_BEFORE[1:])),
         (fr.players[1], P2_BASE, _P2_COMPONENT, P2_POS),

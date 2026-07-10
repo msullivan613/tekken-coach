@@ -1,4 +1,4 @@
-"""C4d/C4e code-signature derivation: candidate scan + layout/behavioral oracles (docs/02 §3/§4).
+"""C4d/C4e/C4f code-signature derivation: candidate scan + the two oracles (docs/02 §3/§4).
 
 The planted world (``tests/fixtures/reader/planted_chain.py``) hides the player struct behind a
 static pointer in the module's ``.data`` plus a 4-level pointer chain — the shape Tekken 8's
@@ -10,6 +10,10 @@ acceptance test proves the resulting table drives the real C4a decoder through t
 
 The global struct's field offsets *are* seeded, but deliberately **scrambled** relative to the field
 list, so only the behavioral oracle (ticks up / holds / counts down) can name them.
+
+C4f plants the one thing the offline world was missing and the live game had: a **decoy** struct
+that satisfies the player oracle at a single instant and never moves. The single-instant oracle
+takes it — asserted here, so the regression stays visible — and the behavioral one rejects it.
 """
 
 from __future__ import annotations
@@ -17,9 +21,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from tekken_coach.reader.decode import decode_frame, resolve_anchor
 from tekken_coach.reader.discovery.basescan import (
+    _player_oracle_ok,
     _section_passes,
     assign_global_fields,
     derive_base_layout,
@@ -49,10 +55,13 @@ from tekken_coach.reader.offsets import (
     load_state_map,
     select_offset_table,
 )
+from tests.fixtures.reader.flat_source import FlatMemorySource
 from tests.fixtures.reader.planted_chain import (
     BASE_OFFSET,
     COMPONENT_SLOT_OFFSET,
     COMPONENT_TRIPLE_OFFSET,
+    DECOY_BASE_OFFSET,
+    DECOY_P1_BASE,
     GLOBAL_BASE_OFFSET,
     GLOBAL_FRAME_OFFSET,
     GLOBAL_POINTER_PATH,
@@ -69,8 +78,12 @@ from tests.fixtures.reader.planted_chain import (
     STRIDE,
     decode_source,
     expected_frame,
+    global_duplicate_slot_source,
     planted_chain,
     planted_component,
+    planted_decoy,
+    planted_decoy_nobody_acted,
+    planted_whiffed_jab,
     relocated_pointer_source,
     two_level_source,
 )
@@ -133,21 +146,24 @@ def test_writable_data_is_swept_before_readonly() -> None:
 
 def test_locate_reports_progress() -> None:
     # The long live sweep must be observable: the command layer passes a progress sink and the
-    # library streams what it is doing (PE parse -> which pass it is sweeping -> the strong match).
-    source = planted_chain().before
+    # library streams what it is doing (PE parse -> which pass it is sweeping -> how many landings
+    # the behavioral oracle had to choose between, and on what evidence it chose).
+    chain = planted_chain()
     msgs: list[str] = []
     located = locate_player_struct(
-        source,
+        chain.before,
         module=MODULE,
         module_base=MODULE_BASE,
         manifest=_manifest(),
+        after=chain.after,
         progress=msgs.append,
     )
     assert located is not None and located.match.strong
     joined = "\n".join(msgs)
     assert "parsed PE" in joined
     assert "writable .data" in joined
-    assert "strong match" in joined
+    assert "player anchor" in joined
+    assert "acting move_id changed" in joined
 
 
 def test_derive_reuses_a_prelocated_struct() -> None:
@@ -203,8 +219,13 @@ def test_health_falls_back_to_computed_when_no_direct_hp_field() -> None:
 
 
 def test_locates_the_planted_base_offset_and_stride() -> None:
+    chain = planted_chain()
     located = locate_player_struct(
-        planted_chain().before, module=MODULE, module_base=MODULE_BASE, manifest=_manifest()
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        after=chain.after,
     )
     assert located is not None
     assert located.match.base_offset == BASE_OFFSET
@@ -264,6 +285,159 @@ def test_no_match_when_the_chain_shape_is_wrong() -> None:
     assert result.player_anchor is None
     assert not result.ok
     assert set(result.unresolved) >= {"char_id", "move_id", "health", "pos_x"}
+
+
+# ---------------------------------------------------------------------------
+# C4f: the oracle is behavioral. A struct that looks right and never moves is not the player's.
+# ---------------------------------------------------------------------------
+#
+# The planted decoy is the live 5.02.01 failure, offline: a struct whose char_id/move_id/damage read
+# perfectly at round start, whose Kazuya-shaped neighbour sits at a constant stride, and whose
+# fields never change — reached from a static slot that is swept *before* the real one.
+
+
+def test_a_single_instant_oracle_locks_onto_the_frozen_decoy() -> None:
+    # The C4e oracle, reproduced: with only one snapshot, "struct-shaped at round start" is all
+    # there is to go on, and the decoy satisfies it first. This test exists to show the bug is real
+    # and the fixture models it — not to bless the behavior.
+    decoy = planted_decoy()
+    located = locate_player_struct(
+        decoy.before, module=MODULE, module_base=MODULE_BASE, manifest=_manifest()
+    )
+    assert located is not None
+    assert located.match.p1_base == DECOY_P1_BASE
+    assert located.match.base_offset == DECOY_BASE_OFFSET
+    assert located.behavior is None  # nothing confirmed it; nothing could
+
+
+def test_the_behavioral_oracle_rejects_the_decoy_and_locks_onto_the_real_struct() -> None:
+    # The C4f acceptance. Same world, same sweep order — but now each candidate is asked to move,
+    # and only the struct the player is actually controlling does.
+    decoy = planted_decoy()
+    located = locate_player_struct(
+        decoy.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        after=decoy.after,
+    )
+    assert located is not None
+    assert located.match.p1_base == P1_BASE
+    assert located.match.base_offset == BASE_OFFSET
+    assert located.match.stride == STRIDE
+    assert located.considered == 2  # both structs were structurally plausible ...
+    assert located.accepted == 1 and not located.ambiguous  # ... exactly one behaved
+    behavior = located.behavior
+    assert behavior is not None
+    assert behavior.acting_move_changed and behavior.opponent_damaged
+    assert behavior.score == 3
+
+
+def test_a_frozen_decoy_is_not_accepted_even_when_nobody_acted() -> None:
+    # If the user never performs the action, no struct's move_id changes and NOTHING is accepted.
+    # The scan fails closed and tells them to act, rather than falling back to the structural guess
+    # that picked the decoy in the first place.
+    still = planted_decoy_nobody_acted()
+    assert (
+        locate_player_struct(
+            still.before,
+            module=MODULE,
+            module_base=MODULE_BASE,
+            manifest=_manifest(),
+            after=still.after,
+        )
+        is None
+    )
+    result = derive_base_layout(
+        still.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        seed=_seed(),
+        source_after=still.after,
+    )
+    assert result.player_anchor is None
+    notes = " ".join(result.notes)
+    assert "BEHAVED" in notes and "jab P2, and jump" in notes
+
+
+def test_a_whiffed_jab_still_confirms_the_anchor() -> None:
+    # The corroborators rank; only the acting player's move_id gates. A jab that misses leaves the
+    # dummy's move_id and damage_taken untouched, and requiring either would reject the real struct.
+    whiff = planted_whiffed_jab()
+    located = locate_player_struct(
+        whiff.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        after=whiff.after,
+    )
+    assert located is not None and located.match.p1_base == P1_BASE
+    behavior = located.behavior
+    assert behavior is not None
+    assert behavior.acting_move_changed
+    assert not behavior.opponent_damaged and not behavior.opponent_move_changed
+    assert behavior.score == 1
+
+
+def test_a_zeroed_page_no_longer_satisfies_the_structural_oracle() -> None:
+    # char_id_min = 1. With it at 0, a page of zeroes reads char_id 0 / move_id 0 / damage 0 and
+    # passes the whole per-struct oracle — the cheapest false positive there is, and one the live
+    # run produced (it reported Jin=0).
+    manifest = _manifest()
+    assert manifest.char_id_min >= 1
+    spec = manifest.base_scan
+    assert spec is not None
+    zeroed = FlatMemorySource([(0x10000000, bytes(0x2000))], module_bases={MODULE: MODULE_BASE})
+    assert _player_oracle_ok(zeroed, 0x10000000, spec, manifest) is None
+
+
+def test_the_derivation_says_when_a_landing_was_never_confirmed() -> None:
+    # Without a second snapshot the scan can only apply the single-instant check. It must say so:
+    # a report that reads the same either way is how C4e's wrong landing looked plausible.
+    result = derive_base_layout(
+        planted_chain().before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        seed=_seed(),
+    )
+    assert result.player_anchor is not None
+    assert "SINGLE INSTANT" in " ".join(result.notes)
+
+
+def test_live_path_may_pre_sweep_the_player_without_derive_re_sweeping() -> None:
+    # Same contract the global sweep has, and for the same reason: the live orchestration sweeps
+    # before the user acts and confirms after, so a `located=None` coming back from it means
+    # "nothing behaved", not "not swept yet". Re-sweeping here would re-read one instant — minutes
+    # of work that can only reproduce the single-instant answer C4f exists to reject.
+    chain = planted_chain()
+    result = derive_base_layout(
+        chain.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        seed=_seed(),
+        source_after=chain.after,
+        sweep_player=False,
+    )
+    assert result.player_anchor is None
+    assert "BEHAVED" in " ".join(result.notes)
+
+
+def test_the_acting_player_index_is_bounded_to_p1_or_p2() -> None:
+    # `moving_player` indexes a two-element (P1, P2) tuple inside the behavioral oracle. Bounding it
+    # at load time turns a typo into a manifest validation error instead of an IndexError raised
+    # minutes into a live sweep, after the user has already performed the action.
+    with pytest.raises(ValidationError):
+        ProbeManifest.model_validate(_manifest().model_dump() | {"moving_player": 2})
+
+
+def test_the_derivation_reports_the_behavioral_evidence() -> None:
+    result = _derive()
+    notes = " ".join(result.notes)
+    assert "confirmed BEHAVIORALLY" in notes
+    assert "1 of 1 structurally-plausible landings passed" in notes
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +620,38 @@ def test_a_ticking_counter_alone_is_not_a_global_struct() -> None:
     before = {GLOBAL_TIMER_OFFSET: 900000, GLOBAL_FRAME_OFFSET: 100, GLOBAL_ROUND_OFFSET: 77}
     after = {GLOBAL_TIMER_OFFSET: 900001, GLOBAL_FRAME_OFFSET: 128, GLOBAL_ROUND_OFFSET: 77}
     assert "round" not in assign_global_fields(before, after, spec)
+
+
+def test_a_counter_jumping_further_than_the_prompt_allows_is_not_a_frame_counter() -> None:
+    # C4f Phase 3: the two snapshots straddle ONE interactive prompt, so the counter advances by
+    # seconds-to-minutes of frames. A u32 that jumped by ten million is a hash or a byte count, and
+    # narrowing the accept set is the cheapest ambiguity reduction available.
+    spec = _global_spec()
+    assert spec.frame_delta_max < 100_000
+    before = {GLOBAL_TIMER_OFFSET: 41200, GLOBAL_FRAME_OFFSET: 100, GLOBAL_ROUND_OFFSET: 2}
+    after = {
+        GLOBAL_TIMER_OFFSET: 40000,
+        GLOBAL_FRAME_OFFSET: 100 + spec.frame_delta_max + 1,
+        GLOBAL_ROUND_OFFSET: 2,
+    }
+    assert "frame_counter" not in assign_global_fields(before, after, spec)
+
+
+def test_two_slots_reaching_one_struct_are_one_landing_not_two() -> None:
+    # The live run's alarming "22 accepted" counted accepting *slots*. Several static globals
+    # legitimately point into the same match struct; that is not ambiguity, and reporting it as such
+    # would cry wolf on every run. Distinct landings are what the pick has to choose between.
+    located = locate_global_struct(
+        global_duplicate_slot_source(),
+        global_duplicate_slot_source(step=1),
+        module=MODULE,
+        module_base=MODULE_BASE,
+        spec=_global_spec(),
+    )
+    assert located is not None
+    assert located.slots == 2
+    assert located.accepted == 1
+    assert not located.ambiguous
 
 
 def test_global_anchor_seeded_and_flagged_when_the_chain_shapes_are_wrong() -> None:

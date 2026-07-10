@@ -15,6 +15,12 @@ Pure vs. impure: :func:`run_capture`, :func:`capture_from_reads`, :func:`write_c
 :func:`load_capture` are source-agnostic and offline-tested against a ``FakeMemorySource``. Only
 :func:`capture_live` attaches to a real Windows process (user-run).
 
+This is the **recording** side of the diagnostic/capture boundary (docs/02 §6): :func:`run_capture`
+reads the match-state signal through the *strict* decode first and refuses outright on a build whose
+``match_phase`` codes are uncalibrated, where ``decode_frame`` would merely report
+``MatchState.unknown``. Describing a frame you cannot fully read is diagnosis; writing it to disk is
+not.
+
 Nothing here writes to the game — it reads frames and writes a *file* (docs/02 §2).
 """
 
@@ -25,7 +31,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from tekken_coach.reader.decode import FrameRead, poll_frames
+from tekken_coach.reader.decode import FrameRead, poll_frames, read_state_signal
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.schemas import FrameRecord
@@ -80,7 +86,17 @@ def run_capture(
     ``FakeMemorySource`` (which is how it is offline-tested). Propagates
     :class:`~tekken_coach.reader.faults.MemoryReadError` if the process becomes unreadable mid-poll
     (docs/02 §7) — the caller classifies it via :func:`~tekken_coach.reader.faults.classify_fault`.
+
+    **This is a path that records, so it is gated** (docs/01 §4.3, docs/02 §6). It reads the match
+    state signal once up front, through the *strict* decode, and refuses the whole capture if the
+    build's ``match_phase`` codes are uncalibrated. :func:`~tekken_coach.reader.decode.decode_frame`
+    tolerates that (it decodes ``MatchState.unknown``) so the doctor can diagnose an uncalibrated
+    build — but a capture that cannot tell an online ranked match from a practice round must not
+    write frames to disk. Before the tolerant decode existed, ``decode_frame`` raising *was* this
+    refusal; making the diagnostic lenient without restoring the gate here would have silently
+    turned a hard failure into a directory of garbage-phase captures.
     """
+    read_state_signal(source, table)
     reads = poll_frames(source, table, count)
     return capture_from_reads(reads, game_version=game_version)
 

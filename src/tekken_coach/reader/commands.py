@@ -110,6 +110,8 @@ def doctor_main(args: argparse.Namespace) -> int:
     print(f"\nreader self-check (docs/02 §6) — {'PASS' if report.ok else 'FAIL'}")
     for check in report.checks:
         print(f"  [{'ok' if check.ok else 'XX'}] {check.name}: {check.detail}")
+    for note in report.notes:
+        print(f"  [--] {note}")
     if not report.ok and report.runbook:
         print("\n" + report.runbook, file=sys.stderr)
         return 1

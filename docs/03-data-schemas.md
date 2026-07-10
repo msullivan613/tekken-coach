@@ -18,7 +18,7 @@ The raw, uninterpreted state of one frame. Produced by [02](02-memory-reader.md)
 ```jsonc
 {
   "frame": 128472,            // int: game global frame counter (monotonic within a match)
-  "match_state": "in_round",  // enum: pre_round | in_round | round_over | match_over | replay | menu
+  "match_state": "in_round",  // enum: pre_round | in_round | round_over | match_over | replay | menu | unknown
   "round": 2,                 // int: 1-based round number
   "timer_ms": 41200,          // int: round clock remaining, ms
   "players": [ <PlayerFrame>, <PlayerFrame> ]  // exactly 2; index 0 = P1, index 1 = P2
@@ -65,6 +65,10 @@ The raw, uninterpreted state of one frame. Produced by [02](02-memory-reader.md)
 - `action_state` is a *thin* normalization the reader can derive cheaply from memory flags. The
   segmenter does the real interpretation; it does not trust `action_state` alone (see
   [04](04-segmenter.md) §4 on why raw flags around stagger/tech are ambiguous).
+- `match_state: "unknown"` (added C4f, additive) is what a frame decodes to when the build's
+  `match_phase` offset has not been calibrated ([02](02-memory-reader.md) §6). It appears in
+  diagnostic reads only — live capture refuses to record such a frame — and it is inert downstream:
+  it is not an active phase, so the segmenter treats it as "not in round".
 - `raw_state` (added C4e, additive) exists because **Tekken 8 does not store the booleans above**.
   It stores a handful of *encoded state words* (`simple_move_state`, `stun_type`,
   `complex_move_state`, …) whose integer values each denote a whole situation; the reader maps

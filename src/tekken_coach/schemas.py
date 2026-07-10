@@ -26,7 +26,14 @@ from pydantic import BaseModel, Field
 
 
 class MatchState(StrEnum):
-    """FrameRecord.match_state (03 §1)."""
+    """FrameRecord.match_state (03 §1).
+
+    ``unknown`` is the phase of a frame whose raw ``match_phase`` code is not in the offset table's
+    map — a build whose phase offset has not been calibrated yet. It is inert everywhere it matters:
+    it is not an active phase (:mod:`tekken_coach.reader.state`), so nothing buffers or records on
+    it, and the segmenter treats it as "not in round". Only the *diagnostic* decode produces it; the
+    capture gate refuses an unknown phase outright (docs/02 §6).
+    """
 
     pre_round = "pre_round"
     in_round = "in_round"
@@ -34,6 +41,7 @@ class MatchState(StrEnum):
     match_over = "match_over"
     replay = "replay"
     menu = "menu"
+    unknown = "unknown"
 
 
 class ActionState(StrEnum):

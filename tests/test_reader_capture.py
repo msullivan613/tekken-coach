@@ -19,6 +19,7 @@ from tekken_coach.reader.capture import (
     run_capture,
     write_capture,
 )
+from tekken_coach.reader.faults import DecodeError
 from tekken_coach.reader.memory_source import FakeMemorySource, MemoryImage
 from tekken_coach.reader.offsets import OffsetTable, select_offset_table
 from tekken_coach.schemas import (
@@ -103,6 +104,20 @@ def test_capture_roundtrips_through_a_file(tmp_path: Path, table: OffsetTable) -
     # Every reloaded frame is a valid FrameRecord (schema-validated on load).
     assert all(isinstance(fr, FrameRecord) for fr in reloaded.frames)
     assert [fr.frame for fr in reloaded.frames] == [1000, 1001, 1002, 1003, 1004]
+
+
+def test_capture_refuses_a_build_whose_match_phase_is_uncalibrated(table: OffsetTable) -> None:
+    # The diagnostic/capture boundary (docs/02 §6). `decode_frame` decodes an unrecognized phase to
+    # MatchState.unknown so the doctor can still validate the anchors on an uncalibrated build — but
+    # capture WRITES FRAMES, and a capture that cannot tell an online ranked match from a practice
+    # round must not run (docs/01 §4.3). It refuses before polling a single frame.
+    frames = _frames(3)
+    source = _source(frames, table)
+    raw_in_round = next(k for k, v in table.state_codes.match_phase.items() if v == "in_round")
+    del table.state_codes.match_phase[raw_in_round]  # the phase codes were never calibrated
+
+    with pytest.raises(DecodeError, match=f"unknown match_phase code {raw_in_round}"):
+        run_capture(source, table, 3, game_version="2.01.01")
 
 
 def test_capture_records_gap_markers(table: OffsetTable) -> None:

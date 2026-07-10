@@ -71,7 +71,11 @@ class GlobalScanSpec(BaseModel):
     field_offsets: list[int]  # unassigned candidate offsets within the global struct
     field_kind: ScalarKind = "u32"
     frame_delta_min: int = 1  # a live frame counter advances by at least this between snapshots
-    frame_delta_max: int = 100_000  # ... and by at most this (above it, not a frame counter)
+    # ... and by at most this. The snapshots straddle one interactive prompt, so at 60fps a
+    # plausible delta is seconds-to-minutes of frames. A u32 that jumped by more than ten minutes'
+    # worth is a hash, a byte count, or an address — not this frame counter. Narrowing this narrows
+    # the accept set, which is the point (C4f Phase 3).
+    frame_delta_max: int = 36_000
     round_min: int = 1
     round_max: int = 8
     timer_ms_max: int = 300_000  # a round clock above this is not a round clock
@@ -130,6 +134,10 @@ class BaseScanSpec(BaseModel):
       a separate allocation (the two-level case the runbook flags).
     * ``aob_window_before`` / ``aob_window_after`` — bytes captured around the slot for the AOB
       signature (the pointer bytes themselves are wildcarded).
+    * ``max_strong_candidates`` — how many structurally-plausible landings to carry into the
+      behavioral confirmation (:func:`~.basescan.confirm_players`). The structural oracle accepts
+      more than one struct on the real game, so the sweep may not stop at the first; this bounds how
+      many it collects before the user is prompted to act.
     * ``state_fields`` — the encoded state words + ``move_frame`` + ``counter_state`` at their known
       within-struct offsets (facts/data). These are **seeded, not derived**: no two-snapshot oracle
       can prove where ``stun_type`` lives, so the scan writes them into the table and the report
@@ -149,6 +157,7 @@ class BaseScanSpec(BaseModel):
     max_stride: int = 0x40000  # P1->P2 gap ceiling for the constant-stride model
     aob_window_before: int = 16  # signature context bytes before the slot
     aob_window_after: int = 16  # ... and after (beyond the 8 wildcarded pointer bytes)
+    max_strong_candidates: int = 32  # landings carried into the behavioral confirmation
     scan_data_only: bool = True  # sweep only readable initialized-data sections for slots
     scan_writable_first: bool = (
         True  # sweep writable .data first (likely + cheap), .rdata as fallback
@@ -181,7 +190,10 @@ class ProbeManifest(BaseModel):
     round_start_health: int  # full HP, identical for both players; pins the stride
 
     # --- Plausibility bounds (keep scanners off coincidental matches) ---
-    char_id_min: int = 0
+    # `char_id_min` is 1, not 0: a zeroed page reads char_id 0 / move_id 0 / damage_taken 0 and
+    # satisfies the whole structural player oracle. No T8 character carries id 0 (Kazuya is 12), so
+    # excluding it costs nothing and removes the cheapest false positive there is.
+    char_id_min: int = 1
     char_id_max: int = 200
     move_id_min: int = 0
     move_id_max: int = 60000
@@ -193,8 +205,10 @@ class ProbeManifest(BaseModel):
     pos_abs_min: float = 1.0e-3
     frame_delta_max: int = 100000  # the global frame counter advances by at most this between snaps
 
-    # --- Which player performs the between-snapshots action (moves + presses a button) ---
-    moving_player: int = 0
+    # --- Which player performs the between-snapshots action (walks, jabs, jumps) ---
+    # Indexes a two-element (P1, P2) tuple in the behavioral oracle, so it is bounded here rather
+    # than crashing on an IndexError deep in a live sweep because someone typed a 2.
+    moving_player: int = Field(default=0, ge=0, le=1)
 
     # --- Scan stepping + windows ---
     scan_align: int = 4

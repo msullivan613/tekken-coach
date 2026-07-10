@@ -14,6 +14,14 @@ The five checks (docs/02 §6):
 3. the frame counter increases monotonically,
 4. a known move yields a stable, non-garbage move id,
 5. positions/distance change when the practice dummy is moved.
+
+All five test the **mechanical core** — the anchors, the stride, the field offsets — and none of
+them needs ``match_phase``. That is deliberate: the doctor goes green *incrementally*, so a build
+whose phase offset is still seeded can prove its player and global anchors are right before anyone
+calibrates match state. An uncalibrated phase is reported as a :attr:`DoctorReport.notes` line, not
+a failed check, because it does not make any of the five answers wrong. It does stop capture — but
+at the capture gate (:func:`~tekken_coach.reader.decode.read_state_signal`), which refuses an
+unknown phase, not here.
 """
 
 from __future__ import annotations
@@ -26,7 +34,7 @@ from tekken_coach.reader.decode import FrameRead, poll_frames
 from tekken_coach.reader.faults import PATCH_RUNBOOK, MemoryReadError
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import OffsetTable
-from tekken_coach.schemas import FrameRecord
+from tekken_coach.schemas import FrameRecord, MatchState
 
 DEFAULT_DOCTOR_FRAMES = 8
 
@@ -42,9 +50,15 @@ class DoctorCheck:
 
 @dataclass
 class DoctorReport:
-    """The full self-check result (docs/02 §6). ``ok`` gates capture."""
+    """The full self-check result (docs/02 §6). ``ok`` gates capture.
+
+    ``notes`` carries what the doctor observed but does **not** gate on — today, an uncalibrated
+    ``match_phase``. Folding it into ``ok`` would keep the whole reader red over a field none of the
+    five checks reads, hiding the mechanical core it *can* prove.
+    """
 
     checks: list[DoctorCheck] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -141,6 +155,24 @@ def _check_positions_change(frames: list[FrameRead]) -> DoctorCheck:
     return DoctorCheck("positions_change", ok, detail)
 
 
+def _phase_notes(frames: list[FrameRead], table: OffsetTable) -> list[str]:
+    """Observations that do not gate the five checks but the user must see (docs/02 §6).
+
+    An ``unknown`` phase means the table's ``match_phase`` offset holds a code its ``state_codes``
+    map does not name — the offset is still seeded. Everything the five checks assert stays true;
+    what breaks is *capture*, which reads the phase to decide whether it may record at all.
+    """
+    if not any(f.frame.match_state is MatchState.unknown for f in frames):
+        return []
+    offset = table.global_struct.fields["match_phase"].offset
+    return [
+        f"match_phase (+0x{offset:x}) decodes as 'unknown' — the offset is seeded, not calibrated. "
+        "The checks above do not read it, so the derived anchors/offsets are still proven; but "
+        "capture will REFUSE to record until the phase codes are calibrated (docs/02 §4 step 4), "
+        "because a gate that cannot recognize an online match must not run."
+    ]
+
+
 def evaluate_frames(
     frames: Iterable[FrameRead],
     *,
@@ -158,7 +190,7 @@ def evaluate_frames(
         _check_move_id_stable(seq, table),
         _check_positions_change(seq),
     ]
-    return DoctorReport(checks=checks)
+    return DoctorReport(checks=checks, notes=_phase_notes(seq, table))
 
 
 def run_doctor(

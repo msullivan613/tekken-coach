@@ -98,8 +98,26 @@ the within-struct field offsets are far more stable**. So `update-offsets --base
 only `base_offset`, by scanning the module's static data for a slot whose chain lands on a struct
 that satisfies the **known field layout** — a plausible `char_id`, a plausible `move_id`,
 `damage_taken == 0` at round start, and P1/P2 resolving to Jin and Kazuya. That mutual two-struct
-consistency is the acceptance test. Around the accepted slot it captures an **AOB signature** (the
+consistency narrows the field. Around the accepted slot it captures an **AOB signature** (the
 pointer bytes wildcarded) and stores it in the table so a subsequent run re-finds the slot directly.
+
+**Looking right is not enough — the struct has to move.** The layout check above describes a single
+frozen instant, and more than one struct in a 100 MB module satisfies it. Confirmed live on 5.02.01:
+the scan accepted a struct whose `char_id`/`move_id`/`damage_taken` all read plausibly at round start
+and whose `move_id` then stayed `0` while the player jabbed and jumped. So the player oracle is
+**behavioral too**, read across the very same snapshot pair the position scan needs:
+
+| signal | across the two snapshots | required? |
+|---|---|---|
+| acting player's `move_id` | **changes** (a jab and a jump each rewrite it) | yes |
+| opponent's `move_id` | changes (the dummy reacts) | no — ranks, does not gate |
+| opponent's `damage_taken` | rises off 0 | no — the jab may whiff |
+
+Only the first is acceptance; the other two rank several survivors. Requiring a corroborator would
+reject the real struct on a run where the jab missed. When nothing behaves, the scan **writes no
+table** and says to perform the action — it never falls back to the structural guess, because the
+structural guess is the bug. (`char_id_min` is 1 for the same reason: at 0, a page of *zeroes* reads
+`char_id=0 / move_id=0 / damage=0` and passes the whole layout check.)
 
 `decode.resolve_anchor` already follows a multi-level `pointer_path`, so the reader consumes such an
 anchor with no code change; the chain is re-resolved on every read, which is precisely what makes it
@@ -114,10 +132,14 @@ position scan uses:
 
 | field | behavior across the two snapshots | required? |
 |---|---|---|
-| `frame_counter` | strictly increases, by a plausible delta | yes |
+| `frame_counter` | strictly increases, by a delta plausible for one prompt (≤ 10 min of frames) | yes |
 | `round` | holds constant, in 1..k | yes |
 | `timer_ms` | strictly decreases (a round clock counts down) | no — practice mode freezes it |
-| `match_phase` | reads as a small code | no |
+| `match_phase` | reads as a small code | no — usually unassignable at round start |
+
+Several static slots legitimately point into the *same* global struct, so accepting slots are deduped
+to distinct **landings** before ambiguity is reported. Two different structs both ticking a counter
+beside a steady round number is real ambiguity; twenty-two slots into one struct is not.
 
 Crucially, the within-struct offsets are seeded as an **unassigned list**: we know those offsets
 carry match state, not which is which. The scan assigns offset → field *by behavior*, so a reordering
@@ -160,12 +182,19 @@ A Season/balance patch can shift **both** offsets **and** move data (summary §7
    taken), and runs the clean-room `update-offsets --base-scan` command (§5 — a re-implementation of
    the fork's re-discovery *technique*, not its script). It re-derives the player anchor
    (`base_offset` + pointer chain + AOB signature) and the global/match anchor, and writes a
-   candidate `assets/offsets/<version>.json` keyed to the detected exe version. The tool prompts the
-   user to walk P1 and press a button between two snapshots; that single action does triple duty —
-   the position delta locates the transform component, the frame-counter delta identifies the global
-   struct, and an in-struct scan for round-start max HP locates `health` (or falls back to
-   `damage_taken`). (`update-offsets` without `--base-scan` is the older heap value-scan; it cannot
-   reach a struct behind a pointer chain.)
+   candidate `assets/offsets/<version>.json` keyed to the detected exe version. Between two snapshots
+   the tool prompts:
+
+   > Now, as P1 (Jin), without pausing: **walk forward a step**, **jab P2**, **jump**. Press Enter
+   > **while still in the air** (or the instant you land).
+
+   That single action does quadruple duty — the `pos_x` delta locates the transform component, the
+   frame-counter delta identifies the global struct, the acting player's `move_id` delta confirms the
+   player struct is the one being *controlled*, and an in-struct scan for round-start max HP locates
+   `health` (or falls back to `damage_taken`). The "still in the air" instruction is load-bearing:
+   `move_id` is compared against its round-start value, and a character back in its idle animation
+   reads exactly like a frozen field. (`update-offsets` without `--base-scan` is the older heap
+   value-scan; it cannot reach a struct behind a pointer chain.)
 3. **Invalidate move/frame data** for the new version (mirror the fork's "wipe frame_data"
    guidance) — see [05](05-frame-data-and-move-map.md) for the data side of the same patch event.
 4. **Verify the state map** (§8). It is *not* per-version and is normally carried across a patch
@@ -179,8 +208,14 @@ transform component), the **global/match anchor**, and `frame_counter` / `round`
 where the clock is running). It **seeds** the encoded state-word offsets from the layout facts —
 where `stun_type` lives is knowable, but no round-start oracle can prove it, because nobody is in
 stun at round start. It leaves **carried from the previous table**: heat, rage, input, facing, the
-`state_codes` maps, and `match_phase`'s offset. All of that is named in the diagnostic report, tiered
-by confidence, so calibration is focused rather than a hunt.
+`state_codes` maps, and the `match_phase` / `game_mode` offsets. All of that is named in the
+diagnostic report, tiered by confidence, so calibration is focused rather than a hunt.
+
+`match_phase` and `game_mode` are the two the report is loudest about, because they gate *capture*
+rather than the scan. Neither is derivable at the calibration setup — nothing about one instant
+identifies a phase code, and the game mode does not change while the user takes a step. Until they
+are calibrated, `decode_frame` reports `match_state: unknown`, §6's self-check still goes green on
+the mechanical core, and **live capture refuses to record**. See §6.
 
 Two things the tool refuses to guess. If P2 turns out **not** to sit at a constant stride from P1 (a
 two-level `p2_data_offset`), it reports the P1 anchor and **writes no table** — expressing that needs
@@ -264,6 +299,23 @@ attaches during **practice mode** and asserts:
 
 A failed self-check blocks capture and points at §4. This is the fast signal that a patch broke
 the offsets, rather than discovering it as corrupt interactions three matches later.
+
+### The doctor goes green incrementally
+
+None of the five checks reads `match_phase`, and that is deliberate. A build whose phase offset is
+still seeded can — and must — prove its anchors, stride and field offsets *before* anyone sits down
+to calibrate match state. So the reader draws one boundary through the decode:
+
+| path | on an unrecognized `match_phase` | why |
+|---|---|---|
+| `decode_frame` — **describes** a frame | decodes `MatchState.unknown`, carries on | otherwise not one frame of an uncalibrated build is readable, and the doctor cannot run at all |
+| `read_state_signal` — **decides** whether to record | raises `DecodeError` | a gate that cannot tell an online ranked match from a practice round must not run ([01](01-capture-modes.md) §4.3) |
+| `run_capture` — **records** | consults `read_state_signal` first; refuses the whole capture | describing a frame you cannot fully read is diagnosis; writing it to disk is not |
+
+The doctor reports the unknown phase as a **note**, not a failed check: it does not make any of the
+five answers wrong, and folding it into `ok` would keep the whole reader red over a field none of
+them reads. `MatchState.unknown` is inert everywhere it flows — it is not an active phase, so it can
+never read as a live match, and clean mode will not buffer on it.
 
 ## 7. Reliability & failure modes
 

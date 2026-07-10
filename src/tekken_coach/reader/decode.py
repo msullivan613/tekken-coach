@@ -23,6 +23,12 @@ stays debuggable. Likewise ``pos_{x,y,z}`` come from a separate transform
 :class:`~tekken_coach.reader.offsets.ComponentAnchor` when the table declares one, and from plain
 in-struct fields when it does not.
 
+One boundary runs through this module and is worth naming up front: :func:`decode_frame` *describes*
+a frame and :func:`read_state_signal` *decides* whether to record one. So an uncalibrated
+``match_phase`` decodes to ``MatchState.unknown`` in the former (the doctor still gets to check the
+mechanical core) and raises in the latter (a gate that cannot recognize an online match refuses).
+:func:`decode_state` takes the ``strict`` flag that separates them.
+
 :class:`FrameReader` wraps :func:`decode_frame` with the dropped-frame handling of docs/02 §7:
 when the global frame counter jumps, it records a ``gap-tolerated:N`` marker whose ``N`` matches
 the segmenter's own gap accounting exactly (docs/04 §4.7 uses ``missed = frame - prev - 1``).
@@ -379,12 +385,31 @@ def _decode_player(source: MemorySource, table: OffsetTable, index: int) -> Play
 
 
 def decode_state(
-    table: OffsetTable, phase_raw: int, mode_raw: int
+    table: OffsetTable, phase_raw: int, mode_raw: int, *, strict: bool
 ) -> tuple[MatchState, str, StateSignal]:
-    """Normalize the raw phase/mode codes into a ``MatchState`` and a :class:`StateSignal`."""
+    """Normalize the raw phase/mode codes into a ``MatchState`` and a :class:`StateSignal`.
+
+    ``strict`` is the **diagnostic/capture boundary** (docs/01 §4.3, docs/02 §6), and every caller
+    states which side it is on:
+
+    * ``strict=False`` — *describe* the frame. An unrecognized ``match_phase`` code becomes
+      :attr:`~tekken_coach.schemas.MatchState.unknown` rather than raising, so
+      :func:`decode_frame` completes and the doctor can validate the mechanical core (char ids,
+      health, frame monotonicity, move ids, positions) on a build whose ``match_phase`` offset has
+      not been calibrated. Tolerating the code is *not* trusting it: ``unknown`` is not an active
+      phase, so it never reads as "a match is being played".
+    * ``strict=True`` — *decide* whether to record. :func:`read_state_signal`, the gate clean mode's
+      online-refusal and live mode's arm/disarm consult, refuses an unknown phase outright: a gate
+      that cannot tell an online ranked match from a practice round must not run.
+
+    ``game_mode`` has no strict/tolerant split — an unmapped mode already falls back to ``"idle"``,
+    which is refusal-shaped for both gates (never online, never buffering).
+    """
     phase_name = table.state_codes.match_phase.get(str(phase_raw))
     if phase_name is None:
-        raise DecodeError(f"unknown match_phase code {phase_raw}")
+        if strict:
+            raise DecodeError(f"unknown match_phase code {phase_raw}")
+        phase_name = MatchState.unknown.value
     match_state = MatchState(phase_name)
     mode_name = table.state_codes.game_mode.get(str(mode_raw), "idle")
     return match_state, mode_name, classify_state(match_state, mode_name)
@@ -397,6 +422,11 @@ def decode_frame(source: MemorySource, table: OffsetTable) -> FrameRecord:
     both player structs. Raises :class:`~tekken_coach.reader.faults.DecodeError` /
     :class:`~tekken_coach.reader.faults.MemoryReadError` on malformed data or unreadable memory —
     it never returns a partially-filled or guessed record.
+
+    An unrecognized ``match_phase`` code is the one thing it does **not** treat as malformed: it
+    decodes to :attr:`~tekken_coach.schemas.MatchState.unknown` (``strict=False``) so a build whose
+    phase offset is still seeded can be read and diagnosed at all. Deciding whether to *record* such
+    a frame is :func:`read_state_signal`'s job, and it refuses.
     """
     g = table.global_struct
     gbase = resolve_anchor(source, g.anchor)
@@ -411,7 +441,7 @@ def decode_frame(source: MemorySource, table: OffsetTable) -> FrameRecord:
     round_no = gi("round")
     timer_ms = gi("timer_ms")
 
-    match_state, _mode, _signal = decode_state(table, phase_raw, mode_raw)
+    match_state, _mode, _signal = decode_state(table, phase_raw, mode_raw, strict=False)
 
     players = [_decode_player(source, table, 0), _decode_player(source, table, 1)]
     return FrameRecord(
@@ -428,12 +458,19 @@ def read_state_signal(source: MemorySource, table: OffsetTable) -> StateSignal:
 
     Lets an armed-but-not-recording capture (docs/01 §3.1) and clean mode's online-refusal gate
     watch state flags cheaply, without paying for both player structs every poll.
+
+    **Strict, deliberately.** This is the path that decides whether to record, so an unrecognized
+    ``match_phase`` raises :class:`~tekken_coach.reader.faults.DecodeError` rather than decoding to
+    :attr:`~tekken_coach.schemas.MatchState.unknown`. :func:`decode_frame` tolerates that code so
+    the doctor can still validate the mechanical core on an uncalibrated build; a *diagnostic*
+    tolerating a phase it cannot read must never loosen the gate that keeps clean mode off a ranked
+    match (docs/01 §4.3 defense-in-depth).
     """
     g = table.global_struct
     gbase = resolve_anchor(source, g.anchor)
     phase_raw = _read_int(source, gbase + _field(g.fields, "match_phase").offset, "u32")
     mode_raw = _read_int(source, gbase + _field(g.fields, "game_mode").offset, "u32")
-    _match_state, _mode, signal = decode_state(table, phase_raw, mode_raw)
+    _match_state, _mode, signal = decode_state(table, phase_raw, mode_raw, strict=True)
     return signal
 
 
