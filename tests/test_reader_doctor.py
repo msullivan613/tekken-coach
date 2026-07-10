@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
 from tekken_coach.reader.doctor import DoctorReport, run_doctor
 from tekken_coach.reader.faults import MemoryReadError
-from tekken_coach.reader.memory_source import FakeMemorySource, MemoryImage
+from tekken_coach.reader.memory_source import FakeMemorySource, MemoryImage, MemoryRegion
 from tekken_coach.reader.offsets import OffsetTable, select_offset_table
 from tekken_coach.schemas import (
     ActionState,
@@ -156,6 +157,9 @@ def test_process_read_error_is_reported_not_raised(table: OffsetTable) -> None:
 
         def module_base(self, module: str) -> int:
             return MODULE_BASE
+
+        def regions(self) -> Sequence[MemoryRegion]:
+            return []
 
     report = run_doctor(DeadSource(), table, known_char_ids=KNOWN_CHAR_IDS, frames=6)
     assert not report.ok

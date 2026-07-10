@@ -175,6 +175,52 @@ class BaseScanSpec(BaseModel):
     component_scan: ComponentScanSpec | None = None
 
 
+class DeriveScanSpec(BaseModel):
+    """Drives C4h's **fully derived** layout scan — no seeded within-struct offsets (docs/02 §3).
+
+    C4d/C4e seed the field offsets (``char_id`` at +0x168, the pointer chain ``0x10→0x68→0x8→0x30``)
+    from the community layout and derive only the static ``base_offset``. On build 5.02.01 those
+    seeds are stale (the fork died Oct 2024), and a fair windowed run found 0 of 13 structural
+    candidates behaving. C4h removes the dependence: it locates the entity struct by **behavior**,
+    derives the field offsets + stride + Jin's id + the pointer path as **outputs**, so a patch is a
+    re-run rather than a re-seed. The only retained seed is our own C1 fact ``kazuya_char_id`` (12);
+    even Jin's id is discovered.
+
+    Everything here is a tractability **bound** on a standard differential/reverse-pointer scan, not
+    a layout fact — the facts (Kazuya's id, the char/move plausibility ranges, the stride window,
+    the scan alignment) are the manifest's existing top-level fields, reused here.
+
+    * ``struct_span`` — how far past a candidate's ``char_id`` address to compare two structs / look
+      for the acting-correlated field. Bounds Phase 2's differential scan and Phase 4's field scans.
+    * ``similarity_min`` — the fraction of 4-byte words two symmetric player structs must share at
+      round start to be a stride pair (both idle, same move/state, same 0 damage — they differ only
+      at ``char_id``/position/facing). This is the structural discriminator that keeps the char-id
+      pairing from exploding on small ints, and it seeds no offset.
+    * ``max_char_id_hits`` / ``max_pairs`` / ``max_layouts`` — caps on the char-id-pair sweep and
+      the behavioral confirmation, so a heap full of the value 12 cannot make the scan unbounded.
+    * ``reverse_max_depth`` / ``reverse_max_offset`` — Phase 3's pointer-chain depth ceiling and the
+      window ``[target-M, target]`` a stored pointer must fall in to count as a hop. Bound the
+      backward BFS for tractability.
+    * ``reverse_max_nodes`` / ``max_paths`` — the BFS node ceiling and how many candidate static
+      paths to carry into the reallocation confirmation.
+    * ``aob_window_before`` / ``aob_window_after`` — bytes captured around the derived slot for the
+      AOB signature (the pointer bytes are wildcarded), as in C4d.
+    """
+
+    struct_span: int = 0x2000
+    similarity_min: float = 0.5
+    min_shared_words: int = 8  # non-zero words two spans must share before "similar" means anything
+    max_char_id_hits: int = 4096
+    max_pairs: int = 64
+    max_layouts: int = 16
+    reverse_max_depth: int = 4
+    reverse_max_offset: int = 0x1000
+    reverse_max_nodes: int = 400_000
+    max_paths: int = 32
+    aob_window_before: int = 16
+    aob_window_after: int = 16
+
+
 class ProbeManifest(BaseModel):
     """Everything the re-discovery search needs, as an editable data file (docs/02 §4)."""
 
@@ -187,6 +233,12 @@ class ProbeManifest(BaseModel):
 
     # --- C4e global/match anchor derivation (the same technique, one struct over) ---
     global_scan: GlobalScanSpec | None = None
+
+    # --- C4h fully-derived layout scan (locate by behavior, derive every offset) ---
+    # Optional so the C4c/C4d manifests load without it; required for `update-offsets --derive`.
+    # Reuses base_scan.component_scan / .state_fields / .round_start_health and global_scan for the
+    # Phase 4 handoff (those are DATA facts, not seeded locating offsets).
+    derive_scan: DeriveScanSpec | None = None
 
     # The encoded-state value -> meaning map (docs/02 §8), resolved relative to the manifest's own
     # directory. Kept a separate file from the offset tables: `update-offsets` rewrites addresses

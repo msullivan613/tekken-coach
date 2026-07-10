@@ -66,8 +66,11 @@ def test_no_write_or_inject_primitive_in_reader() -> None:
 
 
 def test_memory_source_seam_exposes_no_write_method() -> None:
-    # The Protocol's only public members are read + module_base. Nothing that mutates.
+    # The Protocol's only public members are read + module_base + regions. All three are read-side:
+    # enumerating committed regions (C4h) is a VirtualQueryEx-style query, not a mutation.
     members = {name for name in dir(MemorySource) if not name.startswith("_")}
-    assert members == {"read", "module_base"}, f"unexpected MemorySource surface: {members}"
+    assert members == {"read", "module_base", "regions"}, (
+        f"unexpected MemorySource surface: {members}"
+    )
     # And no member name hints at writing/injecting.
     assert not any("write" in m or "inject" in m or "send" in m for m in members)

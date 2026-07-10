@@ -192,5 +192,38 @@
     "timer_ms_max": 300000,
     "match_phase_max": 64,
     "scan_data_only": true
+  },
+
+  "_derive_scan_comment": [
+    "C4h FULLY-DERIVED layout scan (docs/02 §3): `update-offsets --derive`. Unlike --base-scan (C4d),",
+    "it seeds NO within-struct offsets and NO pointer chain — on build 5.02.01 those seeds are stale",
+    "(the fork died Oct 2024) and a fair windowed run found 0 of 13 candidates behaving. It locates the",
+    "entity struct by BEHAVIOR: sweep the enumerated HEAP for Kazuya's id 12 beside a plausible id at a",
+    "constant stride whose surrounding struct reads SIMILAR (both players idle share many non-zero",
+    "words); confirm the acting player's move_id CHANGES across the action window; then reverse-scan the",
+    "static data for a pointer path to it and keep only paths that survive a REALLOCATION (a round",
+    "reset). char_id/move_id/stride/Jin's id/damage_taken and the pointer path are all OUTPUTS. The only",
+    "retained seed is our own C1 fact kazuya_char_id=12. Everything here is a tractability BOUND, not a",
+    "layout fact (the facts — Kazuya's id, char/move ranges, stride window, scan align — are the",
+    "manifest's existing top-level fields). Position/global/state reuse base_scan.component_scan /",
+    "global_scan / base_scan.state_fields (those are DATA facts): the encoded state-word OFFSETS remain",
+    "best-effort seeds, translated onto the derived base and flagged for docs/02 §8 re-derivation, since",
+    "no round-start oracle can prove where stun_type lives. `struct_span` bounds the differential/field",
+    "scans; `similarity_min`/`min_shared_words` are the zero-immune struct-similarity discriminator;",
+    "`reverse_max_depth`/`reverse_max_offset` bound the backward BFS; the rest are caps."
+  ],
+  "derive_scan": {
+    "struct_span": 8192,
+    "similarity_min": 0.5,
+    "min_shared_words": 8,
+    "max_char_id_hits": 4096,
+    "max_pairs": 64,
+    "max_layouts": 16,
+    "reverse_max_depth": 6,
+    "reverse_max_offset": 4096,
+    "reverse_max_nodes": 400000,
+    "max_paths": 32,
+    "aob_window_before": 16,
+    "aob_window_after": 16
   }
 }

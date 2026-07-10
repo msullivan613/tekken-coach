@@ -140,6 +140,37 @@ changes, which zeroes cannot do. Two independent backstops, neither of which nee
 anchor with no code change; the chain is re-resolved on every read, which is precisely what makes it
 survive reallocation.
 
+**When the seeds themselves go stale — derive the whole layout (`--derive`, C4h).** Everything above
+still *seeds* the within-struct offsets (`char_id` at +0x168, `move_id` at +0x528) and the chain
+shape (`0x10→0x68→0x8→0x30`) from the community layout, and re-derives only the static `base_offset`.
+Those seeds came from a fork that died in Oct 2024; confirmed on build 5.02.01, they are stale — a
+fair windowed run found **zero** of thirteen structural candidates behaving. So `--derive` removes
+the dependence and derives the offsets themselves, keeping only our own C1 fact (Kazuya's id = 12):
+
+1. **Locate by behavior, not by offset.** Enumerate the committed heap regions (a read-only
+   `VirtualQueryEx` on the `MemorySource` seam) and sweep them for the `char_id` *pair*: the value
+   12 (Kazuya) beside a plausible small int at a constant **stride** whose surrounding struct reads
+   *byte-similar* (two idle players share their non-zero constants — health regime, state words —
+   and differ only at `char_id`/position/facing; a pair of empty spans is rejected, which is what
+   keeps the pairing from exploding on the heap's many small ints). Confirm behaviorally with the
+   same action window: accept only if a 4-byte field in the acting player's struct *changes* when
+   they act — that field's offset is the derived `move_id`. `char_id`'s offset, the stride, **Jin's
+   id** (community data suggests 6; we verify, never seed), and `damage_taken` (the opponent field
+   that goes 0→>0 when the dummy is hit) are all **outputs**.
+2. **Find a durable static path by reverse pointer scan.** Build a value-index of every stored
+   pointer in the enumerated memory, BFS *backward* from the located struct (a stored pointer `P`
+   with `base − M ≤ P ≤ base` is a hop) until reaching a module `.data` slot, bounded by depth and
+   offset. Then **confirm across a reallocation**: take a second capture after a round reset (the
+   struct moves) and keep only paths that still resolve to the re-located struct — the exact
+   durability the raw heap address lacks. The anchor roots at the pointer target the game holds, so
+   `char_id`'s derived offset is whatever the reverse scan yields, and the seeded *state-word*
+   offsets (§8 — no round-start oracle can prove them) are translated onto that base and flagged.
+
+The scans are standard differential/reverse-pointer techniques reimplemented clean-room; the whole
+path (enumerate → locate-by-behavior → reverse-scan → confirm-across-realloc → derive → build →
+doctor) is offline-tested against a planted enumerable image with a reallocated variant, pymem
+absent. A patch is then a **re-run**, not a re-seed.
+
 **The global/match struct is behind its own static pointer too**, so it gets the same treatment —
 sweep the static data, follow a seeded chain shape, validate the landing. What differs is the
 **oracle**. The player struct has a *structural* signature (a plausible char id next to a plausible
@@ -208,8 +239,12 @@ A Season/balance patch can shift **both** offsets **and** move data (summary §7
    taken), and runs the clean-room `update-offsets --base-scan` command (§5 — a re-implementation of
    the fork's re-discovery *technique*, not its script). It re-derives the player anchor
    (`base_offset` + pointer chain + AOB signature) and the global/match anchor, and writes a
-   candidate `assets/offsets/<version>.json` keyed to the detected exe version. After the round-start
-   sweep the tool prompts:
+   candidate `assets/offsets/<version>.json` keyed to the detected exe version. **If `--base-scan`
+   finds nothing because its seeded within-struct offsets have themselves gone stale** (a bigger
+   patch), run `update-offsets --derive` (C4h, §3): it seeds none of them, locates the struct on the
+   enumerated heap by behavior, derives every offset and finds a reallocation-surviving pointer path
+   — and additionally prompts for a **round reset** between captures so that path can be confirmed.
+   After the round-start sweep the tool prompts:
 
    > Press Enter, then **alt-tab back to the game**. After a 3s countdown the scan watches for ~5s.
    > For the whole of that time, as P1 (Jin), keep acting — on repeat: **walk forward**, **jab P2**,

@@ -46,12 +46,22 @@ Windows calibration runbook (docs/02 §4) — run in native Python, not WSL:
         module-relative window or a raw heap address goes stale immediately. The derived anchor is
         module_base + base_offset + pointer_path, which the reader re-resolves every frame.
 
-     b) python -m tekken_coach.reader.commands update-offsets                 [C4c, heap value-scan]
+     b) python -m tekken_coach.reader.commands update-offsets --derive         [C4h, FULLY DERIVED]
+        Seeds NO within-struct offset and NO pointer chain — use this when --base-scan finds nothing
+        because its seeded offsets have gone stale (a new season/patch: the fork they came from is
+        long dead). It locates the entity struct on the ENUMERATED HEAP by behavior (Kazuya's id 12
+        beside a plausible id at a similar-struct stride whose acting player's move_id changes
+        across the action window), derives every field offset + stride + Jin's id as OUTPUTS, then
+        reverse-scans the static data for a pointer path and keeps only one that SURVIVES A
+        REALLOCATION. It prompts you to act AND to reset the round once (so the struct moves and the
+        durable path can be confirmed). A patch becomes a re-run, not a re-seed.
+
+     c) python -m tekken_coach.reader.commands update-offsets                 [C4c, heap value-scan]
         Only useful if the struct happens to sit at a fixed module-relative offset.
 
-     Either way the tool prompts you to ACT between two snapshots (walk P1 forward a step and press
-     a button); the position/move changes are what locate pos_{x,y,z} (and, for C4c, move_id and
-     the frame counter). It writes assets/offsets/<detected-version>.json and registers the version.
+     Either way the tool prompts you to ACT between snapshots (walk P1 forward, jab P2, jump); the
+     position/move changes are what locate pos_{x,y,z}, move_id, and the frame counter. It writes
+     assets/offsets/<detected-version>.json and registers the version.
   3. Invalidate move/frame data for the new version if the balance patch also changed (see docs/05).
   4. Validate:  python -m tekken_coach.reader.commands doctor
      Green -> the derived core (char ids, health, frame counter, move id, positions) is correct and
@@ -63,6 +73,19 @@ If the BASE SCAN (--base-scan) found nothing:
   - Check base_scan.round_start_health matches this build's full HP, and char_id/move_id/
     damage_taken offsets still describe the struct (these are the oracle; if they are wrong,
     nothing can validate).
+  - If the seeded offsets themselves are stale (a season/patch), stop editing them and run
+    --derive instead: it seeds none of them and derives the whole layout from behavior.
+
+If the DERIVE scan (--derive) found nothing:
+  - "no heap struct BEHAVED like the acting player": you must ACT the WHOLE window — walk P1 (Jin)
+    forward, jab P2, jump, on repeat. move_id is transient; the scan accepts a change in ANY sample,
+    but there has to be one.
+  - "found NO static pointer path that survives a reallocation": you did not reset the round when
+    prompted (the struct must MOVE so a durable path can be told apart from a coincidental one).
+    Reset the round / swap a character, return to the SAME Jin-vs-Kazuya setup, then confirm. Or
+    widen derive_scan.reverse_max_depth / reverse_max_offset if the real chain is deeper.
+  - "no structural char-id pair found": confirm P2 is Kazuya (id 12). Lower similarity_min /
+    min_shared_words only if the two structs genuinely share little at round start.
 
 If it reports the TWO-LEVEL P2 case (P1 located, no constant stride to Kazuya):
   - Raise base_scan.max_stride if P2 is merely farther away than the ceiling.

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from tekken_coach.reader.memory_source import MemoryRegion
 from tests.fixtures.reader.flat_source import FlatMemorySource
 
 
@@ -35,3 +36,6 @@ class TickingFlatSource:
 
     def module_base(self, module: str) -> int:
         return self._snapshots[max(self._cursor, 0)].module_base(module)
+
+    def regions(self) -> Sequence[MemoryRegion]:
+        return self._snapshots[max(self._cursor, 0)].regions()

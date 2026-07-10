@@ -156,13 +156,14 @@ def update_offsets_main(args: argparse.Namespace) -> int:
     from tekken_coach.reader.discovery.orchestrate import (  # noqa: PLC0415
         run_update_offsets,
         run_update_offsets_base,
+        run_update_offsets_derive,
     )
 
     def act_prompt(message: str) -> None:
         input("\n" + message + "\n")
 
     def progress(message: str) -> None:
-        # The base scan sweeps a large module and can run for minutes; stream progress to stderr so
+        # The scans sweep a large module/heap and can run for minutes; stream progress to stderr so
         # the run is observable (the report itself still goes to stdout). Flush so it appears live.
         print(message, file=sys.stderr, flush=True)
 
@@ -173,7 +174,10 @@ def update_offsets_main(args: argparse.Namespace) -> int:
         "act_prompt": act_prompt,
     }
     try:
-        if args.base_scan:
+        if args.derive:
+            print("deriving the player layout from behavior (heap sweep; can take a minute)...")
+            table, report = run_update_offsets_derive(args.process, progress=progress, **common)
+        elif args.base_scan:
             print("scanning for the player-struct pointer (this can take a minute)...")
             table, report = run_update_offsets_base(args.process, progress=progress, **common)
         else:
@@ -310,6 +314,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="C4d: locate the heap player struct via a static-pointer code signature + chain "
         "(robust on Tekken 8's reallocating entity struct) instead of the C4c heap value-scan",
+    )
+    p_update.add_argument(
+        "--derive",
+        action="store_true",
+        help="C4h: FULLY DERIVE the layout from behavior — seed no within-struct offset or chain. "
+        "Locates the entity struct on the heap by behavior, derives every field offset + stride + "
+        "Jin's id, and reverse-scans for a static path that survives a round reset. Prefer this "
+        "when the seeded --base-scan offsets have gone stale (a new season/patch).",
     )
     p_update.set_defaults(func=update_offsets_main)
 

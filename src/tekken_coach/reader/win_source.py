@@ -25,10 +25,13 @@ offline-tested with a fake pymem surface (``tests/test_reader_win_source.py``).
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
 
 from tekken_coach.reader.faults import MemoryReadError
+from tekken_coach.reader.memory_source import MemoryRegion
 
 # The Tekken 8 shipping executable / module name (Unreal "Polaris" project). The offset tables in
 # ``assets/offsets/`` anchor against this module (docs/02 §3); it is the default attach target.
@@ -47,6 +50,83 @@ PROCESS_READ_ACCESS = PROCESS_VM_READ | PROCESS_QUERY_INFORMATION
 # permission signal that C6 must not retry-hammer (docs/02 §7); everything else on a read is
 # treated as a transient/process-lost error.
 _ERROR_ACCESS_DENIED = 5
+
+# VirtualQueryEx classification constants (winnt.h). Region enumeration (C4h Phase 1) is a
+# read-only *query* of the process map — MEMORY_BASIC_INFORMATION per region, no bytes read.
+_MEM_COMMIT = 0x1000  # State: backed by physical storage (as opposed to reserved/free)
+_MEM_IMAGE = 0x1000000  # Type: a mapped module image (.text/.data) — swept separately via the PE
+_PAGE_GUARD = 0x100  # a guard page: touching it raises, so never enumerate it as readable
+_PAGE_NOACCESS = 0x01  # no access at all
+# Protection bits that grant read access (any of these, minus guard/no-access).
+_PAGE_READABLE = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80  # R / RW / WC / XR / XRW / XWC
+
+# x64 user-space bounds and tractability caps for the sweep. Deliberately generous; the scan layer
+# bounds its own work further. A single reserved span far larger than any heap struct's arena is
+# skipped so one 4 GiB reservation cannot dominate the sweep.
+_ENUM_MIN_ADDRESS = 0x10000
+_ENUM_MAX_ADDRESS = 0x7FFF_FFFF_FFFF
+_ENUM_MAX_REGION_BYTES = 512 * 1024 * 1024
+_ENUM_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class _BasicRegion:
+    """The slice of ``MEMORY_BASIC_INFORMATION`` :func:`enumerate_committed_regions` needs."""
+
+    base: int
+    size: int
+    state: int
+    protect: int
+    type: int
+
+
+def _is_readable_committed(region: _BasicRegion, *, skip_image: bool) -> bool:
+    """Whether a queried region is committed, readable, non-guard heap (not a module image)."""
+    if region.state != _MEM_COMMIT or region.size <= 0:
+        return False
+    if region.protect & (_PAGE_GUARD | _PAGE_NOACCESS):
+        return False
+    if not region.protect & _PAGE_READABLE:
+        return False
+    return not (skip_image and region.type & _MEM_IMAGE)
+
+
+def enumerate_committed_regions(
+    query: Callable[[int], _BasicRegion | None],
+    *,
+    min_address: int = _ENUM_MIN_ADDRESS,
+    max_address: int = _ENUM_MAX_ADDRESS,
+    max_region_bytes: int = _ENUM_MAX_REGION_BYTES,
+    max_total_bytes: int = _ENUM_MAX_TOTAL_BYTES,
+    skip_image: bool = True,
+) -> list[MemoryRegion]:
+    """Walk the process map via ``query`` (a ``VirtualQueryEx`` wrapper), collecting readable heap.
+
+    Pure over ``query(address) -> _BasicRegion | None`` so it is offline-testable with a fake map
+    (``None`` ends the walk, as ``VirtualQueryEx`` returning 0 does). Bounded three ways for
+    tractability — a userspace address window, a per-region ceiling (a giant reservation is skipped,
+    not swept), and a running total — because the caller sweeps every returned byte. It **reads no
+    memory**: it only asks the OS what is mapped.
+    """
+    out: list[MemoryRegion] = []
+    total = 0
+    address = min_address
+    while address < max_address:
+        region = query(address)
+        if region is None:
+            break
+        nxt = region.base + region.size
+        if nxt <= address:  # a non-advancing query would loop forever; stop defensively
+            break
+        readable = _is_readable_committed(region, skip_image=skip_image)
+        if readable and region.size <= max_region_bytes:
+            out.append(MemoryRegion(base=region.base, size=region.size))
+            total += region.size
+            if total >= max_total_bytes:
+                break
+        address = nxt
+    return out
+
 
 _PYMEM_MISSING_MSG = (
     "WinMemorySource is Windows-only and needs the 'pymem' package, which is not installed. "
@@ -192,3 +272,27 @@ class WinMemorySource:
         if info is None:
             raise MemoryReadError(f"module not loaded: {module!r}")
         return int(info.lpBaseOfDll)
+
+    def regions(self) -> Sequence[MemoryRegion]:  # pragma: no cover - needs a live VirtualQueryEx
+        """Enumerate committed readable heap via ``VirtualQueryEx`` (read-only, docs/02 §2, C4h).
+
+        Binds :func:`enumerate_committed_regions` to pymem's ``virtual_query``. This is a *query* of
+        the process map — one ``MEMORY_BASIC_INFORMATION`` per region — and reads no region content;
+        the sweep reads bytes afterwards through :meth:`read`. The walk logic is offline-tested via
+        :func:`enumerate_committed_regions` with a fake map; only this pymem binding is live-only.
+        """
+
+        def query(address: int) -> _BasicRegion | None:
+            try:
+                mbi = self._pm.virtual_query(address)
+            except Exception:  # noqa: BLE001 - a query past the top of the map ends enumeration
+                return None
+            return _BasicRegion(
+                base=int(mbi.BaseAddress),
+                size=int(mbi.RegionSize),
+                state=int(mbi.State),
+                protect=int(mbi.Protect),
+                type=int(mbi.Type),
+            )
+
+        return enumerate_committed_regions(query)

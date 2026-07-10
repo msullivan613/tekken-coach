@@ -95,7 +95,7 @@ from tekken_coach.reader.discovery.manifest import (
 from tekken_coach.reader.discovery.pe import ModuleImage, Reader, Section, parse_module_image
 from tekken_coach.reader.discovery.scanners import Region, aob_scan, value_scan
 from tekken_coach.reader.faults import MemoryReadError
-from tekken_coach.reader.memory_source import MemorySource
+from tekken_coach.reader.memory_source import MemoryRegion, MemorySource
 from tekken_coach.reader.offsets import (
     POSITION_COMPONENT,
     Anchor,
@@ -2064,3 +2064,7 @@ class LayeredMemorySource:
 
     def module_base(self, module: str) -> int:
         return self._fallback.module_base(module)
+
+    def regions(self) -> Sequence[MemoryRegion]:
+        """Enumeration is a property of the live map, so it comes from the fallback (read-only)."""
+        return self._fallback.regions()

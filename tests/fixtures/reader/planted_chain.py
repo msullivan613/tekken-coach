@@ -45,7 +45,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
-from tekken_coach.reader.offsets import OffsetTable
+from tekken_coach.reader.decode import resolve_anchor
+from tekken_coach.reader.offsets import POSITION_COMPONENT, OffsetTable
 from tekken_coach.schemas import FrameRecord
 from tests.fixtures.reader.flat_source import FlatMemorySource
 
@@ -710,3 +711,173 @@ def expected_frame() -> FrameRecord:
     from tests.factories import make_frame_record
 
     return make_frame_record()
+
+
+# --- C4h: a heap-enumerable world for the fully-derived layout scan ------------------------------
+#
+# The C4h scan seeds NO within-struct offsets: it locates the entity struct by sweeping the
+# *enumerated heap* for Kazuya's id 12 beside a plausible id at a similar-struct stride, confirms it
+# behaviorally, then reverse-scans the static data for a pointer path to it. So this world is the
+# transform-component heap (position outside the struct, T8's real shape) exposed as enumerable
+# regions — which ``FlatMemorySource`` derives from its non-module segments automatically — plus a
+# REALLOCATED variant (the whole heap shifted) so Phase 3 can prove a path survives a round reset.
+#
+# The reverse scan targets P1's char_id address and roots at the static slot; its final hop lands on
+# the pointer target ``_NODE3`` (= P1_BASE - 0x30, the address the game's pointer actually holds),
+# so the derived char_id offset is 0x198 and every field offset is the fork offset + 0x30. Encoding
+# the decode fixture at that resolved base therefore reproduces the ordinary field positions.
+
+_REALLOC_DELTA = 0x00100000  # the heap moves this far on a round reset (Phase 3 durability check)
+
+# Shared, non-zero struct constants both players carry identically at round start (health regime,
+# state constants, physics — the real thing shares dozens). They sit AFTER char_id (0x168), inside
+# the char-anchored scan span, so the C4h similarity discriminator has non-zero content to match:
+# a real Jin-vs-Kazuya pair shares them, a coincidental (zeroed heap, Kazuya) pair does not.
+_SHARED_CONST_OFFSET = 0x200
+_SHARED_CONSTANTS = tuple(0xC0DE0000 + i for i in range(24))
+
+
+def _put_shared_constants(buf: bytearray, base_index: int) -> None:
+    for i, value in enumerate(_SHARED_CONSTANTS):
+        _blit(buf, base_index + _SHARED_CONST_OFFSET + 4 * i, _u32(value))
+
+
+def _component_heap_shifted(
+    p1_pos: tuple[float, float, float], *, acted: bool, delta: int
+) -> bytearray:
+    """The component heap with every stored pointer shifted by ``delta`` (a reallocation).
+
+    Byte *layout* is identical (indices are ``addr - _HEAP_BASE``, delta-independent); only the
+    stored pointer VALUES and the segment's base move, exactly as a real reallocation does.
+    """
+    buf = bytearray(_HEAP_SPAN)
+    _blit(buf, (_ROOT_PTR + 0x10) - _HEAP_BASE, _u64(_NODE1 + delta))
+    _blit(buf, (_NODE1 + 0x68) - _HEAP_BASE, _u64(_NODE2 + delta))
+    _blit(buf, (_NODE2 + 0x8) - _HEAP_BASE, _u64(_NODE3 + delta))
+    p1_move = P1_MOVE_ID_AFTER if acted else P1_MOVE_ID
+    p2_move = P2_MOVE_ID_AFTER if acted else P2_MOVE_ID
+    damage = P2_DAMAGE_AFTER if acted else 0
+    _put_player(buf, P1_BASE - _HEAP_BASE, JIN, p1_move, None, component=_P1_COMPONENT + delta)
+    _put_player(
+        buf,
+        P2_BASE - _HEAP_BASE,
+        KAZUYA,
+        p2_move,
+        None,
+        component=_P2_COMPONENT + delta,
+        damage=damage,
+    )
+    _put_shared_constants(buf, P1_BASE - _HEAP_BASE)
+    _put_shared_constants(buf, P2_BASE - _HEAP_BASE)
+    _put_triple(buf, (_P1_COMPONENT - _HEAP_BASE) + COMPONENT_TRIPLE_OFFSET, p1_pos)
+    _put_triple(buf, (_P2_COMPONENT - _HEAP_BASE) + COMPONENT_TRIPLE_OFFSET, P2_POS)
+    return buf
+
+
+def _heap_source(
+    p1_pos: tuple[float, float, float], *, step: int = 0, acted: bool = False, delta: int = 0
+) -> FlatMemorySource:
+    """A component-world source (heap enumerable via ``regions()``), optionally reallocated."""
+    module = _pe_module()
+    _blit(module, BASE_OFFSET, _u64(_ROOT_PTR + delta))  # static slot -> the (shifted) heap root
+    return FlatMemorySource(
+        [
+            (MODULE_BASE, bytes(module)),
+            (_HEAP_BASE + delta, bytes(_component_heap_shifted(p1_pos, acted=acted, delta=delta))),
+            (_GLOBAL_SEG_BASE, bytes(_global_segment(step=step))),
+        ],
+        module_bases={MODULE: MODULE_BASE},
+    )
+
+
+@dataclass(frozen=True)
+class HeapCaptures:
+    """The captures the C4h pipeline folds: round start, action window, and a realloc snapshot."""
+
+    before: FlatMemorySource
+    during: list[FlatMemorySource]
+    after: FlatMemorySource
+    realloc: FlatMemorySource  # after a round reset — the struct has moved
+
+
+def planted_heap_world() -> HeapCaptures:
+    """Round-start + action-window + reallocated captures for the C4h derivation.
+
+    Jin (P1) acts across the window — ``move_id`` changes, the jab lands (P2 damage rises),
+    and P1 walks (``pos_x`` moves) — so all three signals the scan reads are present. The realloc
+    capture is the same world with the heap shifted by :data:`_REALLOC_DELTA`, the struct at a new
+    address reachable by the *same* static path.
+    """
+    during = [
+        _heap_source(P1_POS_BEFORE, step=1),  # still idle
+        _heap_source(P1_POS_MID, step=2, acted=True),  # mid-action: move_id changed, jab landed
+        _heap_source(P1_POS_AFTER, step=3, acted=True),  # walked forward
+    ]
+    return HeapCaptures(
+        before=_heap_source(P1_POS_BEFORE),
+        during=during,
+        after=during[-1],
+        realloc=_heap_source(P1_POS_BEFORE, delta=_REALLOC_DELTA),
+    )
+
+
+def planted_heap_idle() -> HeapCaptures:
+    """The same world where the user never acted: no move_id changes, so nothing is accepted.
+
+    The struct is present and structurally plausible at round start (Kazuya=12 beside Jin at a
+    similar-struct stride), but its ``move_id`` never moves — the frozen decoy the behavioral
+    oracle exists to reject. The scan must fail closed and write no table.
+    """
+    during = [_heap_source(P1_POS_BEFORE, step=i) for i in (1, 2, 3)]
+    return HeapCaptures(
+        before=_heap_source(P1_POS_BEFORE),
+        during=during,
+        after=during[-1],
+        realloc=_heap_source(P1_POS_BEFORE, delta=_REALLOC_DELTA),
+    )
+
+
+def heap_decode_source(
+    table: OffsetTable, *, step: int = 0, phase_raw: int | None = GARBAGE_MATCH_PHASE
+) -> FlatMemorySource:
+    """``decode_source`` for a C4h-derived table: players laid out at the anchor-resolved base.
+
+    The C4h anchor resolves to ``_NODE3`` (the pointer target), and every derived/seeded offset is
+    relative to it, so encoding at that base reproduces the ordinary field positions. ``step`` walks
+    P1 and advances the frame counter so a sequence replays as successive frames for the doctor.
+    """
+    from tests.fixtures.reader.encode import encode_player_into
+
+    module = _pe_module()
+    heap = bytearray(_HEAP_SPAN)
+    glob = _global_segment(step=step)
+    _chain_nodes(heap)  # the base_path [0x10, 0x68, 0x8, 0] resolves to _NODE3
+
+    chain_only = FlatMemorySource(
+        [(MODULE_BASE, bytes(module)), (_HEAP_BASE, bytes(heap)), (_GLOBAL_SEG_BASE, bytes(glob))],
+        module_bases={MODULE: MODULE_BASE},
+    )
+    struct_base = resolve_anchor(chain_only, table.players.anchor)
+
+    fr = component_frame()
+    _encode_globals(module, glob, table, fr, frame=fr.frame + step, phase_raw=phase_raw)
+    component = table.players.components[POSITION_COMPONENT]
+    for pf, base, comp_ptr, pos in (
+        (fr.players[0], struct_base, _P1_COMPONENT, (P1_POS_BEFORE[0] + step, *P1_POS_BEFORE[1:])),
+        (fr.players[1], struct_base + table.players.stride, _P2_COMPONENT, P2_POS),
+    ):
+        image: dict[int, bytes] = {}
+        encode_player_into(image, table, base, pf)
+        for addr, chunk in image.items():
+            _blit(heap, addr - _HEAP_BASE, chunk)
+        _blit(heap, (base - _HEAP_BASE) + component.slot_offset, _u64(comp_ptr))
+        _put_triple(heap, (comp_ptr - _HEAP_BASE) + component.fields["pos_x"].offset, pos)
+
+    return FlatMemorySource(
+        [
+            (MODULE_BASE, bytes(module)),
+            (_HEAP_BASE, bytes(heap)),
+            (_GLOBAL_SEG_BASE, bytes(glob)),
+        ],
+        module_bases={MODULE: MODULE_BASE},
+    )
