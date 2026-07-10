@@ -32,6 +32,12 @@ structural oracle at round start and never moves. It is the C4f regression — t
 oracle takes it, the behavioral one rejects it. Likewise ``match_phase`` in the decode fixtures
 holds :data:`GARBAGE_MATCH_PHASE` by default, because the seeded offset holds garbage on the real
 build and a fixture that planted a valid phase hid a decoder that fails closed on every live frame.
+
+:func:`planted_transient_action` plants the *other* thing only the live game had: a real struct
+whose ``move_id`` changes **in the middle** of the action and is back at its idle value by the end.
+That is the C4g regression — a two-instant oracle comparing round start against the last sample sees
+a frozen field and rejects the player's own struct, which is exactly what happened live and why the
+scan wrote no table. A window over the same series accepts it.
 """
 
 from __future__ import annotations
@@ -92,6 +98,7 @@ P2_MOVE_ID = 800
 P2_MOVE_ID_AFTER = 812  # the dummy's hit reaction
 P2_DAMAGE_AFTER = 14  # the jab connected
 P1_POS_BEFORE = (1.5, 0.0, -0.31)
+P1_POS_MID = (1.75, 0.0, -0.31)  # mid-walk, where the jump happens to be sampled
 P1_POS_AFTER = (2.0, 0.0, -0.31)  # x moved
 P2_POS = (-1.0, 0.0, 0.5)
 
@@ -387,6 +394,41 @@ def planted_decoy_nobody_acted() -> PlantedChain:
     )
 
 
+@dataclass(frozen=True)
+class PlantedWindow:
+    """A round-start snapshot plus the series of samples taken across the user's action (C4g).
+
+    ``during[-1]`` doubles as the position scan's "after" image, exactly as the last live sample
+    does — so a test can hand ``during`` to the windowed oracle and ``during[-1]`` to the
+    two-instant one and compare what each concludes about the *same* world.
+    """
+
+    before: FlatMemorySource
+    during: list[FlatMemorySource]
+
+
+def planted_transient_action() -> PlantedWindow:
+    """Jin acts, and by the last sample he is idle again — the C4g failure, planted.
+
+    ``move_id`` reads ``P1_MOVE_ID`` at round start, changes to ``P1_MOVE_ID_AFTER`` in the *middle*
+    sample (he is mid-jump, and the jab has landed), and is back at ``P1_MOVE_ID`` in the last one.
+    So the first-versus-last comparison C4f made sees a frozen field and rejects the real struct,
+    while any-sample sees the jump. This is the exact shape of the live 5.02.01 run: the animation
+    was long over by the time the user had alt-tabbed to the terminal and pressed Enter.
+
+    P2's ``damage_taken`` follows the same shape — nonzero only in the middle sample — so the
+    corroborators have to be "ever damaged" too, not "damaged at the end".
+    """
+    return PlantedWindow(
+        before=_source(P1_POS_BEFORE),
+        during=[
+            _source(P1_POS_BEFORE, step=1),  # still winding up: idle move_id
+            _source(P1_POS_MID, step=2, acted=True),  # mid-jump, jab connected
+            _source(P1_POS_AFTER, step=3),  # landed, idle again, damage cleared
+        ],
+    )
+
+
 def planted_whiffed_jab() -> PlantedChain:
     """P1 acted but the jab missed: the dummy never moved and took no damage.
 
@@ -396,6 +438,79 @@ def planted_whiffed_jab() -> PlantedChain:
     return PlantedChain(
         before=_source(P1_POS_BEFORE),
         after=_source(P1_POS_AFTER, step=1, acted=True, jab_connected=False),
+    )
+
+
+# --- a chain landing on a page of ZEROES (the char_id_min=0 flooding worry) ----------------------
+#
+# C4g put `char_id_min` back to 0, because Jin's real id may be 0 and a floor of 1 would exclude the
+# answer. The stated risk is that zeroed memory then reads char_id 0 / move_id 0 / damage 0 and
+# floods the candidate set. It cannot flood the set that matters: a STRONG candidate needs a second
+# struct reading Kazuya's 12 at a constant stride, and there is no 12 anywhere in a zeroed page.
+
+
+def _zeroed_heap() -> bytearray:
+    """The same chain, landing on a struct region that is nothing but zeroes."""
+    buf = bytearray(_HEAP_SPAN)
+    _chain_nodes(buf)
+    return buf
+
+
+def zeroed_landing_source() -> FlatMemorySource:
+    return FlatMemorySource(
+        [
+            (MODULE_BASE, bytes(_pe_module())),
+            (_HEAP_BASE, bytes(_zeroed_heap())),
+            (_GLOBAL_SEG_BASE, bytes(_global_segment())),
+        ],
+        module_bases={MODULE: MODULE_BASE},
+    )
+
+
+# --- a SECOND global struct whose counter merely ticks up a little -------------------------------
+#
+# The live global oracle accepted 22-28 landings and picked a different base across two runs. One
+# run saw a candidate whose counter advanced by 96 across the prompt (a real 60fps counter); the
+# other saw one advance by 1. Both satisfy "increased, by at most ten minutes of frames". Only a
+# delta *banded to the window's measured duration* tells them apart, which is why C4g times the
+# window. This plants both structs: the real one advances FRAME_STEP per step, the impostor 1.
+
+# The impostor's slot is swept BEFORE the real one (0x3200), so "take the first that passes" picks
+# it. That is what makes the tie-break — prefer the landing whose behavior named the most fields —
+# do observable work rather than agreeing with sweep order by luck.
+GLOBAL_ALT_BASE_OFFSET = 0x3180
+_GLOBAL_ALT_SEG_BASE = 0x290000000
+_GLOBAL_ALT_ROOT = _GLOBAL_ALT_SEG_BASE
+GLOBAL_ALT_BASE = _GLOBAL_ALT_ROOT + GLOBAL_POINTER_PATH[0]
+ALT_FRAME_STEP = 1  # "ticks up a little": passes the unbanded oracle, fails the banded one
+ALT_FRAME_BEFORE = 5000
+ALT_TIMER = 41200  # constant: a frozen clock, so timer_ms stays unclaimed on this struct
+
+
+def _global_alt_segment(*, step: int = 0) -> bytearray:
+    """A struct that ticks a counter beside a steady round number — and is not the match struct."""
+    buf = bytearray(_GLOBAL_SEG_SPAN)
+    base = GLOBAL_ALT_BASE - _GLOBAL_ALT_SEG_BASE
+    _blit(buf, base + GLOBAL_FRAME_OFFSET, _u32(ALT_FRAME_BEFORE + step * ALT_FRAME_STEP))
+    _blit(buf, base + GLOBAL_TIMER_OFFSET, _u32(ALT_TIMER))
+    _blit(buf, base + GLOBAL_ROUND_OFFSET, _u32(ROUND_NO))
+    return buf
+
+
+def global_two_structs_source(*, step: int = 0) -> FlatMemorySource:
+    """Both global structs behind their own static slots, reached by the same seeded chain shape."""
+    buf = _pe_module()
+    _blit(buf, GLOBAL_ALT_BASE_OFFSET - _SIG_BEFORE, bytes(range(0x71, 0x71 + _SIG_BEFORE)))
+    _blit(buf, GLOBAL_ALT_BASE_OFFSET, _u64(_GLOBAL_ALT_ROOT))
+    _blit(buf, GLOBAL_ALT_BASE_OFFSET + 8, bytes(range(0x81, 0x81 + _SIG_AFTER)))
+    return FlatMemorySource(
+        [
+            (MODULE_BASE, bytes(buf)),
+            (_HEAP_BASE, bytes(_heap(P1_POS_BEFORE))),
+            (_GLOBAL_SEG_BASE, bytes(_global_segment(step=step))),
+            (_GLOBAL_ALT_SEG_BASE, bytes(_global_alt_segment(step=step))),
+        ],
+        module_bases={MODULE: MODULE_BASE},
     )
 
 

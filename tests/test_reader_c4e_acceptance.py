@@ -15,6 +15,13 @@ scan does not derive that offset, so on the real build it holds garbage, and the
 phase code hid a ``decode_frame`` that raised on every live frame. Now the same world proves the
 harder claim — the doctor validates the mechanical core *anyway*, and the capture gate still refuses
 to record on a phase it cannot read.
+
+C4g made the behavioral oracle sample an **action window** rather than two instants. This fixture
+passes the degenerate one-sample window (``during=[chain.after]``) explicitly rather than leaning on
+the default: its planted "after" image *is* the instant the action happened, so one sample is all
+the evidence there is here, and saying so keeps this test about the end-to-end table. That a
+*multi*-sample window is what the live game needs — because ``move_id`` is transient and idles back
+before a human can alt-tab — is the claim of ``test_reader_discovery_basescan``'s C4g pair.
 """
 
 from __future__ import annotations
@@ -84,6 +91,7 @@ def derived(tmp_path: Path) -> OffsetTable:
         seed=_seed(),
         seed_version="2.01.01",
         source_after=chain.after,
+        during=[chain.after],  # a one-sample window: the planted "after" IS the acting instant
         state_map=calibrated_state_map(),
         discovered_at="2026-07-09T00:00:00Z",
     )

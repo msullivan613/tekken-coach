@@ -23,22 +23,33 @@ The clean-room core is **candidate-generate-and-validate with the known field la
      plausible ``char_id``, a plausible ``move_id``, ``damage_taken == 0``, and the two players'
      ids forming ``{Jin, Kazuya=12}``. Mutual multi-field consistency across the two symmetric
      structs, anchored in code rather than the heap.
-   * *behaviorally*, across the two snapshots: the acting player's ``move_id`` must **change** when
-     they jab and jump (:func:`confirm_players`). This is what a single instant cannot say. A
-     coincidental struct whose fields merely *read* plausibly at round start is not rejected by any
-     amount of structural checking — it is rejected the moment we ask it to move, because it does
-     not (confirmed live on 5.02.01: the C4e scan locked onto a struct whose ``move_id`` stayed 0
-     while the player jumped). ``damage_taken`` rising on the *opponent* corroborates a connected
-     jab, but is not required — the jab may whiff.
+   * *behaviorally*, across an **action window**: the acting player's ``move_id`` must **change**
+     from its round-start value in at least one sample while they walk, jab and jump
+     (:func:`confirm_players`). This is what a single instant cannot say. A coincidental struct
+     whose fields merely *read* plausibly at round start is not rejected by any amount of
+     structural checking — it is rejected the moment we ask it to move, because it does not
+     (confirmed live on 5.02.01: the C4e scan locked onto a struct whose ``move_id`` stayed 0 while
+     the player jumped). ``damage_taken`` rising on the *opponent* corroborates a connected jab, but
+     is not required — the jab may whiff.
 4. **Persist an AOB signature** around the accepted slot (pointer bytes wildcarded) so a re-run
    re-finds it fast (:func:`extract_signature` / :func:`find_by_signature`), stored in the table as
    facts/data (docs/02 §5).
 5. **Fill in** health + position with C4c's value/position scans, now tractable *inside the located
    struct* rather than over the whole heap.
 
-Both oracles are therefore two-snapshot oracles, and they read the **same** pair — the one the
-position scan already straddles the user's action prompt to obtain. C4f only sharpened the prompt
-("walk P1 forward, jab P2, and jump") so the ``move_id`` delta is guaranteed rather than incidental.
+Both oracles are therefore temporal, and they read the **same** action the position scan needs.
+
+**Why a window and not two instants** (C4g). C4f compared ``move_id`` at round start against
+``move_id`` at the moment the user pressed Enter, and that oracle cannot be satisfied by a human:
+``move_id`` is *transient*. A jab or a jump rewrites it for roughly half a second, after which the
+character returns to idle and ``move_id`` returns to the value it held at round start. Alt-tabbing
+from the game to the terminal takes longer than the animation, so the acting player's struct read
+*identically* at both instants and was rejected as frozen — the live scan found zero behaving
+candidates and wrote no table, not because the struct was absent but because the test was
+unsatisfiable. So the oracle samples a series of snapshots spanning the action and accepts a
+candidate whose ``move_id`` differed from its round-start value in **any** sample. The corroborators
+become "ever changed" / "ever damaged" the same way. Nothing about the argument weakens: a frozen
+decoy is frozen in every sample.
 
 C4e applies the same shape to the two things the player scan left seeded, changing only the oracle:
 
@@ -62,8 +73,9 @@ pointers; it never writes (docs/02 §2).
 
 from __future__ import annotations
 
+import math
 import struct
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -252,9 +264,9 @@ class OracleMatch:
     single-anchor + stride model of :class:`~tekken_coach.reader.offsets.PlayerStruct` cannot
     express that, so the derivation reports the P1 anchor and stops rather than inventing a stride.
 
-    ``move_id`` / ``p2_move_id`` are the round-start readings :func:`confirm_players` compares
-    against after the user acts; without them the match is a single frozen instant, which is exactly
-    what accepted the wrong struct on the live game.
+    ``move_id`` / ``p2_move_id`` are the round-start readings every sample in the action window is
+    compared against (:func:`confirm_players`); without them the match is a single frozen instant,
+    which is exactly what accepted the wrong struct on the live game.
     """
 
     base_offset: int  # the static slot RVA (the durable-but-per-build anchor)
@@ -271,19 +283,35 @@ class OracleMatch:
 
 
 @dataclass(frozen=True)
-class Behavior:
-    """What a candidate struct **did** between the two snapshots (C4f — the decisive evidence).
+class _Observation:
+    """One sample of a candidate struct taken during the action window (an instant, re-resolved)."""
 
-    :attr:`accepted` is the whole oracle: the acting player's ``move_id`` changed. Every other
-    signal is corroboration used only to *rank* several accepted candidates, never to accept one —
-    a jab may whiff (no opponent damage) and the dummy may stand still (no opponent ``move_id``
-    change), so requiring either would reject the real struct on a bad run.
+    moves: tuple[int, int]  # (P1, P2) move_id as read in this sample
+    damage: int | None  # the opponent's damage_taken, or None if unreadable
+    p1_base: int  # where the chain resolved in this sample
+
+
+@dataclass(frozen=True)
+class Behavior:
+    """What a candidate struct **did** across the action window (C4f/C4g — the decisive evidence).
+
+    :attr:`accepted` is the whole oracle: the acting player's ``move_id`` differed from its
+    round-start value in **at least one** sample. Not "differed at the end" — a jab and a jump each
+    rewrite ``move_id`` for about half a second and then the character idles back to exactly the
+    value it started at, so an end-of-window comparison rejects the real struct (C4g: this is the
+    bug that made C4f's correct oracle unrunnable on the live game).
+
+    Every other signal is corroboration used only to *rank* several accepted candidates, never to
+    accept one — a jab may whiff (no opponent damage) and the dummy may stand still (no opponent
+    ``move_id`` change), so requiring either would reject the real struct on a bad run. They are
+    "ever" signals too: the dummy's hit reaction ends inside the window just as the jab does.
     """
 
     acting_move_changed: bool
     opponent_move_changed: bool
     opponent_damaged: bool
-    p1_after_base: int  # where the chain re-resolved at the after instant
+    p1_after_base: int  # where the chain resolved in the LAST sample (the position scan's "after")
+    samples: int  # how many window samples this candidate was readable in
 
     @property
     def accepted(self) -> bool:
@@ -304,7 +332,7 @@ class Behavior:
             )
             if seen
         ]
-        return ", ".join(signals)
+        return f"{', '.join(signals)} (over {self.samples} samples)"
 
 
 def _player_oracle_ok(
@@ -315,9 +343,14 @@ def _player_oracle_ok(
     The per-struct, per-instant half of the oracle: a plausible ``char_id``, a plausible
     ``move_id``, and ``damage_taken == 0`` at round start. Any dead read fails the candidate.
 
-    Necessary, never sufficient. ``char_id_min`` above 0 matters more than it looks: with it at 0 a
-    page of **zeroed** memory reads as char id 0 / move id 0 / damage 0 and passes this whole
-    function. The real rejection is :func:`confirm_players`.
+    Necessary, never sufficient — and deliberately permissive at the bottom of the ``char_id``
+    range. A page of **zeroed** memory reads as char id 0 / move id 0 / damage 0 and passes this
+    whole function, which is why C4f set ``char_id_min`` to 1; C4g put it back to 0, because Jin's
+    id may really be 0 on this build and a sieve that drops the answer cannot be repaired
+    downstream. Zeroes still never reach a table: :func:`_find_stride` needs a struct reading
+    Kazuya's id at a constant offset (nothing in a zeroed page reads 12), so a zeroed landing is at
+    most a *weak* match, and :func:`confirm_players` then requires a ``move_id`` that changes, which
+    zeroes cannot do. Both backstops hold independently.
     """
     char_id = _read_scalar(source, base + spec.char_id_offset, m.char_id_kind)
     if char_id is None or not (m.char_id_min <= char_id <= m.char_id_max):
@@ -574,44 +607,61 @@ def player_candidates(
     return PlayerCandidates(image=image, strong=[], weak=weak)
 
 
-def _behavior(
-    after: MemorySource,
+def _observe(
+    source: MemorySource,
     match: OracleMatch,
     *,
     module: str,
     module_base: int,
     spec: BaseScanSpec,
     manifest: ProbeManifest,
-) -> Behavior | None:
-    """Re-resolve ``match``'s chain in the after snapshot and read what changed (``None`` if dead).
+) -> _Observation | None:
+    """Re-resolve ``match``'s chain in one window sample and read its fields (``None`` if dead).
 
     Re-resolves from the *slot*, never from the recorded ``p1_base``: the entity struct reallocates,
-    which is the whole reason the anchor lives in code. A struct that no longer resolves, or whose
-    move ids no longer read plausibly, is not a player struct.
+    which is the whole reason the anchor lives in code. A sample where the chain does not resolve,
+    or where the move ids no longer read plausibly, contributes no evidence — it is dropped rather
+    than counted as "did not move", so a momentary bad read cannot reject the real struct.
     """
     stride, p2_move_id = match.stride, match.p2_move_id
     if stride is None or p2_move_id is None:
         return None  # a weak (two-level-P2) match: nothing to compare the opponent against
-    p1_after = _follow_chain(after, module, module_base, match.base_offset, spec.pointer_path)
-    if p1_after is None:
+    p1_base = _follow_chain(source, module, module_base, match.base_offset, spec.pointer_path)
+    if p1_base is None:
         return None
-    now = [_read_move_id(after, p1_after + i * stride, spec, manifest) for i in (0, 1)]
-    if any(value is None for value in now):
+    p1_move = _read_move_id(source, p1_base, spec, manifest)
+    p2_move = _read_move_id(source, p1_base + stride, spec, manifest)
+    if p1_move is None or p2_move is None:
         return None
-    acting = manifest.moving_player
+    opponent = 1 - manifest.moving_player
+    damage = _read_scalar(source, p1_base + opponent * stride + spec.damage_taken_offset, "i32")
+    return _Observation(moves=(p1_move, p2_move), damage=damage, p1_base=p1_base)
+
+
+def _behavior(
+    match: OracleMatch, observations: Sequence[_Observation], *, acting: int
+) -> Behavior | None:
+    """Fold a candidate's window samples into what it **ever did** (pure; ``None`` if never read).
+
+    The windowed oracle in one expression: every signal is an ``any`` over the samples, compared
+    against the *round-start* reading on ``match``. Comparing only the final sample is what C4f did,
+    and it is unsatisfiable in practice — see :class:`Behavior`.
+    """
+    if not observations or match.p2_move_id is None:
+        return None
+    before = (match.move_id, match.p2_move_id)
     opponent = 1 - acting
-    before = (match.move_id, p2_move_id)
-    damage = _read_scalar(after, p1_after + opponent * stride + spec.damage_taken_offset, "i32")
     return Behavior(
-        acting_move_changed=now[acting] != before[acting],
-        opponent_move_changed=now[opponent] != before[opponent],
-        opponent_damaged=damage is not None and damage > 0,
-        p1_after_base=p1_after,
+        acting_move_changed=any(o.moves[acting] != before[acting] for o in observations),
+        opponent_move_changed=any(o.moves[opponent] != before[opponent] for o in observations),
+        opponent_damaged=any(o.damage is not None and o.damage > 0 for o in observations),
+        p1_after_base=observations[-1].p1_base,
+        samples=len(observations),
     )
 
 
 def confirm_players(
-    after: MemorySource,
+    during: Iterable[MemorySource],
     candidates: PlayerCandidates,
     *,
     module: str,
@@ -620,13 +670,25 @@ def confirm_players(
     from_signature: bool = False,
     progress: Progress | None = None,
 ) -> Located | None:
-    """The **instant-B** half: keep only the candidates that *behaved* like the acting player.
+    """The **window** half: keep only the candidates that *behaved* like the acting player.
 
-    A real entity struct's ``move_id`` moves when the player jabs and jumps. A coincidental struct's
-    frozen field does not, however plausible it looked at round start — this single comparison is
-    what rejects the landing C4e accepted live. Among the survivors the strongest
-    :attr:`Behavior.score` wins, and the count of distinct accepted landings is carried on
-    :attr:`Located.accepted` so an ambiguous pick is reported rather than quietly taken.
+    ``during`` is the series of snapshots taken while the user walks, jabs and jumps — one
+    :class:`MemorySource` per sample, read in order. Offline that is a list of planted images; live
+    it is a generator yielding the same process handle on a fixed cadence, so a "snapshot" is
+    simply the live process at that instant. Either way the loop is the same, and the seam is what
+    makes a transient ``move_id`` testable without a running game.
+
+    A real entity struct's ``move_id`` moves when the player jabs and jumps — for about half a
+    second, and then it idles back. A coincidental struct's frozen field never moves, however
+    plausible it looked at round start. So the test is "differed in **any** sample", which rejects
+    the landing C4e accepted live *and* accepts the real struct the user cannot alt-tab fast enough
+    to catch mid-animation. Among the survivors the strongest :attr:`Behavior.score` wins, and the
+    count of distinct accepted landings rides on :attr:`Located.accepted` so an ambiguous pick is
+    reported rather than quietly taken.
+
+    ``during`` is consumed **whole**, even when there are no candidates to observe: live, iterating
+    it is what makes the window take the time it is supposed to take, and the global oracle's
+    frame-delta band is calibrated against that duration.
 
     ``None`` when nothing behaved: either the user did not act, or no swept slot leads to the player
     struct. Both are reported, and neither is resolved by falling back to a structural guess.
@@ -634,21 +696,30 @@ def confirm_players(
     spec = manifest.base_scan
     if spec is None:
         return None
+    observed: list[list[_Observation]] = [[] for _ in candidates.strong]
+    samples = 0
+    for source in during:
+        samples += 1
+        for slot, match in enumerate(candidates.strong):
+            observation = _observe(
+                source, match, module=module, module_base=module_base, spec=spec, manifest=manifest
+            )
+            if observation is not None:
+                observed[slot].append(observation)
+
     behaved: list[tuple[OracleMatch, Behavior]] = []
-    for match in candidates.strong:
-        behavior = _behavior(
-            after, match, module=module, module_base=module_base, spec=spec, manifest=manifest
-        )
+    for slot, match in enumerate(candidates.strong):
+        behavior = _behavior(match, observed[slot], acting=manifest.moving_player)
         if behavior is not None and behavior.accepted:
             behaved.append((match, behavior))
     if not behaved:
         if candidates.strong:
-            # Fail closed. A structural candidate that did not move is precisely the decoy C4e
+            # Fail closed. A structural candidate that never moved is precisely the decoy C4e
             # accepted; falling back to "well, it looked right" would reinstate the bug.
             _emit(
                 progress,
                 f"  none of the {len(candidates.strong)} structural candidates changed the acting "
-                "player's move_id across the action",
+                f"player's move_id in any of the {samples} window sample(s)",
             )
             return None
         if not candidates.weak:
@@ -683,9 +754,9 @@ def confirm_players(
 
 
 def _structural_only(candidates: PlayerCandidates, progress: Progress | None) -> Located | None:
-    """Fall back to C4e's single-instant acceptance when there is no second snapshot to ask.
+    """Fall back to C4e's single-instant acceptance when there is no action window to ask.
 
-    Reached only by callers that have no ``after`` source — the derivation then also *says* the
+    Reached only by callers that pass no ``during`` samples — the derivation then also *says* the
     landing is unconfirmed (:func:`derive_base_layout`), because a struct that merely looks right at
     round start is exactly what the live run got wrong.
     """
@@ -721,15 +792,16 @@ def locate_player_struct(
     module: str,
     module_base: int,
     manifest: ProbeManifest,
-    after: MemorySource | None = None,
+    during: Sequence[MemorySource] | None = None,
     hint: AobSignature | None = None,
     progress: Progress | None = None,
 ) -> Located | None:
-    """Compose both halves of the player oracle against one or two snapshot sources.
+    """Compose both halves of the player oracle against a round-start source and an action window.
 
-    With ``after``, a candidate is accepted only if the acting player's ``move_id`` changed between
-    the snapshots (:func:`confirm_players`) — the C4f oracle. Without it, the scan can only apply
-    C4e's single-instant structural check, and the caller is told so.
+    With ``during``, a candidate is accepted only if the acting player's ``move_id`` changed from
+    its round-start value in at least one of those samples (:func:`confirm_players`). Without it,
+    the scan can only apply C4e's single-instant structural check, and the caller is told so. A
+    one-element ``during`` is the degenerate C4f oracle — correct, and unsatisfiable by a human.
 
     ``hint`` is the previous table's AOB signature: when it re-matches to a unique slot whose chain
     still satisfies the oracle, that is the answer and the full sweep is skipped. It is a *hint*,
@@ -737,8 +809,9 @@ def locate_player_struct(
     to the sweep, and behavioral confirmation applies to it exactly as to a swept slot.
 
     The live orchestration does **not** call this: it must sweep before prompting the user to act
-    and confirm afterwards, so it drives :func:`player_candidates` and :func:`confirm_players`
-    directly (and freezes the round-start struct in between, via :class:`LayeredMemorySource`).
+    and sample the window afterwards, so it drives :func:`player_candidates` and
+    :func:`confirm_players` directly (and freezes the round-start struct in between, via
+    :class:`LayeredMemorySource`).
 
     ``progress`` (optional) makes the long live sweep observable — the command layer supplies a
     printer; the library is silent without one (docs/02 §2). ``None`` when the manifest lacks a
@@ -755,11 +828,11 @@ def locate_player_struct(
     )
 
     def accept(candidates: PlayerCandidates, *, from_signature: bool) -> Located | None:
-        if after is None:
+        if during is None:
             located = _structural_only(candidates, progress)
             return None if located is None else replace(located, from_signature=from_signature)
         return confirm_players(
-            after,
+            during,
             candidates,
             module=module,
             module_base=module_base,
@@ -901,10 +974,10 @@ class GlobalMatch:
 class GlobalLocated:
     """The accepted global match plus how many distinct landings passed the oracle.
 
-    ``accepted`` counts **distinct structs** (``gbase`` + assigned offsets), not accepting slots:
-    many static slots legitimately point into the same global struct, and calling that ambiguity
-    would cry wolf on every run. Two different *structs* both ticking a counter beside a steady
-    round number is the real ambiguity, and it is what gets reported.
+    ``accepted`` counts **distinct structs** (by resolved ``gbase``), not accepting slots: many
+    static slots legitimately point into the same global struct, and calling that ambiguity would
+    cry wolf on every run. Two different *structs* both ticking a counter beside a steady round
+    number is the real ambiguity, and it is what gets reported.
     """
 
     match: GlobalMatch
@@ -917,8 +990,33 @@ class GlobalLocated:
         return self.accepted > 1
 
 
+def frame_delta_band(spec: GlobalScanSpec, seconds: float) -> tuple[int, int]:
+    """How far a real frame counter may advance over a window of ``seconds`` (C4g Phase 3).
+
+    The single strongest global discriminator available, and it costs nothing: over a *timed* window
+    the frame counter advances by ``frame_rate * seconds``, whereas a coincidental ``u32`` that
+    merely trends upward advances by whatever it advances by. The live runs bear this out — a delta
+    of 96 over the prompt is a counter; a delta of 1 is not, and the unbanded oracle accepted both.
+
+    Widened by :attr:`~.manifest.GlobalScanSpec.frame_delta_tolerance` because the frame rate is a
+    guess (vsync, a paused practice mode, a loading hitch), and clamped into the spec's absolute
+    bounds. A non-positive ``seconds`` means the caller cannot time the window, so the band opens
+    back up to those absolute bounds.
+    """
+    if seconds <= 0:
+        return spec.frame_delta_min, spec.frame_delta_max
+    expected = spec.frame_rate * seconds
+    low = max(spec.frame_delta_min, int(expected * (1.0 - spec.frame_delta_tolerance)))
+    high = min(spec.frame_delta_max, math.ceil(expected * (1.0 + spec.frame_delta_tolerance)))
+    return low, max(low, high)
+
+
 def assign_global_fields(
-    before: dict[int, int], after: dict[int, int], spec: GlobalScanSpec
+    before: dict[int, int],
+    after: dict[int, int],
+    spec: GlobalScanSpec,
+    *,
+    frame_delta: tuple[int, int] | None = None,
 ) -> dict[str, int]:
     """Assign the seeded offsets to match fields **by behavior** across two snapshots (pure).
 
@@ -926,7 +1024,10 @@ def assign_global_fields(
     a coincidence into a data file. So each field is claimed by the behavior only it exhibits, most
     constrained first:
 
-    * ``frame_counter`` — strictly increased, by a plausible delta (a live counter, not a checksum).
+    * ``frame_counter`` — strictly increased, by a delta inside ``frame_delta``. When the caller
+      timed the two snapshots it passes a band from :func:`frame_delta_band` and this becomes a
+      sharp test (a live counter at ~60fps, not a checksum that happened to tick); otherwise it
+      falls back to the spec's absolute ``frame_delta_min``/``max``.
     * ``round`` — held **constant** in ``[round_min, round_max]`` (the round does not turn over
       while the user walks a step).
     * ``timer_ms`` — strictly **decreased** and within ``[0, timer_ms_max]``: a round clock counts
@@ -938,6 +1039,14 @@ def assign_global_fields(
     Returns the offsets it could claim. Missing ``frame_counter`` or ``round`` means this landing is
     not the global struct; the caller rejects it (see :data:`_GLOBAL_REQUIRED`).
     """
+    low, high = (
+        frame_delta
+        if frame_delta is not None
+        else (
+            spec.frame_delta_min,
+            spec.frame_delta_max,
+        )
+    )
     claimed: dict[str, int] = {}
     taken: set[int] = set()
 
@@ -952,7 +1061,7 @@ def assign_global_fields(
 
     for name in _GLOBAL_ASSIGN_ORDER:
         if name == "frame_counter":
-            claim(name, lambda old, new: spec.frame_delta_min <= new - old <= spec.frame_delta_max)
+            claim(name, lambda old, new: low <= new - old <= high)
         elif name == "round":
             claim(name, lambda old, new: old == new and spec.round_min <= old <= spec.round_max)
         elif name == "timer_ms":
@@ -1034,6 +1143,36 @@ def global_candidates(
     return candidates
 
 
+def rebase_global_candidates(
+    source: MemorySource,
+    candidates: Sequence[GlobalCandidate],
+    *,
+    module: str,
+    module_base: int,
+    spec: GlobalScanSpec,
+) -> list[GlobalCandidate]:
+    """Re-read every candidate's ``before`` values *now*, dropping the ones that no longer resolve.
+
+    The frame-delta band (:func:`frame_delta_band`) only means something if the two readings are a
+    known duration apart. The sweep's ``before`` values were read while the sweep ran — minutes ago,
+    and at an unknown offset from the user pressing Enter. Re-reading them at the instant the action
+    window opens makes the delta span exactly the window, which is what turns "it ticked up" into
+    "it ticked up at 60fps for five seconds".
+    """
+    fresh: list[GlobalCandidate] = []
+    for candidate in candidates:
+        gbase = _follow_chain(
+            source, module, module_base, candidate.base_offset, list(candidate.pointer_path)
+        )
+        if gbase is None:
+            continue
+        values = _read_global_fields(source, gbase, spec)
+        if values is None:
+            continue
+        fresh.append(replace(candidate, gbase=gbase, before=values))
+    return fresh
+
+
 def confirm_global(
     source_after: MemorySource,
     candidates: Sequence[GlobalCandidate],
@@ -1041,6 +1180,7 @@ def confirm_global(
     module: str,
     module_base: int,
     spec: GlobalScanSpec,
+    frame_delta: tuple[int, int] | None = None,
     progress: Progress | None = None,
 ) -> GlobalLocated | None:
     """The **instant-B** half: re-resolve each candidate and apply the temporal oracle.
@@ -1049,9 +1189,17 @@ def confirm_global(
     struct may have been reallocated between the snapshots, exactly as the player struct is, and
     re-walking the chain is what makes the anchor survive that (docs/02 §3).
 
+    ``frame_delta`` narrows what counts as a frame counter to what the window's duration allows;
+    the live path passes :func:`frame_delta_band` over its measured window (C4g Phase 3).
+
     Several distinct landings satisfying the oracle is reported (:attr:`GlobalLocated.ambiguous`)
-    rather than silently resolved by taking the first. Accepting slots are **deduped by landing**
-    first: the live run's alarming "22 accepted" was largely 22 static slots into the same struct.
+    rather than silently resolved. Accepting slots are **deduped by resolved struct** (``gbase``):
+    the live run's alarming "22 accepted" was largely 22 static slots into the same struct, and
+    counting the field assignment alongside it would have split one struct back into several
+    whenever an optional field (``timer_ms``, ``match_phase``) was claimable via one slot and not
+    another. Among distinct landings the pick is the one whose behavior named the **most** fields —
+    a struct where the clock also counts down is more likely the match struct than one where only
+    the two required fields resolved — with ties going to the first swept.
     """
     accepted: list[GlobalMatch] = []
     for candidate in candidates:
@@ -1063,7 +1211,7 @@ def confirm_global(
         after = _read_global_fields(source_after, gbase, spec)
         if after is None:
             continue
-        offsets = assign_global_fields(candidate.before, after, spec)
+        offsets = assign_global_fields(candidate.before, after, spec, frame_delta=frame_delta)
         if any(name not in offsets for name in _GLOBAL_REQUIRED):
             continue
         accepted.append(
@@ -1079,13 +1227,14 @@ def confirm_global(
     if not accepted:
         _emit(progress, "  no global candidate passed the frame-counter/round oracle")
         return None
-    landings = {(m.gbase, tuple(sorted(m.offsets.items()))) for m in accepted}
+    landings = {m.gbase for m in accepted}
+    best = max(accepted, key=lambda m: len(m.offsets))
     _emit(
         progress,
-        f"  global anchor: +0x{accepted[0].base_offset:x} ({len(landings)} distinct landing(s) "
+        f"  global anchor: +0x{best.base_offset:x} ({len(landings)} distinct struct(s) "
         f"accepted via {len(accepted)} static slot(s))",
     )
-    return GlobalLocated(match=accepted[0], accepted=len(landings), slots=len(accepted))
+    return GlobalLocated(match=best, accepted=len(landings), slots=len(accepted))
 
 
 def locate_global_struct(
@@ -1096,13 +1245,15 @@ def locate_global_struct(
     module_base: int,
     spec: GlobalScanSpec,
     image: ModuleImage | None = None,
+    frame_delta: tuple[int, int] | None = None,
     progress: Progress | None = None,
 ) -> GlobalLocated | None:
     """Compose both halves against two snapshot sources (the offline/simple path).
 
     The live orchestration cannot use this — it must run :func:`global_candidates` at round start,
-    prompt the user to act, and only then run :func:`confirm_global` — but every offline test and
-    any caller holding two frozen snapshots can.
+    prompt the user to act, re-read the ``before`` values as the window opens
+    (:func:`rebase_global_candidates`) and only then run :func:`confirm_global` — but every offline
+    test and any caller holding two frozen snapshots can.
     """
     if image is None:
         image = parse_module_image(_module_reader(before, module_base))
@@ -1117,6 +1268,7 @@ def locate_global_struct(
         module=module,
         module_base=module_base,
         spec=spec,
+        frame_delta=frame_delta,
         progress=progress,
     )
 
@@ -1500,26 +1652,26 @@ def _derive_global(
         )
 
 
-def _note_player_behavior(result: DerivationResult, located: Located, had_after: bool) -> None:
-    """Say, loudly, on what evidence the player anchor was accepted (C4f).
+def _note_player_behavior(result: DerivationResult, located: Located, had_window: bool) -> None:
+    """Say, loudly, on what evidence the player anchor was accepted (C4f/C4g).
 
     Three things a reader of the report must be able to tell apart: a landing confirmed by the
-    acting player actually moving; a landing accepted on one frozen instant because no second
-    snapshot existed; and a landing picked out of several that all moved.
+    acting player actually moving; a landing accepted on one frozen instant because no action window
+    was sampled; and a landing picked out of several that all moved.
     """
     behavior = located.behavior
     if behavior is None:
-        if had_after:
+        if had_window:
             return  # a weak/two-level landing; `derive_base_layout` reports that case in full
         result.notes.append(
-            "the player anchor was accepted on a SINGLE INSTANT (no second snapshot): its fields "
+            "the player anchor was accepted on a SINGLE INSTANT (no action window): its fields "
             "read plausibly at round start, but nothing proved the struct tracks the acting "
             "player. That is how a coincidental struct was accepted on the live game. Re-run with "
             "an act-then-capture so the behavioral oracle can confirm the landing."
         )
         return
     result.notes.append(
-        f"player anchor confirmed BEHAVIORALLY across the two snapshots ({behavior.describe()}); "
+        f"player anchor confirmed BEHAVIORALLY across the action window ({behavior.describe()}); "
         f"{located.accepted} of {located.considered} structurally-plausible landings passed."
     )
     if located.ambiguous:
@@ -1579,6 +1731,16 @@ def _seed_state_fields(result: DerivationResult, spec: BaseScanSpec, p1_base: in
         result.drop_player_fields.extend(spec.legacy_state_fields)
 
 
+def _window_of(source_after: MemorySource | None) -> list[MemorySource] | None:
+    """A snapshot pair's degenerate one-sample action window (``None`` when there is no pair).
+
+    Offline callers that hold two frozen images get exactly the C4f oracle out of the C4g machinery,
+    which is what most of the derivation tests want: their planted "after" image *is* the instant
+    the action happened. Only the live path (and the transient-move_id regression) needs more.
+    """
+    return None if source_after is None else [source_after]
+
+
 def derive_base_layout(
     source: MemorySource,
     *,
@@ -1587,6 +1749,7 @@ def derive_base_layout(
     manifest: ProbeManifest,
     seed: OffsetTable,
     source_after: MemorySource | None = None,
+    during: Sequence[MemorySource] | None = None,
     located: Located | None = None,
     global_located: GlobalLocated | None = None,
     sweep_global: bool = True,
@@ -1603,14 +1766,19 @@ def derive_base_layout(
     (:func:`_derive_global`), the seeded **encoded state words** (:func:`_seed_state_fields`), and
     the **transform component** position lives in (:func:`find_transform_component`).
 
+    ``source_after`` is the snapshot at the *end* of the action window, used for the position
+    derivation; ``during`` is the whole window the behavioral oracle folds over, defaulting to the
+    single-sample ``[source_after]`` for callers that hold only a snapshot pair.
+
     ``located`` / ``global_located`` let the caller pass locations it already swept for; when given,
     the expensive sweeps are not repeated. The live orchestration **must** pre-sweep **both** (each
-    oracle needs two instants straddling the user's action, which a single live handle cannot
+    oracle needs readings straddling the user's action, which a single live handle cannot
     manufacture after the fact) and therefore passes ``sweep_global=False`` / ``sweep_player=False``
     — so that "swept, nothing behaved" is not confused with "not swept yet" and re-run as a useless
     same-instant sweep. ``state_map`` is the value -> meaning data the builder writes into the
     table. ``progress`` threads to the sweeps for a live-observable log.
     """
+    window = during if during is not None else _window_of(source_after)
     result = DerivationResult(module=module, module_base=module_base)
     result.encoded_state = state_map
     spec = manifest.base_scan
@@ -1627,7 +1795,7 @@ def derive_base_layout(
             module=module,
             module_base=module_base,
             manifest=manifest,
-            after=source_after,
+            during=window,
             hint=seed.players.anchor.signature,
             progress=progress,
         )
@@ -1647,11 +1815,11 @@ def derive_base_layout(
     if located is None:
         result.notes.append(
             "no static pointer slot's chain landed on a player struct that BEHAVED like the acting "
-            "player (its move_id must change between the two snapshots). Either the action was not "
-            "performed — walk P1 (Jin) forward, jab P2, and jump before pressing Enter — or the "
-            "Jin-vs-Kazuya round-start setup / base_scan pointer_path / module name is wrong "
-            "(see runbook). A struct that merely looks right at round start is deliberately NOT "
-            "accepted."
+            "player (its move_id must change from its round-start value in at least one sample of "
+            "the action window). Either the action was not performed — walk P1 (Jin) forward, jab "
+            "P2, and jump, repeatedly, for the whole capture window — or the Jin-vs-Kazuya "
+            "round-start setup / base_scan pointer_path / module name is wrong (see runbook). A "
+            "struct that merely looks right at round start is deliberately NOT accepted."
         )
         result.unresolved.extend(["char_id", "move_id", "health", "pos_x"])
         return result
@@ -1662,7 +1830,7 @@ def derive_base_layout(
             "player-struct slot re-found via the seed table's AOB signature (fast path), then "
             "re-validated against the layout oracle — the full candidate sweep was not needed."
         )
-    _note_player_behavior(result, located, source_after is not None)
+    _note_player_behavior(result, located, window is not None)
     signature = extract_signature(source, module_base, match.base_offset, spec)
     if signature is not None:
         rediscovered = find_by_signature(source, module_base, image, signature)

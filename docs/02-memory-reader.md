@@ -105,19 +105,36 @@ pointer bytes wildcarded) and stores it in the table so a subsequent run re-find
 frozen instant, and more than one struct in a 100 MB module satisfies it. Confirmed live on 5.02.01:
 the scan accepted a struct whose `char_id`/`move_id`/`damage_taken` all read plausibly at round start
 and whose `move_id` then stayed `0` while the player jabbed and jumped. So the player oracle is
-**behavioral too**, read across the very same snapshot pair the position scan needs:
+**behavioral too**, read across an **action window** — a series of samples taken while the user acts,
+the same action the position scan needs:
 
-| signal | across the two snapshots | required? |
+| signal | across the window | required? |
 |---|---|---|
-| acting player's `move_id` | **changes** (a jab and a jump each rewrite it) | yes |
-| opponent's `move_id` | changes (the dummy reacts) | no — ranks, does not gate |
-| opponent's `damage_taken` | rises off 0 | no — the jab may whiff |
+| acting player's `move_id` | **differs from its round-start value in ≥ 1 sample** | yes |
+| opponent's `move_id` | ever changes (the dummy reacts) | no — ranks, does not gate |
+| opponent's `damage_taken` | ever rises off 0 | no — the jab may whiff |
 
 Only the first is acceptance; the other two rank several survivors. Requiring a corroborator would
 reject the real struct on a run where the jab missed. When nothing behaves, the scan **writes no
 table** and says to perform the action — it never falls back to the structural guess, because the
-structural guess is the bug. (`char_id_min` is 1 for the same reason: at 0, a page of *zeroes* reads
-`char_id=0 / move_id=0 / damage=0` and passes the whole layout check.)
+structural guess is the bug.
+
+**Why a window and not two instants.** `move_id` is *transient*. A jab or a jump rewrites it for
+roughly half a second, after which the character idles and `move_id` returns to exactly the value it
+held at round start. An oracle that compares round start against the moment the user presses Enter
+therefore demands the user alt-tab out of the game and hit a key mid-animation — and when they can't,
+the *real* struct reads frozen at both ends and is rejected. That is not a hypothetical: it is why
+the first live run of the behavioral oracle found **zero** behaving candidates and wrote no table. So
+the tool times a window, samples it on a fixed cadence, and accepts a `move_id` that changed in *any*
+sample. Nothing about the argument weakens — a frozen decoy is frozen in every sample — and the user
+now only has to be moving, not to be moving *at an instant they cannot see*.
+
+`char_id_min` is `0`. C4f raised it to 1 because a page of *zeroes* reads `char_id=0 / move_id=0 /
+damage=0` and passes the whole layout check. But Jin's real id may **be** 0 on this build, and a
+sieve that discards the answer cannot be repaired by any downstream oracle. Zeroes are harmless
+anyway: a *strong* candidate requires a second struct reading Kazuya's `12` at a constant stride,
+which a zeroed page has nowhere to put, and the behavioral test then requires a `move_id` that
+changes, which zeroes cannot do. Two independent backstops, neither of which needs the floor.
 
 `decode.resolve_anchor` already follows a multi-level `pointer_path`, so the reader consumes such an
 anchor with no code change; the chain is re-resolved on every read, which is precisely what makes it
@@ -127,19 +144,28 @@ survive reallocation.
 sweep the static data, follow a seeded chain shape, validate the landing. What differs is the
 **oracle**. The player struct has a *structural* signature (a plausible char id next to a plausible
 move id next to a zero damage counter). A frame counter is just a `u32`; nothing about one instant
-identifies it. So the global oracle is **behavioral**, read across the same two snapshots the
-position scan uses:
+identifies it. So the global oracle is **behavioral**, read across the same action window the player
+oracle and the position scan use:
 
-| field | behavior across the two snapshots | required? |
+| field | behavior across the window | required? |
 |---|---|---|
-| `frame_counter` | strictly increases, by a delta plausible for one prompt (≤ 10 min of frames) | yes |
+| `frame_counter` | increases by ≈ `60 × window_seconds`, ± tolerance | yes |
 | `round` | holds constant, in 1..k | yes |
 | `timer_ms` | strictly decreases (a round clock counts down) | no — practice mode freezes it |
 | `match_phase` | reads as a small code | no — usually unassignable at round start |
 
+The frame-counter band is what makes this sharp. "Strictly increased" is nearly free — one live run
+saw a candidate advance by `1` across the prompt and another saw `96`, and both passed — so the tool
+**times** its own action window, re-reads each candidate's before-values as the window opens (the
+sweep's readings are minutes stale, and how long the user spent reading the prompt is unknowable),
+and then requires the delta to match the elapsed duration at ~60fps. A counter that ticks up a little
+is no longer a counter.
+
 Several static slots legitimately point into the *same* global struct, so accepting slots are deduped
-to distinct **landings** before ambiguity is reported. Two different structs both ticking a counter
-beside a steady round number is real ambiguity; twenty-two slots into one struct is not.
+by **resolved struct base** before ambiguity is reported. Two different structs both ticking a counter
+beside a steady round number is real ambiguity; twenty-two slots into one struct is not. Among
+genuinely distinct landings the pick is the one whose behavior named the *most* fields, and any
+residual ambiguity is reported — the doctor's `frame_monotonic` over real frames is the final arbiter.
 
 Crucially, the within-struct offsets are seeded as an **unassigned list**: we know those offsets
 carry match state, not which is which. The scan assigns offset → field *by behavior*, so a reordering
@@ -182,19 +208,22 @@ A Season/balance patch can shift **both** offsets **and** move data (summary §7
    taken), and runs the clean-room `update-offsets --base-scan` command (§5 — a re-implementation of
    the fork's re-discovery *technique*, not its script). It re-derives the player anchor
    (`base_offset` + pointer chain + AOB signature) and the global/match anchor, and writes a
-   candidate `assets/offsets/<version>.json` keyed to the detected exe version. Between two snapshots
-   the tool prompts:
+   candidate `assets/offsets/<version>.json` keyed to the detected exe version. After the round-start
+   sweep the tool prompts:
 
-   > Now, as P1 (Jin), without pausing: **walk forward a step**, **jab P2**, **jump**. Press Enter
-   > **while still in the air** (or the instant you land).
+   > Press Enter, then **alt-tab back to the game**. After a 3s countdown the scan watches for ~5s.
+   > For the whole of that time, as P1 (Jin), keep acting — on repeat: **walk forward**, **jab P2**,
+   > **jump**.
 
    That single action does quadruple duty — the `pos_x` delta locates the transform component, the
    frame-counter delta identifies the global struct, the acting player's `move_id` delta confirms the
    player struct is the one being *controlled*, and an in-struct scan for round-start max HP locates
-   `health` (or falls back to `damage_taken`). The "still in the air" instruction is load-bearing:
-   `move_id` is compared against its round-start value, and a character back in its idle animation
-   reads exactly like a frozen field. (`update-offsets` without `--base-scan` is the older heap
-   value-scan; it cannot reach a struct behind a pointer chain.)
+   `health` (or falls back to `damage_taken`). **Nothing has to be timed**: the scan samples the whole
+   window and accepts a `move_id` that changed in any sample, because a jab lasts less time than an
+   alt-tab and an end-of-window comparison would see only an idle character. The window's durations
+   are manifest data (`action_lead_in_seconds`, `action_window_seconds`, `action_sample_interval`).
+   (`update-offsets` without `--base-scan` is the older heap value-scan; it cannot reach a struct
+   behind a pointer chain.)
 3. **Invalidate move/frame data** for the new version (mirror the fork's "wipe frame_data"
    guidance) — see [05](05-frame-data-and-move-map.md) for the data side of the same patch event.
 4. **Verify the state map** (§8). It is *not* per-version and is normally carried across a patch

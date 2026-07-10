@@ -18,6 +18,7 @@ takes it — asserted here, so the regression stays visible — and the behavior
 
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ from tekken_coach.reader.discovery.basescan import (
     extract_signature,
     find_by_signature,
     find_candidate_slots,
+    frame_delta_band,
     locate_global_struct,
     locate_player_struct,
 )
@@ -62,6 +64,9 @@ from tests.fixtures.reader.planted_chain import (
     COMPONENT_TRIPLE_OFFSET,
     DECOY_BASE_OFFSET,
     DECOY_P1_BASE,
+    FRAME_STEP,
+    GLOBAL_ALT_BASE_OFFSET,
+    GLOBAL_BASE,
     GLOBAL_BASE_OFFSET,
     GLOBAL_FRAME_OFFSET,
     GLOBAL_POINTER_PATH,
@@ -72,6 +77,7 @@ from tests.fixtures.reader.planted_chain import (
     KAZUYA,
     MODULE,
     MODULE_BASE,
+    MOVE_ID_OFFSET,
     P1_BASE,
     POINTER_PATH,
     POS_OFFSET,
@@ -79,13 +85,16 @@ from tests.fixtures.reader.planted_chain import (
     decode_source,
     expected_frame,
     global_duplicate_slot_source,
+    global_two_structs_source,
     planted_chain,
     planted_component,
     planted_decoy,
     planted_decoy_nobody_acted,
+    planted_transient_action,
     planted_whiffed_jab,
     relocated_pointer_source,
     two_level_source,
+    zeroed_landing_source,
 )
 from tests.fixtures.reader.state_map import calibrated_state_map
 
@@ -155,7 +164,7 @@ def test_locate_reports_progress() -> None:
         module=MODULE,
         module_base=MODULE_BASE,
         manifest=_manifest(),
-        after=chain.after,
+        during=[chain.after],
         progress=msgs.append,
     )
     assert located is not None and located.match.strong
@@ -225,7 +234,7 @@ def test_locates_the_planted_base_offset_and_stride() -> None:
         module=MODULE,
         module_base=MODULE_BASE,
         manifest=_manifest(),
-        after=chain.after,
+        during=[chain.after],
     )
     assert located is not None
     assert located.match.base_offset == BASE_OFFSET
@@ -319,7 +328,7 @@ def test_the_behavioral_oracle_rejects_the_decoy_and_locks_onto_the_real_struct(
         module=MODULE,
         module_base=MODULE_BASE,
         manifest=_manifest(),
-        after=decoy.after,
+        during=[decoy.after],
     )
     assert located is not None
     assert located.match.p1_base == P1_BASE
@@ -344,7 +353,7 @@ def test_a_frozen_decoy_is_not_accepted_even_when_nobody_acted() -> None:
             module=MODULE,
             module_base=MODULE_BASE,
             manifest=_manifest(),
-            after=still.after,
+            during=[still.after],
         )
         is None
     )
@@ -370,7 +379,7 @@ def test_a_whiffed_jab_still_confirms_the_anchor() -> None:
         module=MODULE,
         module_base=MODULE_BASE,
         manifest=_manifest(),
-        after=whiff.after,
+        during=[whiff.after],
     )
     assert located is not None and located.match.p1_base == P1_BASE
     behavior = located.behavior
@@ -380,16 +389,138 @@ def test_a_whiffed_jab_still_confirms_the_anchor() -> None:
     assert behavior.score == 1
 
 
-def test_a_zeroed_page_no_longer_satisfies_the_structural_oracle() -> None:
-    # char_id_min = 1. With it at 0, a page of zeroes reads char_id 0 / move_id 0 / damage 0 and
-    # passes the whole per-struct oracle — the cheapest false positive there is, and one the live
-    # run produced (it reported Jin=0).
+def test_a_zeroed_page_is_never_a_strong_candidate_at_char_id_min_zero() -> None:
+    # C4f set char_id_min to 1 to keep zeroed pages out; C4g put it back to 0, because Jin's real id
+    # may BE 0 on this build and a sieve that drops the answer cannot be repaired downstream. The
+    # flooding worry is real at the per-struct level and empty at the level that matters: strong
+    # acceptance needs a struct reading Kazuya's 12 at a constant stride, and a zeroed page has no
+    # 12 to offer. (The behavioral oracle is the second, independent backstop — a zeroed move_id
+    # cannot change; see the decoy tests above, which now run with char_id_min at 0.)
     manifest = _manifest()
-    assert manifest.char_id_min >= 1
+    assert manifest.char_id_min == 0
     spec = manifest.base_scan
     assert spec is not None
-    zeroed = FlatMemorySource([(0x10000000, bytes(0x2000))], module_bases={MODULE: MODULE_BASE})
-    assert _player_oracle_ok(zeroed, 0x10000000, spec, manifest) is None
+    zeroed = zeroed_landing_source()
+
+    # The per-struct check passes on zeroes. Stated plainly, because it is the premise of the worry.
+    assert _player_oracle_ok(zeroed, P1_BASE, spec, manifest) == 0
+
+    located = locate_player_struct(
+        zeroed,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=manifest,
+        during=[zeroed_landing_source()],
+    )
+    assert located is not None
+    assert not located.match.strong, "zeroes must never resolve a P2 stride"
+    assert located.behavior is None  # nothing to confirm: a weak landing has no opponent to compare
+
+    table, _report = discover_base(
+        zeroed,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        game_version=DETECTED_EXE_VERSION,
+        manifest=manifest,
+        seed=_seed(),
+        seed_version="2.01.01",
+        source_after=zeroed_landing_source(),
+    )
+    assert table is None, "a zeroed landing must never reach a written table"
+
+
+# ---------------------------------------------------------------------------
+# C4g: the oracle is WINDOWED. move_id is transient, so "changed at the end" is unsatisfiable.
+# ---------------------------------------------------------------------------
+#
+# This pair is the regression guard for exactly what bit the user on the live game. The planted
+# struct's move_id changes only in the MIDDLE sample of the window: Jin jabs and jumps, then lands
+# and idles back to the move_id he had at round start. C4f compared round start against the last
+# instant, so it saw a frozen field and rejected the player's own struct — the live scan found zero
+# behaving candidates and wrote no table, not because the struct was missing but because a human
+# cannot alt-tab and press Enter inside a half-second animation.
+
+
+def _p1_move_id(source: FlatMemorySource) -> int:
+    return int(struct.unpack("<I", source.read(P1_BASE + MOVE_ID_OFFSET, 4))[0])
+
+
+def test_the_two_instant_oracle_rejects_a_move_id_that_was_only_transiently_different() -> None:
+    window = planted_transient_action()
+    # The struct really does read identically at both ends — that is the whole trap.
+    assert _p1_move_id(window.before) == _p1_move_id(window.during[-1])
+    assert any(_p1_move_id(s) != _p1_move_id(window.before) for s in window.during)
+
+    assert (
+        locate_player_struct(
+            window.before,
+            module=MODULE,
+            module_base=MODULE_BASE,
+            manifest=_manifest(),
+            during=[window.during[-1]],  # the C4f oracle: round start vs. one late instant
+        )
+        is None
+    ), "the two-instant oracle rejects the real struct — the bug C4g exists to fix"
+
+
+def test_the_windowed_oracle_accepts_a_move_id_that_changed_in_any_sample() -> None:
+    window = planted_transient_action()
+    located = locate_player_struct(
+        window.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        manifest=_manifest(),
+        during=window.during,
+    )
+    assert located is not None
+    assert located.match.p1_base == P1_BASE
+    assert located.match.base_offset == BASE_OFFSET
+    assert located.match.stride == STRIDE
+
+    behavior = located.behavior
+    assert behavior is not None
+    assert behavior.samples == 3
+    assert behavior.acting_move_changed
+    # The corroborators are "ever" signals too: the dummy's hit reaction and its damage_taken are
+    # both back to their round-start readings by the last sample, exactly as the jab is.
+    assert behavior.opponent_move_changed and behavior.opponent_damaged
+    assert behavior.score == 3
+    # The position scan's "after" base is the LAST sample's resolve, not the middle one's.
+    assert behavior.p1_after_base == P1_BASE
+
+
+def test_a_windowed_derivation_writes_a_table_a_two_instant_one_would_not(tmp_path: Path) -> None:
+    # The same claim one level up: the window is what turns a fail-closed run into a written table.
+    window = planted_transient_action()
+    two_instant, _report = discover_base(
+        window.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        game_version=DETECTED_EXE_VERSION,
+        manifest=_manifest(),
+        seed=_seed(),
+        seed_version="2.01.01",
+        source_after=window.during[-1],
+    )
+    assert two_instant is None, "no table, and the user is told to act — the live C4f outcome"
+
+    table, report = discover_base(
+        window.before,
+        module=MODULE,
+        module_base=MODULE_BASE,
+        game_version=DETECTED_EXE_VERSION,
+        manifest=_manifest(),
+        seed=_seed(),
+        seed_version="2.01.01",
+        source_after=window.during[-1],
+        during=window.during,
+        discovered_at="2026-07-09T00:00:00Z",
+    )
+    assert table is not None and report.ok
+    persist(table, report, offsets_dir=tmp_path)
+    written = select_offset_table(DETECTED_EXE_VERSION, tmp_path)
+    assert written.players.anchor.base_offset == BASE_OFFSET
+    assert written.players.stride == STRIDE
 
 
 def test_the_derivation_says_when_a_landing_was_never_confirmed() -> None:
@@ -640,7 +771,8 @@ def test_a_counter_jumping_further_than_the_prompt_allows_is_not_a_frame_counter
 def test_two_slots_reaching_one_struct_are_one_landing_not_two() -> None:
     # The live run's alarming "22 accepted" counted accepting *slots*. Several static globals
     # legitimately point into the same match struct; that is not ambiguity, and reporting it as such
-    # would cry wolf on every run. Distinct landings are what the pick has to choose between.
+    # would cry wolf on every run. Distinct landings — deduped by RESOLVED STRUCT (gbase), not by
+    # slot and not by (gbase, field assignment) — are what the pick has to choose between.
     located = locate_global_struct(
         global_duplicate_slot_source(),
         global_duplicate_slot_source(step=1),
@@ -652,6 +784,62 @@ def test_two_slots_reaching_one_struct_are_one_landing_not_two() -> None:
     assert located.slots == 2
     assert located.accepted == 1
     assert not located.ambiguous
+
+
+# ---------------------------------------------------------------------------
+# C4g Phase 3: de-ambiguating the global oracle with a timed frame-delta band
+# ---------------------------------------------------------------------------
+
+
+def test_frame_delta_band_tracks_the_windows_duration() -> None:
+    spec = _global_spec()
+    low, high = frame_delta_band(spec, 5.0)
+    assert low <= int(spec.frame_rate * 5.0) <= high  # a real 60fps counter over a 5s window
+    assert low > 1, "'it ticked up by one' must fall outside the band"
+    assert high < spec.frame_delta_max
+    # A caller that could not time the window gets the spec's absolute bounds back, not a band.
+    assert frame_delta_band(spec, 0.0) == (spec.frame_delta_min, spec.frame_delta_max)
+
+
+def test_two_distinct_structs_both_pass_the_unbanded_oracle_and_are_reported_ambiguous() -> None:
+    # Both structs tick a counter beside a steady, in-range round: the impostor's advances by 1 per
+    # step, the real one's by FRAME_STEP. "Strictly increased, by at most ten minutes of frames"
+    # cannot separate them — which is how the live runs accepted 22-28 landings and picked a
+    # different base each time.
+    located = locate_global_struct(
+        global_two_structs_source(),
+        global_two_structs_source(step=10),
+        module=MODULE,
+        module_base=MODULE_BASE,
+        spec=_global_spec(),
+    )
+    assert located is not None
+    assert located.accepted == 2 and located.ambiguous
+    # The impostor's slot is swept first, so "take the first that passed" would take it. The pick
+    # instead prefers the landing whose behavior named the most fields — the real struct's round
+    # clock counts down, the impostor's is frozen.
+    assert located.match.base_offset == GLOBAL_BASE_OFFSET != GLOBAL_ALT_BASE_OFFSET
+    assert located.match.gbase == GLOBAL_BASE
+    assert "timer_ms" in located.match.offsets
+
+
+def test_the_frame_delta_band_rejects_the_coincidental_ticker() -> None:
+    # The real struct advances FRAME_STEP per step, so over the window it spans 10 * FRAME_STEP
+    # frames; at ~60fps that window lasted about that many sixtieths of a second. Banding the delta
+    # to what the window's measured duration allows leaves exactly one landing standing.
+    spec = _global_spec()
+    seconds = 10 * FRAME_STEP / spec.frame_rate
+    located = locate_global_struct(
+        global_two_structs_source(),
+        global_two_structs_source(step=10),
+        module=MODULE,
+        module_base=MODULE_BASE,
+        spec=spec,
+        frame_delta=frame_delta_band(spec, seconds),
+    )
+    assert located is not None
+    assert located.accepted == 1 and not located.ambiguous
+    assert located.match.base_offset == GLOBAL_BASE_OFFSET
 
 
 def test_global_anchor_seeded_and_flagged_when_the_chain_shapes_are_wrong() -> None:

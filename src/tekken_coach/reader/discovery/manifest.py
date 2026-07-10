@@ -71,11 +71,19 @@ class GlobalScanSpec(BaseModel):
     field_offsets: list[int]  # unassigned candidate offsets within the global struct
     field_kind: ScalarKind = "u32"
     frame_delta_min: int = 1  # a live frame counter advances by at least this between snapshots
-    # ... and by at most this. The snapshots straddle one interactive prompt, so at 60fps a
-    # plausible delta is seconds-to-minutes of frames. A u32 that jumped by more than ten minutes'
-    # worth is a hash, a byte count, or an address — not this frame counter. Narrowing this narrows
-    # the accept set, which is the point (C4f Phase 3).
+    # ... and by at most this. The fallback bounds, used when the caller cannot say how long the two
+    # snapshots were apart. A u32 that jumped by more than ten minutes' worth of frames is a hash, a
+    # byte count, or an address — not this frame counter.
     frame_delta_max: int = 36_000
+    # When the caller *can* say (the live path times its own sampling window), the accept band
+    # narrows to `frame_rate * seconds`, give or take `frame_delta_tolerance` of it — which is the
+    # real discriminator (C4g Phase 3). Two structs both "ticking up a little" over a 5-second
+    # window are common; one advancing by ~300 frames is the frame counter. The tolerance is wide
+    # because the frame rate is not guaranteed (vsync, a paused practice mode, a loading hitch) and
+    # a band that rejects the real counter costs a re-run; a band that admits a coincidence costs
+    # only a reported ambiguity, which the doctor then arbitrates.
+    frame_rate: float = 60.0
+    frame_delta_tolerance: float = 0.5
     round_min: int = 1
     round_max: int = 8
     timer_ms_max: int = 300_000  # a round clock above this is not a round clock
@@ -190,10 +198,14 @@ class ProbeManifest(BaseModel):
     round_start_health: int  # full HP, identical for both players; pins the stride
 
     # --- Plausibility bounds (keep scanners off coincidental matches) ---
-    # `char_id_min` is 1, not 0: a zeroed page reads char_id 0 / move_id 0 / damage_taken 0 and
-    # satisfies the whole structural player oracle. No T8 character carries id 0 (Kazuya is 12), so
-    # excluding it costs nothing and removes the cheapest false positive there is.
-    char_id_min: int = 1
+    # `char_id_min` is back to 0 (C4g). C4f raised it to 1 to keep a zeroed page — which reads
+    # char_id 0 / move_id 0 / damage_taken 0 — out of the candidate set. But Jin's real char id may
+    # genuinely BE 0 on this build, so that floor risks structurally excluding the very struct the
+    # scan exists to find, and no amount of behavioral testing recovers a candidate the structural
+    # pass never emitted. A zeroed page cannot become a *strong* candidate anyway: strong acceptance
+    # requires a second struct reading Kazuya's id (12) at a constant stride, which zeroed memory
+    # has nowhere to put. The behavioral oracle is the discriminator; this is only the sieve.
+    char_id_min: int = 0
     char_id_max: int = 200
     move_id_min: int = 0
     move_id_max: int = 60000
@@ -209,6 +221,17 @@ class ProbeManifest(BaseModel):
     # Indexes a two-element (P1, P2) tuple in the behavioral oracle, so it is bounded here rather
     # than crashing on an IndexError deep in a live sweep because someone typed a 2.
     moving_player: int = Field(default=0, ge=0, le=1)
+
+    # --- The action window the behavioral oracles observe (C4g) ---
+    # C4f compared move_id at two instants: round start, and the moment the user pressed Enter. But
+    # move_id is TRANSIENT — a jab or a jump lasts about half a second and the character then
+    # returns to idle (move_id back to its round-start value). Alt-tabbing from the game to the
+    # terminal takes longer than that, so the real struct read as frozen at both ends and was
+    # rejected. The oracle is unchanged in principle; it now samples a *window* and accepts a
+    # candidate whose move_id differed in ANY sample, which a human can actually satisfy.
+    action_lead_in_seconds: float = Field(default=3.0, gt=0)  # time to alt-tab back to the game
+    action_window_seconds: float = Field(default=5.0, gt=0)  # how long the window samples for
+    action_sample_interval: float = Field(default=0.2, gt=0)  # cadence within the window
 
     # --- Scan stepping + windows ---
     scan_align: int = 4
