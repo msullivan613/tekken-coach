@@ -100,8 +100,8 @@
   "base_scan": {
     "pointer_path": [16, 104, 8, 48],
     "char_id_offset": 360,
-    "move_id_offset": 1320,
-    "damage_taken_offset": 4704,
+    "move_id_offset": 1360,
+    "damage_taken_offset": 5496,
     "round_start_health": 200,
     "struct_span": 262144,
     "max_stride": 262144,
@@ -256,8 +256,8 @@
     "disp32_pos": 3,
     "holder_slots": [48, 56],
     "char_id_offset": 360,
-    "move_id_offset": 1320,
-    "damage_taken_offset": 4704,
+    "move_id_offset": 1360,
+    "damage_taken_offset": 5496,
     "round_gate_offset": 5568,
     "jin_char_id": 6,
     "round_start_health": 200
