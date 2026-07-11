@@ -39,7 +39,7 @@ from tekken_coach.reader.decode import read_scalar, resolve_player_base
 from tekken_coach.reader.faults import ReaderError, classify_fault
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import OffsetTable
-from tekken_coach.reader.probe import ChangeRecord, PollSample
+from tekken_coach.reader.probe import ChangeRecord, PollSample, WatchPoint, parse_watch
 from tekken_coach.reader.version import GAME_PROCESS_NAME
 
 DEFAULT_OFFSETS_DIR = "assets/offsets"
@@ -211,17 +211,30 @@ def _probe_targets(table: OffsetTable) -> list[str]:
     return context + sorted(spec.flags)
 
 
-def _probe_row(
-    source: MemorySource, table: OffsetTable, index: int, names: list[str]
-) -> tuple[int, ...]:
-    """Read one player's watched fields as raw integers (under either addressing model)."""
-    base = resolve_player_base(source, table, index)
+def _table_points(table: OffsetTable, names: list[str]) -> list[WatchPoint]:
+    """The default watch points: each named table field at its own offset/kind."""
     fields = table.players.fields
-    return tuple(int(read_scalar(source, base + fields[n].offset, fields[n].kind)) for n in names)
+    return [WatchPoint(name=n, offset=fields[n].offset, kind=fields[n].kind) for n in names]
+
+
+def _probe_row(
+    source: MemorySource, table: OffsetTable, index: int, points: list[WatchPoint]
+) -> tuple[int | float, ...]:
+    """Read one player's watch points as raw scalars (bool8 coerced to int; f32 kept as float)."""
+    base = resolve_player_base(source, table, index)
+    values: list[int | float] = []
+    for p in points:
+        v = read_scalar(source, base + p.offset, p.kind)
+        values.append(int(v) if isinstance(v, bool) else v)
+    return tuple(values)
 
 
 def _live_samples(
-    source: MemorySource, table: OffsetTable, names: list[str], interval: float, seconds: float
+    source: MemorySource,
+    table: OffsetTable,
+    points: list[WatchPoint],
+    interval: float,
+    seconds: float,
 ) -> Iterator[PollSample]:  # pragma: no cover - live loop; the pure consumers are tested
     """Poll both players forever (or for ``seconds``), yielding one :class:`PollSample` per instant.
 
@@ -234,7 +247,7 @@ def _live_samples(
 
     started = time.monotonic()
     while seconds <= 0 or time.monotonic() - started < seconds:
-        rows = tuple(_probe_row(source, table, index, names) for index in (0, 1))
+        rows = tuple(_probe_row(source, table, index, points) for index in (0, 1))
         yield PollSample(t=time.monotonic() - started, rows=rows)
         time.sleep(interval)
 
@@ -309,8 +322,21 @@ def probe_state_main(args: argparse.Namespace) -> int:
         )
         return 1
 
-    names = _probe_targets(table)
-    encoded_fields = sorted(spec.flags)
+    # Default: watch the table's encoded-state fields (+ move context). `--watch` overrides that
+    # with ad-hoc candidate offsets so a run can locate where stale state words moved to, without
+    # editing the table (docs/02 §8; the seeded offsets go stale like the fork's move_id did).
+    if args.watch:
+        try:
+            points = parse_watch(args.watch)
+        except ValueError as exc:
+            print(f"invalid --watch: {exc}", file=sys.stderr)
+            return 1
+        names = [p.name for p in points]
+        skeleton_fields = names  # summarize distinct values for every watched candidate
+    else:
+        names = _probe_targets(table)
+        points = _table_points(table, names)
+        skeleton_fields = sorted(spec.flags)
     print(f"probing {len(names)} fields x 2 players (Ctrl-C to stop): {', '.join(names)}")
     print("perform one state at a time (block a jab, eat a jab, stagger, get thrown, jump, ...)")
     print(f"\n{'time':>7}  {'player':<6}  " + "  ".join(f"{n:>18}" for n in names))
@@ -325,7 +351,7 @@ def probe_state_main(args: argparse.Namespace) -> int:
     observed: list[ChangeRecord] = []
     try:
         for record in change_records(
-            _live_samples(source, table, names, args.interval, args.seconds), names
+            _live_samples(source, table, points, args.interval, args.seconds), names
         ):
             print(_format_change(record, names), flush=True)
             if record_file is not None:
@@ -346,7 +372,7 @@ def probe_state_main(args: argparse.Namespace) -> int:
     if args.record:
         print(f"recorded observations -> {args.record}")
     if skeleton_path is not None:
-        skeleton = build_skeleton(observed, encoded_fields)
+        skeleton = build_skeleton(observed, skeleton_fields)
         skeleton_path.write_text(json.dumps(skeleton, indent=2) + "\n", encoding="utf-8")
         print(f"draft skeleton (fill the flags, set calibrated:true) -> {skeleton_path}")
 
@@ -450,6 +476,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="write the draft state-map skeleton to this path on exit (every distinct value seen "
         "per encoded field, with empty flag lists for a human to annotate). Defaults to "
         "<record>.skeleton.json when --record is given.",
+    )
+    p_probe.add_argument(
+        "--watch",
+        default=None,
+        help="watch ad-hoc raw player-struct offsets instead of the table's state fields, as "
+        "comma-separated OFFSET:KIND pairs (e.g. 0x550:u32,0x434:u32,0x670:u32). Use to locate "
+        "where state words moved after a patch made the seeded offsets stale (docs/02 §8); the "
+        "skeleton then summarizes the distinct values each candidate took.",
     )
     p_probe.set_defaults(func=probe_state_main)
 

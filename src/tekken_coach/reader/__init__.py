@@ -70,9 +70,11 @@ from tekken_coach.reader.offsets import (
 from tekken_coach.reader.probe import (
     ChangeRecord,
     PollSample,
+    WatchPoint,
     build_skeleton,
     change_records,
     distinct_values,
+    parse_watch,
 )
 from tekken_coach.reader.state import SignalKind, StateSignal, classify_state
 from tekken_coach.reader.version import (
@@ -106,6 +108,7 @@ __all__ = [
     "SignalKind",
     "StateSignal",
     "UnknownGameVersionError",
+    "WatchPoint",
     "WinMemorySource",
     "build_skeleton",
     "capture_from_reads",
@@ -119,6 +122,7 @@ __all__ = [
     "load_offset_index",
     "map_pymem_error",
     "normalize_version",
+    "parse_watch",
     "poll_frames",
     "read_state_signal",
     "run_capture",

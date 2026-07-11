@@ -48,7 +48,7 @@ ENCODED = [
 ]
 
 
-def _sample(t: float, p1: tuple[int, ...], p2: tuple[int, ...]) -> PollSample:
+def _sample(t: float, p1: tuple[int | float, ...], p2: tuple[int | float, ...]) -> PollSample:
     return PollSample(t=t, rows=(p1, p2))
 
 
@@ -158,6 +158,57 @@ def test_skeleton_loads_through_load_state_map_uncalibrated(tmp_path: Path) -> N
     assert spec.calibrated is False
     assert spec.flags["simple_move_state"] == {"0": [], "2": []}
     assert spec.flags["stun_type"] == {"0": [], "3": []}
+
+
+def test_parse_watch_parses_hex_and_decimal_pairs() -> None:
+    from tekken_coach.reader.probe import parse_watch
+
+    points = parse_watch("0x434:u32, 0x670:u32 , 1360:i32")
+    assert [(p.name, p.offset, p.kind) for p in points] == [
+        ("@0x434", 0x434, "u32"),
+        ("@0x670", 0x670, "u32"),
+        ("@0x550", 1360, "i32"),  # decimal offset, named by its hex
+    ]
+
+
+def test_parse_watch_rejects_malformed_specs() -> None:
+    import pytest
+
+    from tekken_coach.reader.probe import parse_watch
+
+    for bad, needle in [
+        ("0x434", "OFFSET:KIND"),  # no colon
+        ("0xzz:u32", "not a valid offset"),  # bad number
+        ("0x434:u33", "unknown kind"),  # bad kind
+        ("-4:u32", "non-negative"),  # parses as -4, rejected as a negative offset
+        ("", "empty"),  # nothing to watch
+        ("  ,  ", "empty"),  # only separators
+    ]:
+        with pytest.raises(ValueError, match=needle):
+            parse_watch(bad)
+
+
+def test_watch_points_flow_through_change_records_with_float_values() -> None:
+    # A watch run may target an f32 candidate (e.g. to confirm an offset is a float, not a counter);
+    # the pipeline must carry the float faithfully, not truncate it to int.
+    from tekken_coach.reader.probe import build_skeleton
+
+    records = list(
+        change_records(
+            [
+                _sample(0.0, (0, 1.5), (0, 1.5)),
+                _sample(1.0, (0, 2.5), (0, 1.5)),  # only P1's float column changed
+            ],
+            ["@0x550", "@0x370"],
+        )
+    )
+    assert [(r.t, r.player, r.fields["@0x370"]) for r in records] == [
+        (0.0, 1, 1.5),
+        (0.0, 2, 1.5),
+        (1.0, 1, 2.5),
+    ]
+    skel = build_skeleton(records, ["@0x370"])
+    assert skel["flags"] == {"@0x370": {"1.5": [], "2.5": []}}  # floats keyed as strings
 
 
 def test_a_hand_filled_skeleton_value_reaches_player_frame(tmp_path: Path) -> None:

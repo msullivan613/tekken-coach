@@ -26,12 +26,64 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from typing import cast, get_args
+
+from tekken_coach.reader.offsets import ScalarKind
 
 # The state-map draft this chunk emits: an empty flag list per observed value, for a human to fill.
 SKELETON_NOTES = (
     "Draft from probe-state observation. Fill each [] with flags from docs/02 §8 "
     "(known flags in offsets.STATE_FLAGS), then set calibrated:true."
 )
+
+# The scalar kinds `--watch` accepts (the reader's whole ScalarKind set, kept in sync via get_args).
+WATCH_KINDS: frozenset[str] = frozenset(get_args(ScalarKind))
+
+
+@dataclass(frozen=True)
+class WatchPoint:
+    """One ad-hoc player-struct offset to watch during ``probe-state`` exploration (docs/02 §8).
+
+    The seeded state-word offsets can go stale across a build (as the fork's ``move_id`` did), so
+    ``--watch`` lets a run observe *candidate* raw offsets directly — without editing the table —
+    to find where the live state words moved to. ``name`` is the ``@0x<offset>`` label the columns
+    and JSONL use.
+    """
+
+    name: str
+    offset: int
+    kind: ScalarKind
+
+
+def parse_watch(spec: str) -> list[WatchPoint]:
+    """Parse ``--watch "0x434:u32,0x510:u32"`` into watch points named ``@0x<offset>``.
+
+    Offsets are hex (``0x…``) or decimal; kinds are the reader's :data:`ScalarKind` set. Raises
+    ``ValueError`` with an actionable message on a malformed pair (missing ``:``, bad number,
+    unknown kind) or an empty spec — the CLI turns that into a clean error, not a traceback.
+    """
+    points: list[WatchPoint] = []
+    for raw in spec.split(","):
+        part = raw.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise ValueError(f"watch spec {part!r} must be OFFSET:KIND (e.g. 0x434:u32)")
+        off_text, kind = (s.strip() for s in part.split(":", 1))
+        try:
+            offset = int(off_text, 0)
+        except ValueError:
+            raise ValueError(f"watch spec {part!r}: {off_text!r} is not a valid offset") from None
+        if offset < 0:
+            raise ValueError(f"watch spec {part!r}: offset must be non-negative")
+        if kind not in WATCH_KINDS:
+            raise ValueError(
+                f"watch spec {part!r}: unknown kind {kind!r} (use one of {sorted(WATCH_KINDS)})"
+            )
+        points.append(WatchPoint(name=f"@0x{offset:x}", offset=offset, kind=cast(ScalarKind, kind)))
+    if not points:
+        raise ValueError("watch spec is empty (expected OFFSET:KIND pairs, e.g. 0x434:u32).")
+    return points
 
 
 @dataclass(frozen=True)
@@ -45,7 +97,7 @@ class PollSample:
     """
 
     t: float
-    rows: tuple[tuple[int, ...], ...]
+    rows: tuple[tuple[int | float, ...], ...]
 
 
 @dataclass(frozen=True)
@@ -60,7 +112,7 @@ class ChangeRecord:
 
     t: float
     player: int
-    fields: dict[str, int]
+    fields: dict[str, int | float]
 
     def to_jsonl(self) -> str:
         """Serialize as one JSONL object (``t`` rounded to match the console's 2-decimal column)."""
@@ -76,7 +128,7 @@ def change_records(samples: Iterable[PollSample], names: Sequence[str]) -> Itera
     This is the exact "print only when it changed" logic the live loop had inline, lifted out so it
     runs against a scripted :class:`~tekken_coach.reader.memory_source.FakeMemorySource`.
     """
-    previous: dict[int, tuple[int, ...]] = {}
+    previous: dict[int, tuple[int | float, ...]] = {}
     for sample in samples:
         for index, values in enumerate(sample.rows):
             if previous.get(index) == values:
@@ -100,7 +152,7 @@ def distinct_values(
     :class:`~tekken_coach.reader.offsets.EncodedStateSpec`). The flag lists are always empty: the
     tool emits values, a human emits meanings (docs/02 §5 rule 2).
     """
-    seen: dict[str, set[int]] = {field: set() for field in fields}
+    seen: dict[str, set[int | float]] = {field: set() for field in fields}
     for record in records:
         for field in fields:
             if field in record.fields:

@@ -76,6 +76,7 @@ def test_parser_wires_probe_state() -> None:
     assert args.interval == 0.05  # ~3 polls per game frame; changes are what get printed
     assert args.record is None  # C4j: opt-in observation log, unchanged behaviour by default
     assert args.emit_skeleton is None
+    assert args.watch is None  # ad-hoc candidate-offset watch is opt-in
 
 
 def test_parser_probe_state_record_and_skeleton_flags() -> None:
@@ -98,6 +99,24 @@ def test_skeleton_path_prefers_explicit_then_derives_from_record() -> None:
     assert commands._skeleton_path(args) == Path("debug/state-obs.skeleton.json")
     # with neither, no skeleton is emitted.
     assert commands._skeleton_path(parser.parse_args(["probe-state"])) is None
+
+
+def test_parser_probe_state_watch_flag() -> None:
+    parser = commands.build_parser()
+    args = parser.parse_args(["probe-state", "--watch", "0x434:u32,0x670:u32"])
+    assert args.watch == "0x434:u32,0x670:u32"
+
+
+def test_table_points_map_names_to_field_offsets() -> None:
+    from tests.test_reader_decode_encoded import _encoded_table
+
+    table = _encoded_table()
+    points = commands._table_points(table, ["move_id", "stun_type"])
+    fields = table.players.fields
+    assert [(p.name, p.offset, p.kind) for p in points] == [
+        ("move_id", fields["move_id"].offset, fields["move_id"].kind),
+        ("stun_type", fields["stun_type"].offset, fields["stun_type"].kind),
+    ]
 
 
 def test_ensure_parent_dirs_creates_missing_dirs(tmp_path: Path) -> None:
