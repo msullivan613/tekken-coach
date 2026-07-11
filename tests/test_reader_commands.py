@@ -74,6 +74,38 @@ def test_parser_wires_probe_state() -> None:
     assert args.func is commands.probe_state_main
     assert args.seconds == 3.0
     assert args.interval == 0.05  # ~3 polls per game frame; changes are what get printed
+    assert args.record is None  # C4j: opt-in observation log, unchanged behaviour by default
+    assert args.emit_skeleton is None
+
+
+def test_parser_probe_state_record_and_skeleton_flags() -> None:
+    # C4j: --record persists the observation log; --emit-skeleton overrides where the draft lands.
+    parser = commands.build_parser()
+    args = parser.parse_args(
+        ["probe-state", "--record", "debug/obs.jsonl", "--emit-skeleton", "debug/draft.json"]
+    )
+    assert args.record == "debug/obs.jsonl"
+    assert args.emit_skeleton == "debug/draft.json"
+
+
+def test_skeleton_path_prefers_explicit_then_derives_from_record() -> None:
+    parser = commands.build_parser()
+    # --emit-skeleton wins outright.
+    args = parser.parse_args(["probe-state", "--record", "obs.jsonl", "--emit-skeleton", "x.json"])
+    assert commands._skeleton_path(args) == Path("x.json")
+    # else it is derived beside the record file (.jsonl -> .skeleton.json).
+    args = parser.parse_args(["probe-state", "--record", "debug/state-obs.jsonl"])
+    assert commands._skeleton_path(args) == Path("debug/state-obs.skeleton.json")
+    # with neither, no skeleton is emitted.
+    assert commands._skeleton_path(parser.parse_args(["probe-state"])) is None
+
+
+def test_format_change_renders_aligned_columns() -> None:
+    from tekken_coach.reader.probe import ChangeRecord
+
+    record = ChangeRecord(t=1.5, player=2, fields={"move_id": 133, "stun_type": 3})
+    line = commands._format_change(record, ["move_id", "stun_type"])
+    assert line.split() == ["1.50", "P2", "133", "3"]
 
 
 def test_probe_targets_watch_the_state_words_plus_move_context() -> None:

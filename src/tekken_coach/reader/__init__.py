@@ -67,6 +67,13 @@ from tekken_coach.reader.offsets import (
     load_offset_index,
     select_offset_table,
 )
+from tekken_coach.reader.probe import (
+    ChangeRecord,
+    PollSample,
+    build_skeleton,
+    change_records,
+    distinct_values,
+)
 from tekken_coach.reader.state import SignalKind, StateSignal, classify_state
 from tekken_coach.reader.version import (
     detect_running_version,
@@ -80,6 +87,7 @@ __all__ = [
     "PATCH_RUNBOOK",
     "CaptureFile",
     "CaptureMeta",
+    "ChangeRecord",
     "DoctorCheck",
     "DoctorReport",
     "FakeMemorySource",
@@ -92,17 +100,21 @@ __all__ = [
     "OffsetIndex",
     "OffsetTable",
     "OffsetTableError",
+    "PollSample",
     "ReaderError",
     "ReaderFault",
     "SignalKind",
     "StateSignal",
     "UnknownGameVersionError",
     "WinMemorySource",
+    "build_skeleton",
     "capture_from_reads",
+    "change_records",
     "classify_fault",
     "classify_state",
     "decode_frame",
     "detect_running_version",
+    "distinct_values",
     "load_capture",
     "load_offset_index",
     "map_pymem_error",

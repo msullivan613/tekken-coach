@@ -32,12 +32,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 from tekken_coach.reader.decode import read_scalar, resolve_player_base
 from tekken_coach.reader.faults import ReaderError, classify_fault
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import OffsetTable
+from tekken_coach.reader.probe import ChangeRecord, PollSample
 from tekken_coach.reader.version import GAME_PROCESS_NAME
 
 DEFAULT_OFFSETS_DIR = "assets/offsets"
@@ -218,6 +220,44 @@ def _probe_row(
     return tuple(int(read_scalar(source, base + fields[n].offset, fields[n].kind)) for n in names)
 
 
+def _live_samples(
+    source: MemorySource, table: OffsetTable, names: list[str], interval: float, seconds: float
+) -> Iterator[PollSample]:  # pragma: no cover - live loop; the pure consumers are tested
+    """Poll both players forever (or for ``seconds``), yielding one :class:`PollSample` per instant.
+
+    The thin live shell over the tested pure core
+    (:func:`~tekken_coach.reader.probe.change_records`) — mirroring how ``poll_frames`` (live) feeds
+    ``evaluate_frames`` (pure). The chain is re-resolved every poll: the entity struct reallocates
+    on every round and character change, which is what the anchor exists to survive (docs/02 §3).
+    """
+    import time  # noqa: PLC0415
+
+    started = time.monotonic()
+    while seconds <= 0 or time.monotonic() - started < seconds:
+        rows = tuple(_probe_row(source, table, index, names) for index in (0, 1))
+        yield PollSample(t=time.monotonic() - started, rows=rows)
+        time.sleep(interval)
+
+
+def _format_change(record: ChangeRecord, names: list[str]) -> str:
+    """Render a change record as the aligned console row (same columns as the header)."""
+    row = "  ".join(f"{record.fields[n]:>18}" for n in names)
+    return f"{record.t:>7.2f}  P{record.player:<5}  {row}"
+
+
+def _skeleton_path(args: argparse.Namespace) -> Path | None:
+    """Where (if anywhere) the draft skeleton goes: ``--emit-skeleton`` wins, else auto on record.
+
+    ``--record foo.jsonl`` auto-emits ``foo.skeleton.json`` beside it, so the owner performs the
+    states once and walks away with both the observation log and the annotate-me draft.
+    """
+    if args.emit_skeleton:
+        return Path(args.emit_skeleton)
+    if args.record:
+        return Path(args.record).with_suffix(".skeleton.json")
+    return None
+
+
 def probe_state_main(args: argparse.Namespace) -> int:
     """Stream the raw encoded state words for both players (the docs/02 §8 calibration protocol).
 
@@ -227,13 +267,17 @@ def probe_state_main(args: argparse.Namespace) -> int:
     jab, eat a jab, get staggered, get thrown, ...) and reads off the raw values to bake into
     ``assets/offsets/state-map.json``.
 
+    ``--record <path>`` additionally appends one JSONL object per change to a reviewable log, and
+    (unless ``--emit-skeleton`` overrides the location) writes a draft state-map skeleton on exit
+    listing every distinct value observed per encoded field with empty flag lists — so the owner
+    annotates flags next to real values instead of alt-tabbing to transcribe integers by hand.
+
     Read-only and derivative: it resolves the same anchor the decoder uses and reads the same
     fields. It deliberately does **not** call ``decode_frame`` — that would need the very map we are
-    here to build.
+    here to build. It also never maps a value to a flag: that is the human's judgment (docs/02 §5).
     """
-    import time  # noqa: PLC0415
-
     from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
+    from tekken_coach.reader.probe import build_skeleton, change_records  # noqa: PLC0415
     from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
     from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
 
@@ -244,7 +288,8 @@ def probe_state_main(args: argparse.Namespace) -> int:
     except ReaderError as exc:
         return _report_fault(exc)
 
-    if table.state_codes.encoded_state is None:
+    spec = table.state_codes.encoded_state
+    if spec is None:
         print(
             f"offset table {version} has no encoded-state map; nothing to probe. Run "
             "`update-offsets --base-scan` first (it writes the state-word offsets into the table).",
@@ -253,30 +298,43 @@ def probe_state_main(args: argparse.Namespace) -> int:
         return 1
 
     names = _probe_targets(table)
+    encoded_fields = sorted(spec.flags)
     print(f"probing {len(names)} fields x 2 players (Ctrl-C to stop): {', '.join(names)}")
     print("perform one state at a time (block a jab, eat a jab, stagger, get thrown, jump, ...)")
     print(f"\n{'time':>7}  {'player':<6}  " + "  ".join(f"{n:>18}" for n in names))
 
-    previous: dict[int, tuple[int, ...]] = {}
-    started = time.monotonic()
+    skeleton_path = _skeleton_path(args)
+    # Opened once and closed in the finally below (its lifetime spans the whole poll loop), so a
+    # `with` block would not fit; flushed per line so a Ctrl-C loses at most a tail (docs/02 §8).
+    record_file = open(args.record, "w", encoding="utf-8") if args.record else None  # noqa: SIM115
+    observed: list[ChangeRecord] = []
     try:
-        while args.seconds <= 0 or time.monotonic() - started < args.seconds:
-            # The chain is re-resolved every poll: the entity struct reallocates on every round and
-            # character change, which is exactly what the anchor exists to survive (docs/02 §3).
-            try:
-                rows = [_probe_row(source, table, index, names) for index in (0, 1)]
-            except ReaderError as exc:
-                return _report_fault(exc)
-            for index, values in enumerate(rows):
-                if previous.get(index) == values:
-                    continue
-                previous[index] = values
-                elapsed = time.monotonic() - started
-                row = "  ".join(f"{v:>18}" for v in values)
-                print(f"{elapsed:>7.2f}  P{index + 1:<5}  {row}", flush=True)
-            time.sleep(args.interval)
+        for record in change_records(
+            _live_samples(source, table, names, args.interval, args.seconds), names
+        ):
+            print(_format_change(record, names), flush=True)
+            if record_file is not None:
+                # Flush per line: the run is Ctrl-C-terminated, so a lost tail is fine but a
+                # session-long buffer would lose everything on interrupt.
+                record_file.write(record.to_jsonl() + "\n")
+                record_file.flush()
+            if skeleton_path is not None:
+                observed.append(record)
+    except ReaderError as exc:
+        return _report_fault(exc)
     except KeyboardInterrupt:
         print("\nstopped.")
+    finally:
+        if record_file is not None:
+            record_file.close()
+
+    if args.record:
+        print(f"recorded observations -> {args.record}")
+    if skeleton_path is not None:
+        skeleton = build_skeleton(observed, encoded_fields)
+        skeleton_path.write_text(json.dumps(skeleton, indent=2) + "\n", encoding="utf-8")
+        print(f"draft skeleton (fill the flags, set calibrated:true) -> {skeleton_path}")
+
     print(
         "\nNow map the raw values into assets/offsets/state-map.json and set `calibrated: true` "
         "(docs/02 §8). Re-run `doctor` to confirm."
@@ -364,6 +422,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_probe.add_argument("--version", default=None, help="override detected version")
     p_probe.add_argument("--interval", type=float, default=0.05, help="poll interval, seconds")
     p_probe.add_argument("--seconds", type=float, default=0.0, help="stop after N seconds (0 = ∞)")
+    p_probe.add_argument(
+        "--record",
+        default=None,
+        help="append one JSONL object per observed change to this path (a reviewable observation "
+        "log), and — unless --emit-skeleton overrides the path — auto-write a draft state-map "
+        "skeleton beside it on exit. Removes the alt-tab/transcribe loop (docs/02 §8).",
+    )
+    p_probe.add_argument(
+        "--emit-skeleton",
+        default=None,
+        help="write the draft state-map skeleton to this path on exit (every distinct value seen "
+        "per encoded field, with empty flag lists for a human to annotate). Defaults to "
+        "<record>.skeleton.json when --record is given.",
+    )
     p_probe.set_defaults(func=probe_state_main)
 
     return parser
