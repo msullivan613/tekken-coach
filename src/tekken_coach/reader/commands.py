@@ -245,6 +245,18 @@ def _format_change(record: ChangeRecord, names: list[str]) -> str:
     return f"{record.t:>7.2f}  P{record.player:<5}  {row}"
 
 
+def _ensure_parent_dirs(*paths: Path | None) -> None:
+    """Create parent dirs for probe-state's output files (skip ``None`` and bare-filename paths).
+
+    Without this, the documented ``--record debug/state-obs.jsonl`` invocation crashes with a raw
+    ``FileNotFoundError`` when ``debug/`` is absent; ``update-offsets --debug-dir`` already mkdir's
+    its output the same way.
+    """
+    for out in paths:
+        if out is not None and out.parent != Path():
+            out.parent.mkdir(parents=True, exist_ok=True)
+
+
 def _skeleton_path(args: argparse.Namespace) -> Path | None:
     """Where (if anywhere) the draft skeleton goes: ``--emit-skeleton`` wins, else auto on record.
 
@@ -304,6 +316,9 @@ def probe_state_main(args: argparse.Namespace) -> int:
     print(f"\n{'time':>7}  {'player':<6}  " + "  ".join(f"{n:>18}" for n in names))
 
     skeleton_path = _skeleton_path(args)
+    # Create parent dirs for the outputs so the documented `--record debug/...` invocation does not
+    # crash when the dir is absent (mirrors update-offsets --debug-dir).
+    _ensure_parent_dirs(Path(args.record) if args.record else None, skeleton_path)
     # Opened once and closed in the finally below (its lifetime spans the whole poll loop), so a
     # `with` block would not fit; flushed per line so a Ctrl-C loses at most a tail (docs/02 §8).
     record_file = open(args.record, "w", encoding="utf-8") if args.record else None  # noqa: SIM115

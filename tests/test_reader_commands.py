@@ -100,6 +100,16 @@ def test_skeleton_path_prefers_explicit_then_derives_from_record() -> None:
     assert commands._skeleton_path(parser.parse_args(["probe-state"])) is None
 
 
+def test_ensure_parent_dirs_creates_missing_dirs(tmp_path: Path) -> None:
+    # The documented `--record debug/state-obs.jsonl` must not crash when `debug/` is absent.
+    record = tmp_path / "debug" / "state-obs.jsonl"
+    skeleton = tmp_path / "debug" / "state-obs.skeleton.json"
+    commands._ensure_parent_dirs(record, skeleton, None)
+    assert record.parent.is_dir()
+    # A bare filename (parent == "") and None are both no-ops, not errors.
+    commands._ensure_parent_dirs(Path("bare.jsonl"), None)
+
+
 def test_format_change_renders_aligned_columns() -> None:
     from tekken_coach.reader.probe import ChangeRecord
 
