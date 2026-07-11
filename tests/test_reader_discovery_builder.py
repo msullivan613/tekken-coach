@@ -156,7 +156,7 @@ def test_report_render_shows_derived_seeded_and_runbook() -> None:
     text = report.render()
     assert DETECTED_EXE_VERSION in text
     assert "char_id" in text and "frame_counter" in text
-    assert "P1(Jin)=1" in text and "P2(Kazuya)=12" in text
+    assert "P1(Jin)=1" in text and "P2(Kazuya)=8" in text
     # A seeded field appears in the calibration list, not the derived list.
     assert "seeded from table 2.01.01" in text
     assert "practice" in text.lower()  # the runbook rode along

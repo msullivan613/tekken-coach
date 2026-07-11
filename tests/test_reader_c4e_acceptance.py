@@ -67,6 +67,8 @@ from tests.fixtures.reader.state_map import calibrated_state_map
 from tests.fixtures.reader.ticking import TickingFlatSource
 
 DETECTED_EXE_VERSION = "5.02.01"
+# JIN/KAZUYA are the discovery-world ids; 12 is the shared factory's decode-frame char_id
+# (tests.factories.make_frame_record), which the doctor must also recognize.
 KNOWN_CHAR_IDS = {JIN, KAZUYA, 12}
 
 

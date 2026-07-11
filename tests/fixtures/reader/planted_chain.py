@@ -87,7 +87,7 @@ HEALTH_OFFSET = 0x60
 POS_OFFSET = 0x80
 
 JIN = 1
-KAZUYA = 12
+KAZUYA = 8  # tracks manifest.kazuya_char_id (real game memory id; the oracle finds P2 by it)
 ROUND_START_HEALTH = 200
 # The action the user performs between the snapshots: P1 jabs and jumps (move_id changes), and the
 # connecting jab drives P2's damage_taken off 0. This is the *behavioral* half of the C4f oracle —

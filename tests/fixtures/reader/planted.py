@@ -42,7 +42,7 @@ PLANTED_PLAYER_BASE_OFFSET = 0x10000  # distinct from the seed's 4096
 PLANTED_GLOBAL_BASE_OFFSET = 0x200  # distinct from the seed's 0
 
 JIN_CHAR_ID = 1
-KAZUYA_CHAR_ID = 12
+KAZUYA_CHAR_ID = 8  # tracks manifest.kazuya_char_id (real game memory id; oracle finds P2 by it)
 ROUND_START_HEALTH = 200
 
 # The planted player layout. Derived (discoverable) fields sit in the free high region so the seed's
