@@ -34,7 +34,7 @@ import json
 import sys
 from pathlib import Path
 
-from tekken_coach.reader.decode import read_scalar, resolve_anchor
+from tekken_coach.reader.decode import read_scalar, resolve_player_base
 from tekken_coach.reader.faults import ReaderError, classify_fault
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import OffsetTable
@@ -157,6 +157,7 @@ def update_offsets_main(args: argparse.Namespace) -> int:
         run_update_offsets,
         run_update_offsets_base,
         run_update_offsets_derive,
+        run_update_offsets_holder,
     )
 
     def act_prompt(message: str) -> None:
@@ -174,7 +175,10 @@ def update_offsets_main(args: argparse.Namespace) -> int:
         "act_prompt": act_prompt,
     }
     try:
-        if args.derive:
+        if args.holder_scan:
+            print("locating the player holder by its AoB code signature (T8 v3 model)...")
+            table, report = run_update_offsets_holder(args.process, progress=progress, **common)
+        elif args.derive:
             print("deriving the player layout from behavior (heap sweep; can take a minute)...")
             table, report = run_update_offsets_derive(args.process, progress=progress, **common)
         elif args.base_scan:
@@ -200,10 +204,10 @@ def _probe_targets(table: OffsetTable) -> list[str]:
 
 
 def _probe_row(
-    source: MemorySource, table: OffsetTable, anchor: int, index: int, names: list[str]
+    source: MemorySource, table: OffsetTable, index: int, names: list[str]
 ) -> tuple[int, ...]:
-    """Read one player's watched fields as raw integers."""
-    base = anchor + index * table.players.stride
+    """Read one player's watched fields as raw integers (under either addressing model)."""
+    base = resolve_player_base(source, table, index)
     fields = table.players.fields
     return tuple(int(read_scalar(source, base + fields[n].offset, fields[n].kind)) for n in names)
 
@@ -254,8 +258,7 @@ def probe_state_main(args: argparse.Namespace) -> int:
             # The chain is re-resolved every poll: the entity struct reallocates on every round and
             # character change, which is exactly what the anchor exists to survive (docs/02 §3).
             try:
-                anchor = resolve_anchor(source, table.players.anchor)
-                rows = [_probe_row(source, table, anchor, index, names) for index in (0, 1)]
+                rows = [_probe_row(source, table, index, names) for index in (0, 1)]
             except ReaderError as exc:
                 return _report_fault(exc)
             for index, values in enumerate(rows):
@@ -322,6 +325,14 @@ def build_parser() -> argparse.ArgumentParser:
         "Locates the entity struct on the heap by behavior, derives every field offset + stride + "
         "Jin's id, and reverse-scans for a static path that survives a round reset. Prefer this "
         "when the seeded --base-scan offsets have gone stale (a new season/patch).",
+    )
+    p_update.add_argument(
+        "--holder-scan",
+        action="store_true",
+        help="C4i: adopt the live T8 holder model — find the player holder by an AoB CODE "
+        "signature in .text (RIP-relative -> a .data slot), then read TWO per-player pointer slots "
+        "(holder+0x30 / +0x38) to separate allocations. This is what the current community tools "
+        "use; the AoB is patch-durable (re-source the pattern only if a patch moves the function).",
     )
     p_update.set_defaults(func=update_offsets_main)
 

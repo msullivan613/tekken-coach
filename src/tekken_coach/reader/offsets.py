@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from tekken_coach.reader.faults import OffsetTableError, UnknownGameVersionError
 
@@ -86,11 +86,18 @@ class ComponentAnchor(BaseModel):
     ``pointer_path`` is empty for the common one-hop case. Both players use the same component
     layout (the structs are symmetric), so one :class:`ComponentAnchor` serves P1 and P2 — the
     derivation confirms that by resolving the component for *both* before accepting it.
+
+    ``fields`` defaults to empty because the same "deref a pointer slot (+ optional chain)" shape
+    also expresses a **per-player anchor** (C4i, docs/02 §3): Tekken 8's real model is a holder
+    object with two pointer slots to *separate* P1/P2 allocations (``holder+0x30`` and
+    ``holder+0x38``), not one array with a constant stride. There the landing *is* the player base
+    and the fields are :attr:`PlayerStruct.fields`, so the slot carries no fields of its own (see
+    :attr:`PlayerStruct.player_slots`).
     """
 
     slot_offset: int  # byte offset of the pointer slot within the player struct
     pointer_path: list[int] = Field(default_factory=list)
-    fields: dict[str, FieldSpec]
+    fields: dict[str, FieldSpec] = Field(default_factory=dict)
 
 
 class EncodedStateSpec(BaseModel):
@@ -141,13 +148,26 @@ class AobSignature(BaseModel):
 
     ``base_offset`` shifts every build, but the bytes *around* the static pointer slot are stable,
     so ``update-offsets`` stores the surrounding window as a wildcard AOB pattern (docs/02 §3, C4d).
-    A re-run scans the module's data sections for ``pattern`` and recovers the slot at
-    ``match_address + slot_delta`` — a fast path that skips the full candidate scan. This is
-    facts/data (docs/02 §5), not code; the decoder ignores it (it resolves via ``base_offset``).
+    A re-run scans the module for ``pattern`` and recovers the slot — a fast path that skips the
+    full candidate scan. This is facts/data (docs/02 §5), not code; the decoder ignores it (it
+    resolves via ``base_offset``).
+
+    Two re-find modes, one per re-discovery technique:
+
+    * **data-adjacent** (``disp32_pos is None``, the C4d default): the pattern matches the ``.data``
+      bytes surrounding the pointer slot and the slot sits at ``match_rva + slot_delta``.
+    * **RIP-relative code** (``disp32_pos`` set, C4i): the pattern matches an *instruction* in
+      ``.text`` that references the slot with a 32-bit RIP-relative displacement. The displacement
+      is an ``i32`` embedded in the match at byte ``disp32_pos``, and the slot is at
+      ``match_rva + disp32_pos + 4 + disp32`` (x64 RIP is the address of the *next* instruction, so
+      the 4 displacement bytes end the reference). This is the durable, self-healing anchor every
+      community tool uses — an AOB over a function body survives most patches (docs/02 §3, the T8
+      holder model).
     """
 
-    pattern: str  # wildcard AOB, e.g. "48 8B ?? ?? ?? ?? ?? 89" (the pointer bytes wildcarded)
-    slot_delta: int  # offset from a pattern match to the pointer slot (the static base_offset)
+    pattern: str  # wildcard AOB, e.g. "4C 89 35 ?? ?? ?? ?? 41 88 5E 28" (disp32 wildcarded)
+    slot_delta: int = 0  # data-adjacent: offset from a match to the pointer slot
+    disp32_pos: int | None = None  # RIP-relative: byte offset of the i32 displacement in the match
 
 
 class Anchor(BaseModel):
@@ -175,25 +195,58 @@ class GlobalStruct(BaseModel):
 
 
 class PlayerStruct(BaseModel):
-    """The per-player struct: a base anchor, the array ``stride`` between players, and fields.
+    """The per-player struct: how to reach each player's base, plus the shared field layout.
+
+    Two addressing models, exactly one of which a table uses (enforced below):
+
+    * **stride** (C4c/C4d, the fork's model): :attr:`anchor` resolves P1's base and P2 sits a
+      constant ``stride`` bytes later — one array, two players.
+    * **player_slots** (C4i, Tekken 8's real model): :attr:`anchor` resolves a **holder object**,
+      and each player's base is dereferenced from its own pointer slot inside it (``holder+0x30``
+      for P1, ``holder+0x38`` for P2 — two *separate* allocations, not an array). Each slot is a
+      :class:`ComponentAnchor` (deref slot + optional chain) whose landing is the player base; its
+      fields come from :attr:`fields`, so the slot itself carries none. This is what the live game
+      does (Irony/opendojo, verified on T8 v3.00.02), and ``--base-scan``'s single-anchor+stride
+      model cannot express it.
 
     ``max_health`` (optional) switches health to a **computed** field: Tekken 8's entity struct
-    stores ``damage_taken`` (rising from 0), not current HP (docs/02 §3, confirmed live — the HP
-    value lives in a separate subsystem). When set, the decoder reads the ``damage_taken`` field
-    and reports ``health = max_health - damage_taken``; when ``None`` (the C4c/legacy path) it reads
-    a direct ``health`` field. This is the fork's own health model.
+    stores ``damage_taken`` (rising from 0), not current HP (docs/02 §3, confirmed live — HP is
+    encrypted in a separate subsystem). When set, the decoder reads ``damage_taken`` and reports
+    ``health = max_health - damage_taken``; when ``None`` (the C4c/legacy path) it reads a direct
+    ``health`` field. This is the fork's own health model.
 
     ``components`` (optional) holds fields that are **not** in the entity struct but in a separate
     object it points at — on Tekken 8 that is ``pos_{x,y,z}``, in the
-    :data:`POSITION_COMPONENT` transform (see :class:`ComponentAnchor`). Empty on the C4c/legacy
-    path, where position is a plain in-struct field.
+    :data:`POSITION_COMPONENT` transform (see :class:`ComponentAnchor`), resolved relative to each
+    player's base. Empty on the C4c/legacy path, where position is a plain in-struct field.
     """
 
     anchor: Anchor
-    stride: int
+    stride: int | None = None
+    player_slots: list[ComponentAnchor] = Field(default_factory=list)
     fields: dict[str, FieldSpec]
     max_health: int | None = None
     components: dict[str, ComponentAnchor] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _one_addressing_model(self) -> PlayerStruct:
+        """Exactly one addressing model: a constant ``stride`` *or* per-player ``player_slots``.
+
+        A table that sets neither cannot place P2 (or P1); a table that sets both is ambiguous about
+        which the decoder should trust. Both are silent-garbage risks, so reject at load time.
+        """
+        if self.player_slots:
+            if self.stride is not None:
+                raise ValueError(
+                    "PlayerStruct sets both stride and player_slots; use one addressing model "
+                    "(stride for the C4c/C4d array layout, player_slots for the C4i holder layout)"
+                )
+        elif self.stride is None:
+            raise ValueError(
+                "PlayerStruct sets neither stride nor player_slots; one is required to locate the "
+                "players (stride = P2 at P1+stride; player_slots = holder+slot per player)"
+            )
+        return self
 
 
 class StateCodes(BaseModel):

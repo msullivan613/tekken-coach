@@ -325,10 +325,29 @@ def _decode_input(
     return InputState(dir=direction, buttons=buttons)
 
 
+def resolve_player_base(source: MemorySource, table: OffsetTable, index: int) -> int:
+    """Resolve one player's struct base under whichever addressing model the table uses (§3).
+
+    * ``player_slots`` (C4i holder model): :attr:`~.offsets.PlayerStruct.anchor` resolves the holder
+      object and the player base is dereferenced from that player's slot (``holder+0x30`` /
+      ``holder+0x38`` — separate allocations).
+    * ``stride`` (C4c/C4d array model): the anchor resolves P1 and P2 sits ``index * stride`` later.
+
+    The schema guarantees exactly one model is set (:meth:`PlayerStruct._one_addressing_model`), so
+    the ``player_slots`` branch is taken iff the table carries per-player slots.
+    """
+    players = table.players
+    if players.player_slots:
+        holder_base = resolve_anchor(source, players.anchor)
+        return resolve_component(source, holder_base, players.player_slots[index])
+    assert players.stride is not None  # validated: stride set when there are no player_slots
+    return resolve_anchor(source, players.anchor) + index * players.stride
+
+
 def _decode_player(source: MemorySource, table: OffsetTable, index: int) -> PlayerFrame:
     players = table.players
     fields = players.fields
-    base = resolve_anchor(source, players.anchor) + index * players.stride
+    base = resolve_player_base(source, table, index)
 
     def i(name: str) -> int:
         spec = _field(fields, name)
@@ -542,4 +561,5 @@ __all__ = [
     "read_state_signal",
     "resolve_anchor",
     "resolve_component",
+    "resolve_player_base",
 ]

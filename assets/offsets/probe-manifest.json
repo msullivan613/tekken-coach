@@ -225,5 +225,40 @@
     "max_paths": 32,
     "aob_window_before": 16,
     "aob_window_after": 16
+  },
+
+  "_holder_scan_comment": [
+    "C4i holder derivation (docs/02 §3): `update-offsets --holder-scan`. Adopts the model the LIVE",
+    "T8 game actually uses, per three independent current community tools (tomislav-ivankovic/Irony,",
+    "sirmammingtonham/opendojo — verified live on v3.00.02 —, ParadiseAigo/Tekken-8-Frames-To-Speech).",
+    "The players are NOT a single-anchor + stride array: they hang off a HOLDER object by two",
+    "per-player pointer slots to SEPARATE allocations, and the holder's own .data slot is found by an",
+    "AoB CODE signature in .text with a RIP-relative displacement. Neither --base-scan (its stride",
+    "validation cannot express two separate allocations) nor --derive can express this. Everything",
+    "here is FACTS/DATA (docs/02 §5), usable with attribution — do NOT copy the tools' code.",
+    "",
+    "`aob_pattern` matches the storing instruction MOV [rip+disp32], r14 ; MOV [r14+0x28], BL; the",
+    "disp32 is wildcarded (4 bytes at `disp32_pos` = 3). The slot RVA is match + disp32_pos + 4 +",
+    "disp32 (x64 RIP = next instruction). `holder_slots` [48, 56] = 0x30 (P1), 0x38 (P2). The oracle",
+    "fields are the SAME community offsets --base-scan uses: char_id 0x168 (360; STILL CURRENT),",
+    "move_id 0x528 (1320; fork candidate — validated behaviorally), damage_taken 0x1260 (4704; HP is",
+    "ENCRYPTED on T8, so health is computed = round_start_health - damage_taken). `round_gate_offset`",
+    "0x15C0 (5568) is frames_since_round_start (0 during intro). `jin_char_id` 6 and kazuya 12 are",
+    "the round-start oracle: unlike --base-scan (which DISCOVERS Jin's id), the current sources state",
+    "it, so it is validated. The state-word offsets, the legacy booleans they supersede, the",
+    "transform component scan, and the global/match anchor are REUSED from base_scan / global_scan",
+    "(shared DATA). If a patch moves the storing function, re-source aob_pattern from a current tool",
+    "and re-run — that is the only maintenance the AoB approach needs (it is self-healing otherwise)."
+  ],
+  "holder_scan": {
+    "aob_pattern": "4C 89 35 ?? ?? ?? ?? 41 88 5E 28",
+    "disp32_pos": 3,
+    "holder_slots": [48, 56],
+    "char_id_offset": 360,
+    "move_id_offset": 1320,
+    "damage_taken_offset": 4704,
+    "round_gate_offset": 5568,
+    "jin_char_id": 6,
+    "round_start_health": 200
   }
 }

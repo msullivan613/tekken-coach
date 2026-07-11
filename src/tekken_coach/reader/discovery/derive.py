@@ -71,6 +71,10 @@ class DerivationResult:
     module: str
     module_base: int
     stride: int | None = None
+    # C4i: per-player pointer slots off a holder object (holder+0x30 / +0x38), the T8 model that
+    # replaces the single-anchor + stride array. Mutually exclusive with `stride` — a derivation
+    # resolves the players by one model or the other, never both (PlayerStruct enforces it).
+    player_slots: list[ComponentAnchor] = field(default_factory=list)
     player_anchor: Anchor | None = None
     global_anchor: Anchor | None = None
     player_char_ids: tuple[int, int] | None = None  # (p0 = Jin, p1 = Kazuya)
@@ -90,12 +94,17 @@ class DerivationResult:
     drop_player_fields: list[str] = field(default_factory=list)
 
     @property
+    def has_player_addressing(self) -> bool:
+        """Whether the players can be located: a constant stride *or* per-player slots (C4i)."""
+        return self.stride is not None or bool(self.player_slots)
+
+    @property
     def ok(self) -> bool:
-        """Whether the confident core resolved (both struct anchors + a stride)."""
+        """Whether the confident core resolved (both anchors + a way to locate the players)."""
         return (
             self.player_anchor is not None
             and self.global_anchor is not None
-            and self.stride is not None
+            and self.has_player_addressing
             and not self.unresolved
         )
 

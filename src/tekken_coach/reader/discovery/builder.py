@@ -53,9 +53,14 @@ def build_offset_table(
     missing the confident core (no anchors/stride) — we never emit a table that omits the fields the
     doctor must validate.
     """
-    if result.player_anchor is None or result.global_anchor is None or result.stride is None:
+    if (
+        result.player_anchor is None
+        or result.global_anchor is None
+        or not result.has_player_addressing
+    ):
         raise OffsetTableError(
-            "derivation did not resolve the confident core (player/global anchors + stride); "
+            "derivation did not resolve the confident core (player/global anchors + a way to "
+            "locate the players: a stride or per-player slots); "
             f"unresolved: {result.unresolved or 'anchors'}. Cannot build a candidate table — "
             "widen the scan windows in the probe manifest and re-run (see runbook)."
         )
@@ -70,9 +75,12 @@ def build_offset_table(
         player_fields.pop(name, None)
     # max_health (when set) makes the decoder compute health = max_health - damage_taken instead of
     # reading a direct HP field (docs/02 §3 — T8's struct has no HP field, only damage_taken).
+    # Exactly one addressing model is carried: the C4i holder derivation yields player_slots (and no
+    # stride), the C4c/C4d derivations yield a stride (and no slots) — PlayerStruct enforces it.
     players = PlayerStruct(
         anchor=result.player_anchor,
         stride=result.stride,
+        player_slots=list(result.player_slots),
         fields=player_fields,
         max_health=result.max_health if result.max_health is not None else seed.players.max_health,
         components=result.components or dict(seed.players.components),

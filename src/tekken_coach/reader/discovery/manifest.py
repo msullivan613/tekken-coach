@@ -221,6 +221,53 @@ class DeriveScanSpec(BaseModel):
     aob_window_after: int = 16
 
 
+class HolderScanSpec(BaseModel):
+    """Drives C4i's **holder** derivation — the model the live T8 game actually uses (docs/02 §3).
+
+    Three independent community tools (Irony, opendojo verified on T8 v3.00.02, ParadiseAigo) agree
+    that the player structs are **not** a single-anchor + stride array. They hang off a *holder*
+    object by two per-player pointer slots, each to a **separate** allocation, and the holder's own
+    ``.data`` slot is found by an **AoB code signature** with a RIP-relative displacement — the
+    patch-durable, self-healing anchor every tool uses. Neither ``--base-scan`` (its stride
+    validation cannot express two separate allocations) nor ``--derive`` can express this, so C4i
+    adds it. Everything here is facts/data (docs/02 §5), attributable to those tools — not code.
+
+    * ``aob_pattern`` — the wildcard AoB matching the *instruction* in ``.text`` that stores the
+      holder pointer; the RIP-relative ``disp32`` is wildcarded. For v3.00.02 this is
+      ``4C 89 35 ?? ?? ?? ?? 41 88 5E 28`` (``MOV [rip+disp32], r14 ; MOV [r14+0x28], BL``).
+    * ``disp32_pos`` — the byte offset of the ``i32`` displacement within a match (3 for that
+      pattern); the slot is at ``match_rva + disp32_pos + 4 + disp32`` (see :class:`AobSignature`).
+    * ``holder_slots`` — the per-player pointer-slot offsets inside the holder, in P1..P2 order
+      (``[0x30, 0x38]``). ``holder + slot`` dereferences to that player's struct base.
+    * ``char_id_offset`` / ``move_id_offset`` / ``damage_taken_offset`` — the oracle fields inside
+      each player struct: at round start P1 reads ``jin_char_id``, P2 reads
+      :attr:`ProbeManifest.kazuya_char_id`, move ids are plausible, and ``damage_taken`` is 0.
+    * ``round_gate_offset`` — ``frames_since_round_start`` (0 during the intro); a clean
+      round-active gate. Read for validation, not emitted as a table field (``PlayerFrame`` has no
+      home for it).
+    * ``jin_char_id`` — Jin's id (6 on current builds). Unlike ``--base-scan`` (which *discovers*
+      Jin's id), the current community sources state it, so it is validated rather than derived.
+    * ``round_start_health`` — full HP; health is computed as ``round_start_health - damage_taken``
+      because HP is encrypted on T8 (confirmed by Irony/opendojo).
+
+    The within-struct **state-word offsets**, the **legacy** booleans they supersede, and the
+    **transform component** scan are the *same* facts the base scan carries, so C4i reuses
+    :attr:`ProbeManifest.base_scan`'s ``state_fields`` / ``legacy_state_fields`` /
+    ``component_scan`` rather than duplicating them, and the **global/match** anchor reuses
+    :attr:`ProbeManifest.global_scan`.
+    """
+
+    aob_pattern: str
+    disp32_pos: int = 3
+    holder_slots: list[int]
+    char_id_offset: int
+    move_id_offset: int
+    damage_taken_offset: int
+    round_gate_offset: int
+    jin_char_id: int
+    round_start_health: int = 200
+
+
 class ProbeManifest(BaseModel):
     """Everything the re-discovery search needs, as an editable data file (docs/02 §4)."""
 
@@ -230,6 +277,12 @@ class ProbeManifest(BaseModel):
     # --- C4d code-signature base derivation (heap struct via a static pointer + chain) ---
     # Optional so the C4c value-scan path loads without it; required for the C4d base scan.
     base_scan: BaseScanSpec | None = None
+
+    # --- C4i holder derivation (AoB code-sig -> holder object -> two per-player pointer slots) ---
+    # Optional so the C4c/C4d/C4h manifests load without it; required for `update-offsets --holder-
+    # scan`. Reuses base_scan.state_fields / .legacy_state_fields / .component_scan and global_scan
+    # for the within-struct state, position, and match anchor (those are shared DATA facts).
+    holder_scan: HolderScanSpec | None = None
 
     # --- C4e global/match anchor derivation (the same technique, one struct over) ---
     global_scan: GlobalScanSpec | None = None
