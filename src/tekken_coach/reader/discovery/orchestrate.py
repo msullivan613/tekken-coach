@@ -906,14 +906,29 @@ def run_update_offsets_holder(
             spec=manifest.global_scan,
         )
 
+    # Freeze the player structs at EACH sample instant. `_sampling_window` yields the live handle,
+    # but `confirm_holder` reads `during` only after the window closes — by then move_id has idled
+    # back, so live references would all read the same post-window value and the behavioral oracle
+    # would never see a change (the transient move_id is gone). A per-sample snapshot of the two
+    # struct spans captures move_id AT that instant; the holder/slot pointers are stable within a
+    # round, so we layer over the live handle for the chain resolution and freeze only the fields.
+    # This mirrors `frozen_before`/`frozen_after` above (and the C4h derive path's freeze).
+    span = manifest.base_scan.struct_span if manifest.base_scan is not None else 0
     during: list[MemorySource] = []
-    for sample in _sampling_window(
+    for _sample in _sampling_window(
         live,
         seconds=manifest.action_window_seconds,
         interval=manifest.action_sample_interval,
         progress=progress,
     ):
-        during.append(sample)
+        frozen_sample: list[Region] = []
+        if holder is not None and span:
+            for base in holder.player_bases:
+                try:
+                    frozen_sample.append(Region(base=base, data=live.read(base, span)))
+                except MemoryReadError:
+                    continue
+        during.append(LayeredMemorySource(frozen_sample, live) if frozen_sample else live)
     elapsed = time.monotonic() - opened
 
     global_located = None
