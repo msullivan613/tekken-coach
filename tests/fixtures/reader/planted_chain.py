@@ -81,8 +81,8 @@ _HEAP_SPAN = 0x28000
 
 # --- planted field layout (oracle offsets are the seed facts; health/pos are discoverable) ---
 CHAR_ID_OFFSET = 0x168
-MOVE_ID_OFFSET = 0x528
-DAMAGE_OFFSET = 0x1260
+MOVE_ID_OFFSET = 0x550  # tracks manifest move_id_offset (real 5.02.01; fork's 0x528 was stale)
+DAMAGE_OFFSET = 0x1578  # tracks manifest damage_taken_offset (real 5.02.01 damage accumulator)
 HEALTH_OFFSET = 0x60
 POS_OFFSET = 0x80
 

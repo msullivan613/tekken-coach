@@ -14,7 +14,7 @@ that references it RIP-relative. This fixture plants exactly that world in a
   constant stride relates them, which is the whole point: the stride model cannot express this.
 
 Each player struct carries the oracle fields at the community layout offsets (``char_id`` 0x168,
-``move_id`` 0x528, ``damage_taken`` 0x1260) and a pointer to a per-player **transform component**
+``move_id`` 0x550, ``damage_taken`` 0x1578) and a pointer to a per-player **transform component**
 holding the moving position triple (position is not in the entity struct on T8). The global/match
 struct is the same one the base-scan fixtures use, behind its own static slot + chain, so the global
 oracle is exercised unchanged.

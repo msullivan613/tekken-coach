@@ -276,7 +276,7 @@ def test_oracle_field_offsets_come_from_the_seed_layout() -> None:
     result = _derive()
     fields = result.player_offsets()
     assert fields["char_id"].offset == 0x168
-    assert fields["move_id"].offset == 0x528
+    assert fields["move_id"].offset == MOVE_ID_OFFSET
 
 
 def test_no_match_when_the_chain_shape_is_wrong() -> None:

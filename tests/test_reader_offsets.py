@@ -22,6 +22,24 @@ def test_checked_in_index_loads() -> None:
     index = load_offset_index(REPO_OFFSETS)
     assert index.detected_version == "2.01.01"
     assert "2.01.01" in index.versions
+    # The live-derived build 5.02.01 is registered so the reader selects it (docs/02 §3) instead of
+    # failing closed on the running game; the marker stays the movemap-aligned 2.01.01.
+    assert "5.02.01" in index.versions
+
+
+def test_checked_in_5_02_01_table_is_the_validated_holder_model() -> None:
+    # The table `update-offsets --holder-scan` wrote and `doctor` validated live on 5.02.01. It uses
+    # the holder addressing model (per-player slots + an AoB code signature), not the legacy stride.
+    table = select_offset_table("5.02.01", REPO_OFFSETS)
+    assert table.game_version == "5.02.01"
+    assert table.known_char_ids == [6, 8]  # Jin, Kazuya — the memory id space the doctor checks
+    assert table.players.stride is None
+    assert [s.slot_offset for s in table.players.player_slots] == [0x30, 0x38]
+    assert table.players.anchor.signature is not None  # the durable AoB anchor
+    assert table.players.fields["move_id"].offset == 0x550
+    assert table.players.fields["damage_taken"].offset == 0x1578
+    # position lives in the transform component, not the entity struct (docs/02 §3)
+    assert "transform" in table.players.components
 
 
 def test_checked_in_table_aligns_with_c1_game_version() -> None:

@@ -34,10 +34,12 @@ from tekken_coach.reader.discovery.scanners import Region
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import POSITION_COMPONENT, OffsetTable, load_offset_table
 from tests.fixtures.reader.planted_chain import (
+    DAMAGE_OFFSET,
     JIN,
     KAZUYA,
     MODULE,
     MODULE_BASE,
+    MOVE_ID_OFFSET,
     P1_BASE,
     STRIDE,
     HeapCaptures,
@@ -91,7 +93,7 @@ def test_locate_entity_layout_derives_jin_id_stride_and_move_id() -> None:
     assert layout.stride == STRIDE
     assert layout.p1_char == P1_BASE + 0x168
     # move_id is the acting-correlated field the window revealed; its offset is derived, not seeded.
-    assert layout.move_id_addr == P1_BASE + 0x528
+    assert layout.move_id_addr == P1_BASE + MOVE_ID_OFFSET
     assert layout.behavior.accepted
 
 
@@ -190,9 +192,9 @@ def test_derive_layout_scan_resolves_the_full_layout() -> None:
     struct_base = resolve_anchor(caps.before, result.player_anchor)
     fields = {f.name: f for f in result.fields if f.scope == "player"}
     assert struct_base + fields["char_id"].offset == P1_BASE + 0x168
-    assert struct_base + fields["move_id"].offset == P1_BASE + 0x528
+    assert struct_base + fields["move_id"].offset == P1_BASE + MOVE_ID_OFFSET
     # damage_taken is DERIVED from the landed jab (0 -> >0), not seeded.
-    assert struct_base + fields["damage_taken"].offset == P1_BASE + 0x1260
+    assert struct_base + fields["damage_taken"].offset == P1_BASE + DAMAGE_OFFSET
     assert fields["damage_taken"].confidence.value == "high"
     assert result.max_health == 200  # computed health = round_start_health - damage_taken
     # position moved out to the transform component.
