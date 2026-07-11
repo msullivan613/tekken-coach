@@ -39,6 +39,7 @@ Nothing here writes, injects, or renders — it only reads and returns data (doc
 from __future__ import annotations
 
 import struct
+import time
 from dataclasses import dataclass
 
 from tekken_coach.reader.faults import DecodeError, MemoryReadError
@@ -532,18 +533,28 @@ class FrameReader:
         return FrameRead(frame=record, gap=gap, gap_note=note)
 
 
-def poll_frames(source: MemorySource, table: OffsetTable, count: int) -> list[FrameRead]:
+def poll_frames(
+    source: MemorySource, table: OffsetTable, count: int, *, interval: float = 0.0
+) -> list[FrameRead]:
     """Poll ``count`` successive frames from ``source`` through a fresh :class:`FrameReader`.
 
     The unit the doctor (docs/02 §6) uses to gather several frames over time. Propagates
     :class:`~tekken_coach.reader.faults.MemoryReadError` if the process becomes unreadable
     mid-poll (a process-lost fault, docs/02 §7); it does not swallow it, so callers can classify.
+
+    ``interval`` sleeps that many seconds *between* reads. It defaults to 0 (back-to-back) for the
+    offline suite, whose scripted source advances one frame per read; against a **live** process it
+    must be non-zero, because a real game only updates its frame counter every ~16.7 ms (60 fps), so
+    reads faster than that all observe the *same* frame and the doctor's monotonic-frame / motion
+    checks would falsely fail on a perfectly live game.
     """
     if count < 1:
         raise ValueError("count must be >= 1")
     reader = FrameReader()
     frames: list[FrameRead] = []
-    for _ in range(count):
+    for i in range(count):
+        if interval > 0 and i > 0:
+            time.sleep(interval)
         frames.append(reader.read_frame(source, table))
     return frames
 

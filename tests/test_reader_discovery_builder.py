@@ -76,6 +76,10 @@ def test_build_overlays_derived_offsets_on_seed() -> None:
     assert table.state_codes == seed.state_codes
     assert table.sanity == seed.sanity
     assert table.game_version == DETECTED_EXE_VERSION
+    # The calibrated memory char ids ride onto the table so the doctor validates against the id
+    # space the reader reads (P1=Jin, P2=Kazuya), not the movemap space (docs/02 §6).
+    assert table.known_char_ids == list(result.player_char_ids or ())
+    assert table.known_char_ids == [1, 8]
 
 
 def test_build_refuses_without_the_confident_core() -> None:

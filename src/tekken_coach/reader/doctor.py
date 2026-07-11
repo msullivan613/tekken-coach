@@ -199,15 +199,21 @@ def run_doctor(
     *,
     known_char_ids: set[int],
     frames: int = DEFAULT_DOCTOR_FRAMES,
+    poll_interval: float = 0.0,
 ) -> DoctorReport:
     """Poll ``frames`` frames from ``source`` and run the §6 self-check.
 
     A :class:`~tekken_coach.reader.faults.MemoryReadError` while polling is itself a failed gate
     (the process was unreadable) — it is caught and reported as a failed check rather than raised,
     so a caller always gets a report to act on.
+
+    ``poll_interval`` spaces the reads in time (seconds). It must be non-zero against a **live**
+    game, whose frame counter only ticks every ~16.7 ms — back-to-back reads would all see the same
+    frame and fail :func:`_check_frame_monotonic` on a healthy process. The offline suite leaves it
+    at 0 (its scripted source advances one frame per read).
     """
     try:
-        polled = poll_frames(source, table, frames)
+        polled = poll_frames(source, table, frames, interval=poll_interval)
     except MemoryReadError as exc:
         return DoctorReport(checks=[DoctorCheck("process_readable", False, str(exc))])
     return evaluate_frames(polled, table=table, known_char_ids=known_char_ids)

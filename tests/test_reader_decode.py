@@ -265,3 +265,26 @@ def test_poll_frames_no_gap_on_contiguous_stream(table: OffsetTable) -> None:
     reads = poll_frames(source, table, 5)
     assert [r.frame.frame for r in reads] == [500, 501, 502, 503, 504]
     assert all(r.gap == 0 and r.gap_note is None for r in reads)
+
+
+def test_poll_frames_spaces_reads_by_the_interval(
+    table: OffsetTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A live game only ticks its frame counter every ~16.7 ms; back-to-back reads see the same frame
+    # and would fail the doctor's monotonic check on a healthy process. `interval` sleeps BETWEEN
+    # reads (count-1 times), never before the first or after the last.
+    slept: list[float] = []
+    monkeypatch.setattr("tekken_coach.reader.decode.time.sleep", slept.append)
+    frames = [make_frame_record().model_copy(update={"frame": 600 + i}) for i in range(4)]
+    poll_frames(_source_for(frames, table), table, 4, interval=0.05)
+    assert slept == [0.05, 0.05, 0.05]
+
+
+def test_poll_frames_does_not_sleep_when_interval_is_zero(
+    table: OffsetTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slept: list[float] = []
+    monkeypatch.setattr("tekken_coach.reader.decode.time.sleep", slept.append)
+    frames = [make_frame_record().model_copy(update={"frame": 700 + i}) for i in range(3)]
+    poll_frames(_source_for(frames, table), table, 3)
+    assert slept == []

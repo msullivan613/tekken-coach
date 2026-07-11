@@ -102,8 +102,12 @@ def doctor_main(args: argparse.Namespace) -> int:
         version = args.version or detect_running_version(args.process)
         print(f"detected game version: {version}")
         table = select_offset_table(version, args.offsets)
-        known = _load_known_char_ids(args.movemap)
-        report = run_doctor(source, table, known_char_ids=known, frames=args.frames)
+        # The table records the memory char ids it was calibrated with (docs/02 §6); prefer those
+        # over the movemap index, whose ids are a different (framedata) space and may be empty.
+        known = set(table.known_char_ids) or _load_known_char_ids(args.movemap)
+        report = run_doctor(
+            source, table, known_char_ids=known, frames=args.frames, poll_interval=args.interval
+        )
     except ReaderError as exc:
         return _report_fault(exc)
 
@@ -297,6 +301,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("--movemap", default=DEFAULT_MOVEMAP_DIR)
     p_doctor.add_argument("--version", default=None, help="override detected version")
     p_doctor.add_argument("--frames", type=int, default=8)
+    p_doctor.add_argument(
+        "--interval",
+        type=float,
+        default=0.05,
+        help="seconds between frame polls (default 0.05). Must exceed one game frame (~0.017s at "
+        "60 fps) or the live frame counter looks frozen and frame_monotonic falsely fails.",
+    )
     p_doctor.set_defaults(func=doctor_main)
 
     p_capture = sub.add_parser("capture", help="capture N frames to a JSON fixture")

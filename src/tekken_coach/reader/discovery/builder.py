@@ -112,6 +112,10 @@ def build_offset_table(
         players=players,
         state_codes=state_codes,
         sanity=seed.sanity,
+        # Record the calibrated memory char ids so the doctor validates against the id space the
+        # reader reads (Jin/Kazuya), not the movemap space (docs/02 §6); empty if the scan could
+        # not resolve them (the doctor then falls back to the movemap index).
+        known_char_ids=list(result.player_char_ids) if result.player_char_ids is not None else [],
     )
 
 

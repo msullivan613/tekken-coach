@@ -291,6 +291,12 @@ class OffsetTable(BaseModel):
     players: PlayerStruct
     state_codes: StateCodes
     sanity: SanityBounds
+    # The game-MEMORY char ids this table was calibrated with (P1=Jin, P2=Kazuya), recorded by the
+    # discovery so the doctor's char-id check (docs/02 §6) validates against the memory id space the
+    # reader actually reads — NOT the movemap/framedata id space (a separate space; the memory->slug
+    # roster is a C5 gap). Empty on older/hand-written tables; the doctor then falls back to the
+    # movemap index.
+    known_char_ids: list[int] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
