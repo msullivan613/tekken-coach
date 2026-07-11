@@ -33,18 +33,22 @@ from tekken_coach.reader.offsets import (
     select_offset_table,
 )
 from tekken_coach.schemas import ActionState, MatchState
-from tests.fixtures.reader.planted_chain import MODULE, MODULE_BASE, ROUND_START_HEALTH
+from tests.fixtures.reader.planted_chain import (
+    KAZUYA,
+    MODULE,
+    MODULE_BASE,
+    P1_POS_BEFORE,
+    ROUND_START_HEALTH,
+    component_frame,
+)
 from tests.fixtures.reader.planted_holder import (
     AOB_PATTERN,
     DISP32_POS,
     HOLDER_SLOT_RVA,
     HOLDER_SLOTS,
     JIN,
-    KAZUYA,
     P1_BASE,
-    P1_POS_BEFORE,
     P2_BASE,
-    component_frame,
     holder_decode_source,
     planted_holder,
     resolved_player_bases,

@@ -33,15 +33,13 @@ from tekken_coach.reader.offsets import (
     PlayerStruct,
     load_offset_table,
 )
-from tests.fixtures.reader.planted_chain import MODULE, MODULE_BASE
+from tests.fixtures.reader.planted_chain import KAZUYA, MODULE, MODULE_BASE, P1_MOVE_ID
 from tests.fixtures.reader.planted_holder import (
     AOB_PATTERN,
     DISP32_POS,
     HOLDER_SLOT_RVA,
     JIN,
-    KAZUYA,
     P1_BASE,
-    P1_MOVE_ID,
     P2_BASE,
     no_holder_source,
     planted_holder,
@@ -107,9 +105,9 @@ def test_find_holder_slot_returns_none_when_the_signature_is_absent() -> None:
 
 def test_resolve_holder_reads_both_players_and_the_char_id_pair() -> None:
     source = planted_holder().before
-    match = resolve_holder(
-        source, MODULE_BASE, HOLDER_SLOT_RVA, _manifest().holder_scan, _manifest()
-    )
+    m = _manifest()
+    assert m.holder_scan is not None
+    match = resolve_holder(source, MODULE_BASE, HOLDER_SLOT_RVA, m.holder_scan, m)
     assert match is not None
     assert match.player_bases == (P1_BASE, P2_BASE)
     assert set(match.char_ids) == {JIN, KAZUYA}
@@ -119,6 +117,7 @@ def test_resolve_holder_reads_both_players_and_the_char_id_pair() -> None:
 def test_confirm_holder_accepts_when_the_acting_move_id_changed() -> None:
     world = planted_holder()
     m = _manifest()
+    assert m.holder_scan is not None
     match = resolve_holder(world.before, MODULE_BASE, HOLDER_SLOT_RVA, m.holder_scan, m)
     assert match is not None
     behavior = confirm_holder(
@@ -131,6 +130,7 @@ def test_confirm_holder_accepts_when_the_acting_move_id_changed() -> None:
 def test_confirm_holder_rejects_a_frozen_move_id() -> None:
     world = planted_holder_idle()
     m = _manifest()
+    assert m.holder_scan is not None
     match = resolve_holder(world.before, MODULE_BASE, HOLDER_SLOT_RVA, m.holder_scan, m)
     assert match is not None
     behavior = confirm_holder(

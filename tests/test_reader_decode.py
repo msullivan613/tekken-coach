@@ -65,9 +65,11 @@ def test_golden_bytes_decode_to_expected_framerecord(table: OffsetTable) -> None
 
     pf = table.players.fields
     pbase = MODULE_BASE + table.players.anchor.base_offset
+    stride = table.players.stride
+    assert stride is not None, "decode tests use the legacy stride model"
 
     def putp(idx: int, name: str, kind: ScalarKind, value: float | int | bool) -> None:
-        image[pbase + idx * table.players.stride + pf[name].offset] = _pack(kind, value)
+        image[pbase + idx * stride + pf[name].offset] = _pack(kind, value)
 
     # Every player field defaults to 0/False unless set below, so start by zeroing all of them.
     for idx in (0, 1):
@@ -177,15 +179,17 @@ def test_health_computed_from_damage_taken(table: OffsetTable) -> None:
     gbase = MODULE_BASE + g.anchor.base_offset
     pf = t.players.fields
     pbase = MODULE_BASE + t.players.anchor.base_offset
+    stride = t.players.stride
+    assert stride is not None, "decode tests use the legacy stride model"
     image: dict[int, bytes] = {}
     for spec in g.fields.values():
         image[gbase + spec.offset] = _pack(spec.kind, 0)
     for idx in (0, 1):
         for spec in pf.values():
-            image[pbase + idx * t.players.stride + spec.offset] = _pack(spec.kind, 0)
+            image[pbase + idx * stride + spec.offset] = _pack(spec.kind, 0)
     # P1 took 55 damage -> health 145; P2 took 250 (more than max) -> clamped to 0.
-    image[pbase + 0 * t.players.stride + 128] = _pack("i32", 55)
-    image[pbase + 1 * t.players.stride + 128] = _pack("i32", 250)
+    image[pbase + 0 * stride + 128] = _pack("i32", 55)
+    image[pbase + 1 * stride + 128] = _pack("i32", 250)
 
     source = FakeMemorySource(
         [image], module_bases={g.anchor.module: MODULE_BASE}, advance_on=gbase

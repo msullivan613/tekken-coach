@@ -31,7 +31,7 @@ def test_checked_in_table_aligns_with_c1_game_version() -> None:
     # The layout the decoder relies on is present.
     assert "frame_counter" in table.global_struct.fields
     assert {"char_id", "move_id", "health", "pos_x", "counter_state"} <= set(table.players.fields)
-    assert table.players.stride > 0
+    assert table.players.stride is not None and table.players.stride > 0
     assert table.sanity.round_start_health > 0
 
 

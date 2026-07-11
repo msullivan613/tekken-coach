@@ -227,8 +227,10 @@ def encode_frame(
         image[gbase + g.fields[name].offset] = pack_scalar(kind, value)
 
     pbase = module_base + table.players.anchor.base_offset
+    stride = table.players.stride
+    assert stride is not None, "encode fixtures use the legacy stride model"
     for idx, pf in enumerate(fr.players):
-        encode_player_into(image, table, pbase + idx * table.players.stride, pf)
+        encode_player_into(image, table, pbase + idx * stride, pf)
     return image
 
 

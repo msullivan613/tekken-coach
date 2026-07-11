@@ -862,9 +862,11 @@ def heap_decode_source(
     fr = component_frame()
     _encode_globals(module, glob, table, fr, frame=fr.frame + step, phase_raw=phase_raw)
     component = table.players.components[POSITION_COMPONENT]
+    stride = table.players.stride
+    assert stride is not None, "planted_chain uses the legacy stride model"
     for pf, base, comp_ptr, pos in (
         (fr.players[0], struct_base, _P1_COMPONENT, (P1_POS_BEFORE[0] + step, *P1_POS_BEFORE[1:])),
-        (fr.players[1], struct_base + table.players.stride, _P2_COMPONENT, P2_POS),
+        (fr.players[1], struct_base + stride, _P2_COMPONENT, P2_POS),
     ):
         image: dict[int, bytes] = {}
         encode_player_into(image, table, base, pf)
