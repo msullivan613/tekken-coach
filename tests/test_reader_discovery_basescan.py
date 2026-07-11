@@ -34,6 +34,7 @@ from tekken_coach.reader.discovery.basescan import (
     find_by_signature,
     find_candidate_slots,
     frame_delta_band,
+    freeze_struct,
     locate_global_struct,
     locate_player_struct,
 )
@@ -1106,3 +1107,30 @@ def test_report_shows_the_chain_and_the_signature(tmp_path: Path) -> None:
     # The oracle could only claim three of the four match fields (three seeded offsets); the fourth
     # is named as still-seeded rather than quietly left looking derived.
     assert "match_phase not assigned" in " ".join(report.result.notes)
+
+
+def test_freeze_struct_captures_the_full_span_when_readable() -> None:
+    base = 0x1_0000_0000
+    source = FlatMemorySource([(base, bytes(0x40000))], module_bases={MODULE: MODULE_BASE})
+    region = freeze_struct(source, base, 0x40000)
+    assert region is not None
+    assert region.base == base and len(region.data) == 0x40000
+
+
+def test_freeze_struct_shrinks_to_the_largest_readable_prefix_on_overrun() -> None:
+    # The manifest struct_span (0x40000) far overruns the real allocation; read is all-or-nothing,
+    # so a full read raises. freeze_struct must fall back to the largest readable prefix rather than
+    # drop the freeze — the fields it is read for (move_id 0x550, damage_taken 0x1578) sit early.
+    base = 0x1_0000_0000
+    alloc = 0x5000  # smaller than struct_span, larger than the early fields
+    source = FlatMemorySource([(base, bytes(alloc))], module_bases={MODULE: MODULE_BASE})
+    region = freeze_struct(source, base, 0x40000)
+    assert region is not None
+    assert 0x1578 + 4 <= len(region.data) <= alloc  # covers move_id + damage_taken
+    assert region.covers(base + 0x550, 4) and region.covers(base + 0x1578, 4)
+
+
+def test_freeze_struct_returns_none_when_even_the_floor_is_unreadable() -> None:
+    base = 0x1_0000_0000
+    source = FlatMemorySource([(base, bytes(0x800))], module_bases={MODULE: MODULE_BASE})
+    assert freeze_struct(source, base, 0x40000) is None

@@ -2068,3 +2068,30 @@ class LayeredMemorySource:
     def regions(self) -> Sequence[MemoryRegion]:
         """Enumeration is a property of the live map, so it comes from the fallback (read-only)."""
         return self._fallback.regions()
+
+
+def freeze_struct(
+    live: MemorySource, base: int, span: int, *, floor: int = 0x1000
+) -> Region | None:
+    """Freeze the largest readable prefix of ``[base, base+span)`` as a :class:`Region`.
+
+    The manifest's ``struct_span`` is a generous upper bound (0x40000), far larger than a player
+    struct's actual heap allocation. :meth:`MemorySource.read` is **all-or-nothing**: a range that
+    overruns the allocation's committed pages raises :class:`MemoryReadError` rather than returning
+    a short buffer. A single full-span ``read(base, span)`` therefore *fails outright*, and where
+    the caller swallows that (the freeze loops do), it silently drops the whole freeze and reads the
+    live handle instead. That defeats the freeze: by the time the frozen samples are consulted the
+    transient ``move_id`` has idled back and the behavioral oracle sees no change.
+
+    Shrinking to the largest readable prefix (halve on failure) still captures every field the
+    freeze is read for — ``move_id`` (0x550), ``damage_taken`` (0x1578), and the component pointer
+    slots (``slot_span`` 0x4000) all lie in the first few KiB. Returns ``None`` only if even
+    ``floor`` bytes are unreadable (a dead base).
+    """
+    size = span
+    while size >= floor:
+        try:
+            return Region(base=base, data=live.read(base, size))
+        except MemoryReadError:
+            size //= 2
+    return None

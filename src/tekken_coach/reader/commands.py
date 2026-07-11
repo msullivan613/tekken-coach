@@ -177,7 +177,9 @@ def update_offsets_main(args: argparse.Namespace) -> int:
     try:
         if args.holder_scan:
             print("locating the player holder by its AoB code signature (T8 v3 model)...")
-            table, report = run_update_offsets_holder(args.process, progress=progress, **common)
+            table, report = run_update_offsets_holder(
+                args.process, progress=progress, debug_dir=args.debug_dir, **common
+            )
         elif args.derive:
             print("deriving the player layout from behavior (heap sweep; can take a minute)...")
             table, report = run_update_offsets_derive(args.process, progress=progress, **common)
@@ -333,6 +335,13 @@ def build_parser() -> argparse.ArgumentParser:
         "signature in .text (RIP-relative -> a .data slot), then read TWO per-player pointer slots "
         "(holder+0x30 / +0x38) to separate allocations. This is what the current community tools "
         "use; the AoB is patch-durable (re-source the pattern only if a patch moves the function).",
+    )
+    p_update.add_argument(
+        "--debug-dir",
+        default=None,
+        help="(--holder-scan only) write a JSON capture of the round-start landing and the "
+        "per-sample move_id/damage series to this directory for offline diagnosis of a failed "
+        "behavioral oracle.",
     )
     p_update.set_defaults(func=update_offsets_main)
 

@@ -16,6 +16,7 @@ Read-only throughout: it reads process memory through the :class:`MemorySource` 
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -811,6 +812,7 @@ def run_update_offsets_holder(
     version_override: str | None = None,
     act_prompt: Callable[[str], None] | None = None,
     progress: Progress | None = None,
+    debug_dir: str | Path | None = None,
 ) -> tuple[OffsetTable | None, DiagnosticReport]:  # pragma: no cover - attaches to a live game
     """C4i live re-discovery: adopt the holder model (AoB code-sig -> holder -> per-player slots).
 
@@ -830,6 +832,7 @@ def run_update_offsets_holder(
         LayeredMemorySource,
         confirm_global,
         frame_delta_band,
+        freeze_struct,
         global_candidates,
         rebase_global_candidates,
     )
@@ -884,14 +887,21 @@ def run_update_offsets_holder(
         )
 
     # Freeze both player structs at round start so the position scan has a coherent *before*.
+    # `freeze_struct` shrinks to the largest readable prefix: the manifest struct_span (0x40000) is
+    # far larger than the real allocation, so an all-or-nothing full read raises and would drop the
+    # whole freeze (the field we need sits in the first few KiB).
     frozen_before: list[Region] = []
     if holder is not None and manifest.base_scan is not None:
         span = manifest.base_scan.struct_span
         for base in holder.player_bases:
-            try:
-                frozen_before.append(Region(base=base, data=live.read(base, span)))
-            except MemoryReadError:
-                continue
+            region = freeze_struct(live, base, span)
+            if region is not None:
+                frozen_before.append(region)
+        _emit_progress(
+            progress,
+            f"  froze {len(frozen_before)} struct(s) at round start "
+            f"({', '.join(f'0x{len(r.data):x}B' for r in frozen_before) or 'none'})",
+        )
 
     prompt(_holder_prompt(manifest))
     _countdown(manifest.action_lead_in_seconds, progress)
@@ -915,6 +925,7 @@ def run_update_offsets_holder(
     # This mirrors `frozen_before`/`frozen_after` above (and the C4h derive path's freeze).
     span = manifest.base_scan.struct_span if manifest.base_scan is not None else 0
     during: list[MemorySource] = []
+    debug_samples: list[dict[str, object]] = []
     for _sample in _sampling_window(
         live,
         seconds=manifest.action_window_seconds,
@@ -924,11 +935,12 @@ def run_update_offsets_holder(
         frozen_sample: list[Region] = []
         if holder is not None and span:
             for base in holder.player_bases:
-                try:
-                    frozen_sample.append(Region(base=base, data=live.read(base, span)))
-                except MemoryReadError:
-                    continue
+                region = freeze_struct(live, base, span)
+                if region is not None:
+                    frozen_sample.append(region)
         during.append(LayeredMemorySource(frozen_sample, live) if frozen_sample else live)
+        if debug_dir is not None and holder is not None:
+            debug_samples.append(_holder_sample_debug(frozen_sample, holder, manifest))
     elapsed = time.monotonic() - opened
 
     global_located = None
@@ -956,10 +968,9 @@ def run_update_offsets_holder(
         if after is not None:
             frozen_after: list[Region] = []
             for base in after[1]:
-                try:
-                    frozen_after.append(Region(base=base, data=live.read(base, span)))
-                except MemoryReadError:
-                    continue
+                region = freeze_struct(live, base, span)
+                if region is not None:
+                    frozen_after.append(region)
             if frozen_after:
                 after_source = LayeredMemorySource(frozen_after, live)
 
@@ -979,9 +990,93 @@ def run_update_offsets_holder(
         sweep_global=False,
         state_map=state_map,
     )
+    if debug_dir is not None:
+        path = _write_holder_debug(
+            debug_dir,
+            holder=holder,
+            slot_rva=slot_rva,
+            manifest=manifest,
+            samples=debug_samples,
+            elapsed=elapsed,
+        )
+        _emit_progress(progress, f"  wrote holder-scan debug capture to {path}")
     if table is not None:
         persist(table, report, offsets_dir=offsets_dir)
     return table, report
+
+
+def _holder_sample_debug(
+    frozen: Sequence[Region], holder: HolderMatch, manifest: ProbeManifest
+) -> dict[str, object]:  # pragma: no cover - live-only debug capture
+    """Decode P1/P2 move_id + damage_taken from one frozen window sample for the debug dump.
+
+    Reads at the *frozen* bases (what the freeze actually captured); a player that failed to freeze
+    shows ``frozen: False`` — itself the signal that the full-span read overran the allocation.
+    """
+    spec = manifest.holder_scan
+    assert spec is not None
+    by_base = {r.base: r for r in frozen}
+    players: list[dict[str, object]] = []
+    for base in holder.player_bases:
+        region = by_base.get(base)
+        if region is None:
+            players.append({"base": hex(base), "frozen": False})
+            continue
+        players.append(
+            {
+                "base": hex(base),
+                "frozen": True,
+                "span": hex(len(region.data)),
+                "move_id": region.read_scalar(base + spec.move_id_offset, manifest.move_id_kind),
+                "damage_taken": region.read_scalar(base + spec.damage_taken_offset, "i32"),
+            }
+        )
+    return {"players": players}
+
+
+def _write_holder_debug(
+    debug_dir: str | Path,
+    *,
+    holder: HolderMatch | None,
+    slot_rva: int | None,
+    manifest: ProbeManifest,
+    samples: list[dict[str, object]],
+    elapsed: float,
+) -> Path:  # pragma: no cover - live-only debug capture
+    """Dump the round-start landing + per-sample move_id/damage series to a JSON for offline review.
+
+    This live path is untestable in CI, so a structured capture of what each window sample actually
+    read (the frozen span achieved, and P1/P2 move_id at every instant) is how a failed behavioral
+    oracle gets diagnosed without another live round-trip.
+    """
+    spec = manifest.holder_scan
+    round_start: dict[str, object] | None = None
+    if holder is not None:
+        round_start = {
+            "holder_base": hex(holder.holder_base),
+            "player_bases": [hex(b) for b in holder.player_bases],
+            "char_ids": list(holder.char_ids),
+            "move_ids": list(holder.move_ids),
+        }
+    out: dict[str, object] = {
+        "slot_rva": hex(slot_rva) if slot_rva is not None else None,
+        "moving_player": manifest.moving_player,
+        "move_id_offset": hex(spec.move_id_offset) if spec is not None else None,
+        "damage_taken_offset": hex(spec.damage_taken_offset) if spec is not None else None,
+        "struct_span": (
+            hex(manifest.base_scan.struct_span) if manifest.base_scan is not None else None
+        ),
+        "action_window_seconds": manifest.action_window_seconds,
+        "action_sample_interval": manifest.action_sample_interval,
+        "window_elapsed_seconds": round(elapsed, 3),
+        "round_start": round_start,
+        "samples": samples,
+    }
+    directory = Path(debug_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "holder-scan-debug.json"
+    path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    return path
 
 
 def _emit_progress(progress: Progress | None, message: str) -> None:  # pragma: no cover - live-only
