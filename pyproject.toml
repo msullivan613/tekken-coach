@@ -26,6 +26,13 @@ dev = [
 windows = [
     "pymem>=1.13; sys_platform == 'win32'",
 ]
+# Optional Claude API coaching backend (C5, --coach api). The default coaching path is the Claude
+# Code Skill (skill/), which needs no API access, so the offline pipeline installs and tests without
+# anthropic: the API backend is imported lazily and every test drives it through a mocked client.
+# Install with `pip install tekken-coach[coach]` to use `--coach api`.
+coach = [
+    "anthropic>=0.69",
+]
 
 [project.scripts]
 tekken-coach = "tekken_coach.cli:main"
@@ -68,6 +75,13 @@ warn_required_dynamic_aliases = true
 # pymem's surface as untyped and normalizes its exceptions at the WinMemorySource seam.
 [[tool.mypy.overrides]]
 module = "pymem.*"
+ignore_missing_imports = true
+
+# anthropic is the optional Claude API coaching backend (C5, --coach api). It is not installed in the
+# offline environment (the API backend is imported lazily and mocked in tests), so mypy can't resolve
+# it there; the client surface is confined behind a Protocol at the tekken_coach.coach.api seam.
+[[tool.mypy.overrides]]
+module = "anthropic.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
