@@ -34,9 +34,13 @@ BOOL_FLAGS: tuple[str, ...] = (
 class PlayerView:
     """The decoded state of one player, reduced to what the monitor shows and keys change on.
 
-    ``key`` is what change-detection compares — the *decoded state* (``action_state`` + the true
-    situational flags). ``move_id`` / ``move_frame`` / ``health`` / ``raw_state`` ride along on the
-    line for correlation but do not, by themselves, trigger a new line (they change every frame).
+    ``key`` is what change-detection compares: the *decoded state* (``action_state`` + situational
+    flags) **plus ``move_id``**. Including ``move_id`` is what lets a string read as its constituent
+    moves — ``1,2,1`` stays ``action_state=attack`` throughout, so keying on state alone would
+    collapse it to a single line; keying on ``move_id`` too surfaces each move (and makes a movement
+    whose ``action_state`` never leaves neutral, e.g. a backdash, still show as a line). ``move_id``
+    only changes per move, not per frame, so it does not flood; ``move_frame`` (which does change
+    every frame) is deliberately **not** in the key.
     """
 
     player: int  # 1-based, matching the on-screen P1/P2
@@ -49,8 +53,8 @@ class PlayerView:
     raw_state: tuple[tuple[str, int], ...]
 
     @property
-    def key(self) -> tuple[str, tuple[str, ...]]:
-        return (self.action_state, self.flags)
+    def key(self) -> tuple[str, tuple[str, ...], int]:
+        return (self.action_state, self.flags, self.move_id)
 
 
 def view_of(index: int, pf: PlayerFrame) -> PlayerView:
@@ -95,7 +99,7 @@ def changed_views(
     Emits only on change, per player independently — a state performed and held reads as a single
     line, not one per poll. The pure counterpart of the live loop (like ``probe.change_records``).
     """
-    previous: dict[int, tuple[str, tuple[str, ...]]] = {}
+    previous: dict[int, tuple[str, tuple[str, ...], int]] = {}
     for t, views in stream:
         for view in views:
             if previous.get(view.player) == view.key:

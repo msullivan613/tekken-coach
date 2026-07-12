@@ -6,7 +6,13 @@ frame -> views reduction, the console formatting, and the emit-on-change stream.
 
 from __future__ import annotations
 
-from tekken_coach.reader.monitor import changed_views, format_view, view_of, views_of
+from tekken_coach.reader.monitor import (
+    PlayerView,
+    changed_views,
+    format_view,
+    view_of,
+    views_of,
+)
 from tekken_coach.schemas import ActionState, FrameRecord
 from tests.factories import make_frame_record
 
@@ -26,7 +32,7 @@ def test_view_of_surfaces_action_state_and_true_flags() -> None:
     assert v.action_state == "hitstun"
     assert v.flags == ("hit_stun", "airborne", "juggle")  # fixed order, only the true ones
     assert v.char_id == fr.players[0].char_id
-    assert v.key == ("hitstun", ("hit_stun", "airborne", "juggle"))
+    assert v.key == ("hitstun", ("hit_stun", "airborne", "juggle"), fr.players[0].move_id)
 
 
 def test_view_of_no_flags_reads_clean() -> None:
@@ -64,6 +70,31 @@ def test_changed_views_emits_only_when_the_decoded_state_changes() -> None:
         (0.2, 1, "attack"),
         (0.3, 1, "blockstun"),
     ]
+
+
+def test_changed_views_surfaces_each_move_in_a_string() -> None:
+    # A string (1,2,1) stays action_state=attack throughout; keying on move_id too means each move
+    # emits its own line instead of collapsing to the opening jab (the reported gap).
+    def atk(move_id: int) -> list[PlayerView]:
+        fr = _frame_with(ActionState.attack)
+        return views_of(
+            fr.model_copy(
+                update={
+                    "players": [
+                        fr.players[0].model_copy(update={"move_id": move_id}),
+                        fr.players[1],
+                    ]
+                }
+            )
+        )
+
+    stream = [(0.0, atk(1586)), (0.1, atk(2)), (0.2, atk(1586)), (0.3, atk(1586))]
+    p1 = [(round(t, 1), v.move_id) for t, v in changed_views(stream) if v.player == 1]
+    assert p1 == [
+        (0.0, 1586),
+        (0.1, 2),
+        (0.2, 1586),
+    ]  # 1, 2, 1 — the held final frame does not repeat
 
 
 def test_changed_views_tracks_players_independently() -> None:
