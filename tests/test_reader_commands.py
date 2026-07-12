@@ -77,6 +77,7 @@ def test_parser_wires_probe_state() -> None:
     assert args.record is None  # C4j: opt-in observation log, unchanged behaviour by default
     assert args.emit_skeleton is None
     assert args.watch is None  # ad-hoc candidate-offset watch is opt-in
+    assert args.is_global is False  # player-struct probe by default
 
 
 def test_parser_probe_state_record_and_skeleton_flags() -> None:
@@ -107,6 +108,13 @@ def test_parser_wires_monitor() -> None:
     assert args.func is commands.monitor_main
     assert args.raw is True and args.interval == 0.1
     assert parser.parse_args(["monitor"]).raw is False  # raw is opt-in
+
+
+def test_parser_probe_state_global_flag() -> None:
+    parser = commands.build_parser()
+    args = parser.parse_args(["probe-state", "--global", "--watch", "0xd2e0-0xd4c0:u32"])
+    assert args.is_global is True
+    assert args.watch == "0xd2e0-0xd4c0:u32"
 
 
 def test_parser_probe_state_watch_flag() -> None:

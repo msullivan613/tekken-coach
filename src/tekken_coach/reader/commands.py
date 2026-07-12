@@ -35,7 +35,12 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-from tekken_coach.reader.decode import decode_frame, read_scalar, resolve_player_base
+from tekken_coach.reader.decode import (
+    decode_frame,
+    read_scalar,
+    resolve_anchor,
+    resolve_player_base,
+)
 from tekken_coach.reader.faults import ReaderError, classify_fault
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.monitor import PlayerView, changed_views, format_view, views_of
@@ -218,16 +223,26 @@ def _table_points(table: OffsetTable, names: list[str]) -> list[WatchPoint]:
     return [WatchPoint(name=n, offset=fields[n].offset, kind=fields[n].kind) for n in names]
 
 
-def _probe_row(
-    source: MemorySource, table: OffsetTable, index: int, points: list[WatchPoint]
+def _read_points_at(
+    source: MemorySource, base: int, points: list[WatchPoint]
 ) -> tuple[int | float, ...]:
-    """Read one player's watch points as raw scalars (bool8 coerced to int; f32 kept as float)."""
-    base = resolve_player_base(source, table, index)
+    """Read the watch points at an explicit struct ``base`` (bool8 -> int; f32 kept as float)."""
     values: list[int | float] = []
     for p in points:
         v = read_scalar(source, base + p.offset, p.kind)
         values.append(int(v) if isinstance(v, bool) else v)
     return tuple(values)
+
+
+def _watch_bases(source: MemorySource, table: OffsetTable, is_global: bool) -> list[int]:
+    """The struct base(s) a poll reads: the global/match struct (one) or both players (two).
+
+    Re-resolved every poll: the global anchor is static, but the player structs reallocate every
+    round/character change — which is exactly what the anchors exist to survive (docs/02 §3).
+    """
+    if is_global:
+        return [resolve_anchor(source, table.global_struct.anchor)]
+    return [resolve_player_base(source, table, index) for index in (0, 1)]
 
 
 def _live_samples(
@@ -236,19 +251,22 @@ def _live_samples(
     points: list[WatchPoint],
     interval: float,
     seconds: float,
+    *,
+    is_global: bool = False,
 ) -> Iterator[PollSample]:  # pragma: no cover - live loop; the pure consumers are tested
-    """Poll both players forever (or for ``seconds``), yielding one :class:`PollSample` per instant.
+    """Poll the watched struct(s) forever (or for ``seconds``), yielding one :class:`PollSample`.
 
     The thin live shell over the tested pure core
     (:func:`~tekken_coach.reader.probe.change_records`) — mirroring how ``poll_frames`` (live) feeds
-    ``evaluate_frames`` (pure). The chain is re-resolved every poll: the entity struct reallocates
-    on every round and character change, which is what the anchor exists to survive (docs/02 §3).
+    ``evaluate_frames`` (pure). ``is_global`` watches the single global/match struct instead of the
+    two players (for locating match_phase / game_mode, docs/02 §4).
     """
     import time  # noqa: PLC0415
 
     started = time.monotonic()
     while seconds <= 0 or time.monotonic() - started < seconds:
-        rows = tuple(_probe_row(source, table, index, points) for index in (0, 1))
+        bases = _watch_bases(source, table, is_global)
+        rows = tuple(_read_points_at(source, base, points) for base in bases)
         yield PollSample(t=time.monotonic() - started, rows=rows)
         time.sleep(interval)
 
@@ -314,8 +332,17 @@ def probe_state_main(args: argparse.Namespace) -> int:
     except ReaderError as exc:
         return _report_fault(exc)
 
+    if args.is_global and not args.watch:
+        print(
+            "--global requires --watch: the global/match struct has no default field set to probe. "
+            "Sweep a region to locate match_phase/game_mode, e.g. "
+            "--global --watch 0xd2e0-0xd4c0:u32,0x0-0x80:u32",
+            file=sys.stderr,
+        )
+        return 1
+
     spec = table.state_codes.encoded_state
-    if spec is None:
+    if not args.watch and spec is None:
         print(
             f"offset table {version} has no encoded-state map; nothing to probe. Run "
             "`update-offsets --base-scan` first (it writes the state-word offsets into the table).",
@@ -324,8 +351,8 @@ def probe_state_main(args: argparse.Namespace) -> int:
         return 1
 
     # Default: watch the table's encoded-state fields (+ move context). `--watch` overrides that
-    # with ad-hoc candidate offsets so a run can locate where stale state words moved to, without
-    # editing the table (docs/02 §8; the seeded offsets go stale like the fork's move_id did).
+    # with ad-hoc candidate offsets (a range sweep locates a field whose seeded offset went stale,
+    # docs/02 §8); `--global` points the sweep at the global/match struct instead of the players.
     if args.watch:
         try:
             points = parse_watch(args.watch)
@@ -335,12 +362,20 @@ def probe_state_main(args: argparse.Namespace) -> int:
         names = [p.name for p in points]
         skeleton_fields = names  # summarize distinct values for every watched candidate
     else:
+        assert spec is not None
         names = _probe_targets(table)
         points = _table_points(table, names)
         skeleton_fields = sorted(spec.flags)
-    print(f"probing {len(names)} fields x 2 players (Ctrl-C to stop): {', '.join(names)}")
-    print("perform one state at a time (block a jab, eat a jab, stagger, get thrown, jump, ...)")
-    print(f"\n{'time':>7}  {'player':<6}  " + "  ".join(f"{n:>18}" for n in names))
+
+    struct_label = "the global/match struct" if args.is_global else "2 players"
+    print(f"probing {len(names)} fields x {struct_label} (Ctrl-C to stop): {', '.join(names)}")
+    if args.is_global:
+        print("move through phases: menu -> match -> round -> round over -> results -> menu")
+    else:
+        print(
+            "perform one state at a time (block a jab, eat a jab, stagger, get thrown, jump, ...)"
+        )
+    print(f"\n{'time':>7}  {'struct':<6}  " + "  ".join(f"{n:>14}" for n in names))
 
     skeleton_path = _skeleton_path(args)
     # Create parent dirs for the outputs so the documented `--record debug/...` invocation does not
@@ -352,7 +387,10 @@ def probe_state_main(args: argparse.Namespace) -> int:
     observed: list[ChangeRecord] = []
     try:
         for record in change_records(
-            _live_samples(source, table, points, args.interval, args.seconds), names
+            _live_samples(
+                source, table, points, args.interval, args.seconds, is_global=args.is_global
+            ),
+            names,
         ):
             print(_format_change(record, names), flush=True)
             if record_file is not None:
@@ -531,10 +569,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_probe.add_argument(
         "--watch",
         default=None,
-        help="watch ad-hoc raw player-struct offsets instead of the table's state fields, as "
-        "comma-separated OFFSET:KIND pairs (e.g. 0x550:u32,0x434:u32,0x670:u32). Use to locate "
-        "where state words moved after a patch made the seeded offsets stale (docs/02 §8); the "
-        "skeleton then summarizes the distinct values each candidate took.",
+        help="watch ad-hoc raw offsets instead of the table's state fields, as comma-separated "
+        "OFFSET:KIND (or START-END:KIND range) terms (e.g. 0x550:u32,0x434:u32 or a sweep "
+        "0xd2e0-0xd4c0:u32). Use to locate a field whose seeded offset went stale (docs/02 §8); "
+        "the skeleton then summarizes the distinct values each candidate took.",
+    )
+    p_probe.add_argument(
+        "--global",
+        dest="is_global",
+        action="store_true",
+        help="watch the GLOBAL/match struct (one struct) instead of the two players — for locating "
+        "match_phase / game_mode across menu/round/results transitions. Requires --watch.",
     )
     p_probe.set_defaults(func=probe_state_main)
 

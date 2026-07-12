@@ -39,6 +39,21 @@ SKELETON_NOTES = (
 # The scalar kinds `--watch` accepts (the reader's whole ScalarKind set, kept in sync via get_args).
 WATCH_KINDS: frozenset[str] = frozenset(get_args(ScalarKind))
 
+# Byte width per kind — the stride a `START-END:KIND` range steps by.
+_KIND_SIZE: dict[str, int] = {
+    "u8": 1,
+    "bool8": 1,
+    "u16": 2,
+    "u32": 4,
+    "i32": 4,
+    "f32": 4,
+    "i64": 8,
+    "ptr": 8,
+}
+
+# A sweep this wide almost certainly means a typo, not intent — fail loud rather than read forever.
+_MAX_WATCH_POINTS = 8192
+
 
 @dataclass(frozen=True)
 class WatchPoint:
@@ -55,12 +70,47 @@ class WatchPoint:
     kind: ScalarKind
 
 
+def _watch_offsets(off_text: str, kind: str, part: str) -> list[int]:
+    """Resolve one spec's offset text to the offsets it names — a single value or a ``START-END``
+    range stepped by ``kind``'s byte width (so a whole struct region can be swept to find an unknown
+    field). Raises ``ValueError`` on a bad number, an empty/backwards range, or an absurd sweep.
+    """
+    if "-" in off_text:
+        start_text, end_text = (s.strip() for s in off_text.split("-", 1))
+        try:
+            start, end = int(start_text, 0), int(end_text, 0)
+        except ValueError:
+            raise ValueError(
+                f"watch spec {part!r}: {off_text!r} is not a valid START-END range"
+            ) from None
+        if start < 0:
+            raise ValueError(f"watch spec {part!r}: offset must be non-negative")
+        if end <= start:
+            raise ValueError(f"watch spec {part!r}: range END must be greater than START")
+        offsets = list(range(start, end, _KIND_SIZE[kind]))
+        if len(offsets) > _MAX_WATCH_POINTS:
+            raise ValueError(
+                f"watch spec {part!r}: range expands to {len(offsets)} points "
+                f"(>{_MAX_WATCH_POINTS}); narrow it or use a wider kind"
+            )
+        return offsets
+    try:
+        offset = int(off_text, 0)
+    except ValueError:
+        raise ValueError(f"watch spec {part!r}: {off_text!r} is not a valid offset") from None
+    if offset < 0:
+        raise ValueError(f"watch spec {part!r}: offset must be non-negative")
+    return [offset]
+
+
 def parse_watch(spec: str) -> list[WatchPoint]:
     """Parse ``--watch "0x434:u32,0x510:u32"`` into watch points named ``@0x<offset>``.
 
+    Each comma-separated term is ``OFFSET:KIND`` or ``START-END:KIND`` (a range stepped by the
+    kind's width — e.g. ``0xd2e0-0xd4c0:u32`` sweeps that region to locate an unknown field).
     Offsets are hex (``0x…``) or decimal; kinds are the reader's :data:`ScalarKind` set. Raises
-    ``ValueError`` with an actionable message on a malformed pair (missing ``:``, bad number,
-    unknown kind) or an empty spec — the CLI turns that into a clean error, not a traceback.
+    ``ValueError`` with an actionable message on a malformed term or an empty spec — the CLI turns
+    that into a clean error, not a traceback.
     """
     points: list[WatchPoint] = []
     for raw in spec.split(","):
@@ -70,17 +120,14 @@ def parse_watch(spec: str) -> list[WatchPoint]:
         if ":" not in part:
             raise ValueError(f"watch spec {part!r} must be OFFSET:KIND (e.g. 0x434:u32)")
         off_text, kind = (s.strip() for s in part.split(":", 1))
-        try:
-            offset = int(off_text, 0)
-        except ValueError:
-            raise ValueError(f"watch spec {part!r}: {off_text!r} is not a valid offset") from None
-        if offset < 0:
-            raise ValueError(f"watch spec {part!r}: offset must be non-negative")
         if kind not in WATCH_KINDS:
             raise ValueError(
                 f"watch spec {part!r}: unknown kind {kind!r} (use one of {sorted(WATCH_KINDS)})"
             )
-        points.append(WatchPoint(name=f"@0x{offset:x}", offset=offset, kind=cast(ScalarKind, kind)))
+        for offset in _watch_offsets(off_text, kind, part):
+            points.append(
+                WatchPoint(name=f"@0x{offset:x}", offset=offset, kind=cast(ScalarKind, kind))
+            )
     if not points:
         raise ValueError("watch spec is empty (expected OFFSET:KIND pairs, e.g. 0x434:u32).")
     return points

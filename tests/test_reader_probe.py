@@ -171,6 +171,34 @@ def test_parse_watch_parses_hex_and_decimal_pairs() -> None:
     ]
 
 
+def test_parse_watch_expands_a_range_stepped_by_kind_width() -> None:
+    from tekken_coach.reader.probe import parse_watch
+
+    # A START-END:KIND term sweeps [START, END) stepped by the kind's byte width — for locating an
+    # unknown field (e.g. match_phase) in a struct region.
+    pts = parse_watch("0x10-0x20:u32")
+    assert [(p.name, p.offset) for p in pts] == [
+        ("@0x10", 0x10),
+        ("@0x14", 0x14),
+        ("@0x18", 0x18),
+        ("@0x1c", 0x1C),
+    ]  # END is exclusive, stride 4 for u32
+    # u16 steps by 2; a single value and a range compose in one spec.
+    pts2 = parse_watch("0x8:u16, 0x40-0x44:u16")
+    assert [p.offset for p in pts2] == [0x8, 0x40, 0x42]
+
+
+def test_parse_watch_rejects_a_backwards_or_absurd_range() -> None:
+    import pytest
+
+    from tekken_coach.reader.probe import parse_watch
+
+    with pytest.raises(ValueError, match="END must be greater"):
+        parse_watch("0x20-0x10:u32")
+    with pytest.raises(ValueError, match="expands to"):
+        parse_watch("0x0-0x100000:u8")  # 1 MiB of u8 points -> refused
+
+
 def test_parse_watch_rejects_malformed_specs() -> None:
     import pytest
 
@@ -180,7 +208,7 @@ def test_parse_watch_rejects_malformed_specs() -> None:
         ("0x434", "OFFSET:KIND"),  # no colon
         ("0xzz:u32", "not a valid offset"),  # bad number
         ("0x434:u33", "unknown kind"),  # bad kind
-        ("-4:u32", "non-negative"),  # parses as -4, rejected as a negative offset
+        ("-4:u32", "START-END"),  # leading '-' reads as a (malformed) range, and is rejected
         ("", "empty"),  # nothing to watch
         ("  ,  ", "empty"),  # only separators
     ]:
