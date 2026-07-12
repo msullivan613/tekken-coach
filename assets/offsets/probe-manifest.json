@@ -110,11 +110,11 @@
     "max_strong_candidates": 32,
     "scan_data_only": true,
     "state_fields": {
-      "move_frame": { "offset": 880, "kind": "u32" },
+      "move_frame": { "offset": 912, "kind": "u32" },
       "counter_state": { "offset": 1520, "kind": "u32" },
       "recovery_state": { "offset": 1460, "kind": "u32" },
-      "simple_move_state": { "offset": 1600, "kind": "u32" },
-      "stun_type": { "offset": 1604, "kind": "u32" },
+      "simple_move_state": { "offset": 1648, "kind": "u32" },
+      "stun_type": { "offset": 1564, "kind": "u32" },
       "throw_tech_state": { "offset": 1640, "kind": "u32" },
       "complex_move_state": { "offset": 1676, "kind": "u32" }
     },

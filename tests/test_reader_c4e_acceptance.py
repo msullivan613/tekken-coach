@@ -109,7 +109,7 @@ def test_the_written_table_has_all_three_c4e_pieces(derived: OffsetTable) -> Non
     assert derived.global_struct.anchor.pointer_path == GLOBAL_POINTER_PATH
     # Phase 2: encoded state words replace the placeholder booleans.
     assert derived.state_codes.encoded_state is not None
-    assert derived.players.fields["stun_type"].offset == 0x644
+    assert derived.players.fields["stun_type"].offset == 0x61C  # live 5.02.01 offset (Irony)
     assert "block_stun" not in derived.players.fields
     # Phase 3: position moved out of the entity struct into a component.
     assert derived.players.components[POSITION_COMPONENT].slot_offset == COMPONENT_SLOT_OFFSET

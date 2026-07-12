@@ -889,10 +889,10 @@ def test_live_path_may_pre_sweep_the_global_without_derive_re_sweeping() -> None
 def test_encoded_state_offsets_are_seeded_into_the_table() -> None:
     result = _derive()
     fields = result.player_offsets()
-    assert fields["simple_move_state"].offset == 0x640
-    assert fields["stun_type"].offset == 0x644
+    assert fields["simple_move_state"].offset == 0x670
+    assert fields["stun_type"].offset == 0x61C
     assert fields["complex_move_state"].offset == 0x68C
-    assert fields["move_frame"].offset == 0x370
+    assert fields["move_frame"].offset == 0x390
     assert fields["counter_state"].offset == 0x5F0
     # They are facts, not findings: no round-start oracle can prove where stun_type lives, so the
     # report must not present them as derived alongside char_id/move_id.
@@ -923,7 +923,7 @@ def test_a_state_map_supersedes_the_legacy_booleans() -> None:
     table = build_offset_table(result, _seed(), game_version="x", discovered_at="now", notes="test")
     assert table.state_codes.encoded_state is not None
     assert "block_stun" not in table.players.fields
-    assert table.players.fields["stun_type"].offset == 0x644
+    assert table.players.fields["stun_type"].offset == 0x61C
 
 
 def test_a_state_map_naming_an_absent_field_is_refused() -> None:
@@ -942,16 +942,19 @@ def test_a_state_map_naming_an_absent_field_is_refused() -> None:
         build_offset_table(result, _seed(), game_version="x", discovered_at="now", notes="test")
 
 
-def test_shipped_state_map_is_an_uncalibrated_skeleton() -> None:
-    # It ships empty on purpose (docs/02 §8): only observation can say what stun_type == 3 means,
-    # and a guess would be worse than nothing. Every field it names must exist in the manifest's
-    # state_fields, or the built table would be unreadable.
+def test_shipped_state_map_is_calibrated_against_the_manifest_fields() -> None:
+    # Calibrated on 5.02.01 by observation (docs/02 §8). Every field it names must exist in the
+    # manifest's state_fields (or the built table would be unreadable), and every flag it emits must
+    # be a known STATE_FLAG (the loader enforces the latter — an unknown flag would raise here).
     shipped = load_state_map(Path("assets/offsets/state-map.json"))
     spec = _manifest().base_scan
     assert spec is not None
-    assert not shipped.calibrated
+    assert shipped.calibrated
     assert set(shipped.flags) <= set(spec.state_fields)
-    assert all(codes == {} for codes in shipped.flags.values())
+    # The block/hit-outcome axis is load-bearing: blocked vs grounded hit vs airborne juggle.
+    assert shipped.flags["stun_type"]["1"] == ["block_stun"]
+    assert shipped.flags["stun_type"]["12"] == ["hit_stun"]
+    assert set(shipped.flags["stun_type"]["3"]) == {"hit_stun", "airborne", "juggle"}
 
 
 # ---------------------------------------------------------------------------
