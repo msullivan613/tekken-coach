@@ -61,6 +61,12 @@ from tekken_coach.reader.faults import (
     classify_fault,
 )
 from tekken_coach.reader.memory_source import FakeMemorySource, MemoryImage, MemorySource
+from tekken_coach.reader.monitor import (
+    PlayerView,
+    changed_views,
+    format_view,
+    views_of,
+)
 from tekken_coach.reader.offsets import (
     OffsetIndex,
     OffsetTable,
@@ -102,6 +108,7 @@ __all__ = [
     "OffsetIndex",
     "OffsetTable",
     "OffsetTableError",
+    "PlayerView",
     "PollSample",
     "ReaderError",
     "ReaderFault",
@@ -113,9 +120,11 @@ __all__ = [
     "build_skeleton",
     "capture_from_reads",
     "change_records",
+    "changed_views",
     "classify_fault",
     "classify_state",
     "decode_frame",
+    "format_view",
     "detect_running_version",
     "distinct_values",
     "load_capture",
@@ -129,5 +138,6 @@ __all__ = [
     "run_doctor",
     "select_offset_table",
     "version_from_dwords",
+    "views_of",
     "write_capture",
 ]

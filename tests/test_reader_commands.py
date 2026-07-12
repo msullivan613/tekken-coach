@@ -101,6 +101,14 @@ def test_skeleton_path_prefers_explicit_then_derives_from_record() -> None:
     assert commands._skeleton_path(parser.parse_args(["probe-state"])) is None
 
 
+def test_parser_wires_monitor() -> None:
+    parser = commands.build_parser()
+    args = parser.parse_args(["monitor", "--raw", "--interval", "0.1"])
+    assert args.func is commands.monitor_main
+    assert args.raw is True and args.interval == 0.1
+    assert parser.parse_args(["monitor"]).raw is False  # raw is opt-in
+
+
 def test_parser_probe_state_watch_flag() -> None:
     parser = commands.build_parser()
     args = parser.parse_args(["probe-state", "--watch", "0x434:u32,0x670:u32"])

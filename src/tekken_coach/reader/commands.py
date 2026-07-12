@@ -35,9 +35,10 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-from tekken_coach.reader.decode import read_scalar, resolve_player_base
+from tekken_coach.reader.decode import decode_frame, read_scalar, resolve_player_base
 from tekken_coach.reader.faults import ReaderError, classify_fault
 from tekken_coach.reader.memory_source import MemorySource
+from tekken_coach.reader.monitor import PlayerView, changed_views, format_view, views_of
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.reader.probe import ChangeRecord, PollSample, WatchPoint, parse_watch
 from tekken_coach.reader.version import GAME_PROCESS_NAME
@@ -383,6 +384,56 @@ def probe_state_main(args: argparse.Namespace) -> int:
     return 0
 
 
+def _live_frame_views(
+    source: MemorySource, table: OffsetTable, interval: float
+) -> Iterator[tuple[float, list[PlayerView]]]:  # pragma: no cover - live loop; consumers are tested
+    """Decode both players every ``interval`` s, yielding ``(t, views)`` — the monitor feed."""
+    import time  # noqa: PLC0415
+
+    started = time.monotonic()
+    while True:
+        views = views_of(decode_frame(source, table))
+        yield time.monotonic() - started, views
+        time.sleep(interval)
+
+
+def monitor_main(args: argparse.Namespace) -> int:
+    """Stream the reader's DECODED view of each player — the state-map check (docs/02 §8).
+
+    Attaches read-only, decodes both players every poll, and prints a line whenever a player's
+    decoded state (``action_state`` + situational flags) changes — so you can perform each state and
+    check the reader agrees (stand -> neutral, block -> blockstun, get juggled -> hitstun+juggle).
+    ``--raw`` appends the raw encoded state words, so a mis-decode is diagnosable on the spot.
+    """
+    from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
+    from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
+    from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
+
+    try:
+        source = WinMemorySource(args.process)
+        version = args.version or detect_running_version(args.process)
+        table = select_offset_table(version, args.offsets)
+    except ReaderError as exc:
+        return _report_fault(exc)
+
+    print(f"monitoring {version} — decoded player state (Ctrl-C to stop)")
+    spec = table.state_codes.encoded_state
+    if spec is None or not spec.calibrated:
+        print(
+            "note: this table's state map is not calibrated — states read as `neutral` and the "
+            "stun/juggle flags stay empty (docs/02 §8).",
+            file=sys.stderr,
+        )
+    try:
+        for t, view in changed_views(_live_frame_views(source, table, args.interval)):
+            print(f"{t:>7.2f}  {format_view(view, show_raw=args.raw)}", flush=True)
+    except ReaderError as exc:
+        return _report_fault(exc)
+    except KeyboardInterrupt:
+        print("\nstopped.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m tekken_coach.reader.commands",
@@ -486,6 +537,20 @@ def build_parser() -> argparse.ArgumentParser:
         "skeleton then summarizes the distinct values each candidate took.",
     )
     p_probe.set_defaults(func=probe_state_main)
+
+    p_monitor = sub.add_parser(
+        "monitor",
+        help="stream the reader's DECODED view of each player (verify the calibrated state map)",
+    )
+    p_monitor.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR)
+    p_monitor.add_argument("--version", default=None, help="override detected version")
+    p_monitor.add_argument("--interval", type=float, default=0.05, help="poll interval, seconds")
+    p_monitor.add_argument(
+        "--raw",
+        action="store_true",
+        help="append the raw encoded state words to each line, so a mis-decode is diagnosable.",
+    )
+    p_monitor.set_defaults(func=monitor_main)
 
     return parser
 
