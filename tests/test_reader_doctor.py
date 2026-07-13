@@ -166,9 +166,26 @@ def test_process_read_error_is_reported_not_raised(table: OffsetTable) -> None:
     assert report.runbook is not None  # a failed gate points at the §4 runbook
 
 
-def test_failed_report_points_at_runbook(table: OffsetTable) -> None:
+def test_mechanical_failure_points_at_the_offset_runbook(table: OffsetTable) -> None:
+    # A frozen dummy fails positions_change (a *mechanical* check) — that genuinely implies stale
+    # offsets, so the report points at the §4 re-derivation runbook.
+    frames = _healthy_frames()
+    for fr in frames:
+        fr.players[1].pos = (-1.5, 0.0, 0.0)  # dummy stops moving -> inter-player distance frozen
+    report = _run(frames, table)
+    assert "positions_change" in _failed_names(report)
+    assert report.runbook is not None and "update-offsets" in report.runbook
+
+
+def test_char_only_failure_gets_the_unlisted_note_not_the_stale_runbook(table: OffsetTable) -> None:
+    # An unlisted character with the mechanical core all green is NOT stale offsets and NOT a
+    # refused capture (the live run proved capture works in that exact state). The doctor points at
+    # the lighter add-the-id note, never the "unknown game version / update-offsets" runbook.
     frames = _healthy_frames()
     for fr in frames:
         fr.players[0].char_id = 999
     report = _run(frames, table)
-    assert report.runbook is not None and "update-offsets" in report.runbook
+    assert _failed_names(report) == {"char_ids_known"}
+    assert report.runbook is not None
+    assert "update-offsets" not in report.runbook
+    assert "known_char_ids" in report.runbook

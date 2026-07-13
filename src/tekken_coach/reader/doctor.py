@@ -31,7 +31,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from tekken_coach.reader.decode import FrameRead, poll_frames
-from tekken_coach.reader.faults import PATCH_RUNBOOK, MemoryReadError
+from tekken_coach.reader.faults import CHAR_UNLISTED_NOTE, PATCH_RUNBOOK, MemoryReadError
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.schemas import FrameRecord, MatchState
@@ -66,8 +66,17 @@ class DoctorReport:
 
     @property
     def runbook(self) -> str | None:
-        """The §4 runbook when the gate failed, else ``None`` (docs/02 §6 points at §4)."""
-        return None if self.ok else PATCH_RUNBOOK
+        """The remedy text when the gate failed, else ``None`` (docs/02 §6 points at §4).
+
+        A *mechanical* failure (health/frames/moves/positions) means stale offsets → the §4
+        re-derivation runbook. A ``char_ids_known``-only failure, with the mechanical core green,
+        is merely an unlisted character (not stale offsets, not a refused capture) → the lighter
+        note, so the doctor stops claiming "unknown game version — capture refused" on a build it
+        can plainly read (the live run proved capture works in exactly that state)."""
+        if self.ok:
+            return None
+        mechanical_failed = any(c.name != "char_ids_known" for c in self.failures())
+        return PATCH_RUNBOOK if mechanical_failed else CHAR_UNLISTED_NOTE
 
     def failures(self) -> list[DoctorCheck]:
         return [c for c in self.checks if not c.ok]
@@ -86,7 +95,8 @@ def _check_char_ids(frames: list[FrameRead], known_char_ids: set[int]) -> Doctor
     detail = (
         f"both char ids resolve: {ids}"
         if ok
-        else f"unknown char id(s) {unknown} not in known set — offsets likely stale"
+        else f"char id(s) {unknown} not in known set {sorted(known_char_ids)} — an unlisted "
+        "character (add its id) or, if a mechanical check also failed, a stale char_id offset"
     )
     return DoctorCheck("char_ids_known", ok, detail)
 

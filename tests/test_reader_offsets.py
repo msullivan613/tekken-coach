@@ -32,7 +32,8 @@ def test_checked_in_5_02_01_table_is_the_validated_holder_model() -> None:
     # the holder addressing model (per-player slots + an AoB code signature), not the legacy stride.
     table = select_offset_table("5.02.01", REPO_OFFSETS)
     assert table.game_version == "5.02.01"
-    assert table.known_char_ids == [6, 8]  # Jin, Kazuya — the memory id space the doctor checks
+    # Jin, Kazuya (doctor-calibration pair) + Paul, Bryan, Armor King observed live 2026-07-13.
+    assert table.known_char_ids == [0, 6, 7, 8, 39]
     assert table.players.stride is None
     assert [s.slot_offset for s in table.players.player_slots] == [0x30, 0x38]
     assert table.players.anchor.signature is not None  # the durable AoB anchor

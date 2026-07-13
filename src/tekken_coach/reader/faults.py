@@ -31,6 +31,20 @@ reader will not guess with a stale table. To restore capture after a game patch:
   4. Re-run `tekken-coach doctor` (docs/02 §6). Green -> capture is usable again.
 """
 
+# Shown when ``char_ids_known`` is the ONLY failing check — the mechanical core (health, frame
+# monotonicity, move ids, positions) all passed, so the offsets are sound and capture works. The
+# remedy is not a re-derivation; it is adding an observed char id, so this must NOT print the
+# stale-offsets runbook above (which the user's live run proved false — capture ran fine).
+CHAR_UNLISTED_NOTE = """\
+An on-screen character is not in the table's known_char_ids — but every mechanical check passed,
+so the offsets are sound and capture still works (this does not refuse capture).
+
+known_char_ids is a sanity whitelist, not the full roster. To silence this, add the observed
+char_id to assets/offsets/<version>.json "known_char_ids" (values are established by observation,
+docs/02 §6). Only treat it as stale offsets if a *mechanical* check (health/frames/moves/positions)
+also fails.
+"""
+
 
 class ReaderError(Exception):
     """Base class for all reader failures."""
