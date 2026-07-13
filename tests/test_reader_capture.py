@@ -21,7 +21,7 @@ from tekken_coach.reader.capture import (
 )
 from tekken_coach.reader.faults import DecodeError
 from tekken_coach.reader.memory_source import FakeMemorySource, MemoryImage
-from tekken_coach.reader.offsets import OffsetTable, select_offset_table
+from tekken_coach.reader.offsets import FieldSpec, OffsetTable, select_offset_table
 from tekken_coach.schemas import (
     ActionState,
     CounterState,
@@ -138,6 +138,65 @@ def test_reloaded_frames_match_the_c0_schema_exactly(tmp_path: Path, table: Offs
     raw = load_capture(out).model_dump()
     for frame_dict in raw["frames"]:
         FrameRecord.model_validate(frame_dict)
+
+
+def _derive_table(table: OffsetTable) -> OffsetTable:
+    """A copy of the table that exposes ``frames_since_round_start`` — i.e. derives its round phase.
+
+    Placed at a free player-struct offset (128, past the last legacy field at 64) so the encoder
+    round-trips it. This turns on the Stage 1 round-gating path in ``run_capture`` (docs/02 §8).
+    """
+    derived = table.model_copy(deep=True)
+    derived.players.fields["frames_since_round_start"] = FieldSpec(offset=128, kind="u32")
+    return derived
+
+
+def _arc_frame(frame: int, counter: int, p2_health: int) -> FrameRecord:
+    """One frame of an in-match arc: P1 healthy, P2 at ``p2_health``, both carrying ``counter``."""
+
+    def player(char_id: int, health: int) -> PlayerFrame:
+        return _player(char_id, 800, 1.0).model_copy(
+            update={"health": health, "frames_since_round_start": counter}
+        )
+
+    # A constant global match_state (``menu``) across every frame: the derived output varies anyway,
+    # which is the point — it comes from the counter, not from the (bogus) global phase read.
+    return FrameRecord(
+        frame=frame,
+        match_state=MatchState.menu,  # overwritten by the derived phase
+        round=0,  # overwritten by the derived round index
+        timer_ms=42000,
+        players=[player(12, 200), player(7, p2_health)],
+    )
+
+
+def test_capture_derives_the_round_phase_from_the_counter_not_the_global_read() -> None:
+    # The real-game scenario (docs/02 §8, Stage 1 round-gating): a build whose global match_phase is
+    # useless but which exposes the per-player counter. run_capture DERIVES the phase from the
+    # counter (never consulting the strict gate, so it cannot raise) and stamps a correct
+    # match_state + round over the bogus seeded global reads. Every frame encodes the SAME global
+    # phase, yet the derived arc still moves pre_round -> in_round -> round_over -> pre_round ->
+    # in_round — which could ONLY come from the counter + damage.
+    table = _derive_table(select_offset_table("2.01.01", REPO_OFFSETS))
+
+    # A 2-round arc: counter climbs then resets; P2 is KO'd (health 0) to end round 1.
+    frames = [
+        _arc_frame(1000, 10, 200),  # first frame  -> pre_round, round 1
+        _arc_frame(1001, 500, 200),  # climbing     -> in_round,  round 1
+        _arc_frame(1002, 1000, 0),  # P2 KO'd       -> round_over, round 1
+        _arc_frame(1003, 5, 200),  # counter reset  -> pre_round, round 2
+        _arc_frame(1004, 500, 200),  # climbing     -> in_round,  round 2
+    ]
+    capture = run_capture(_source(frames, table), table, 5, game_version="2.01.01")
+
+    assert [fr.match_state for fr in capture.frames] == [
+        MatchState.pre_round,
+        MatchState.in_round,
+        MatchState.round_over,
+        MatchState.pre_round,
+        MatchState.in_round,
+    ]
+    assert [fr.round for fr in capture.frames] == [1, 1, 1, 2, 2]
 
 
 def test_capture_file_rejects_a_malformed_frame() -> None:

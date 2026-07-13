@@ -36,14 +36,17 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from tekken_coach.reader.decode import (
+    DerivedPhase,
+    RoundPhaseTracker,
     decode_frame,
+    derive_phase,
     read_scalar,
     resolve_anchor,
     resolve_player_base,
 )
 from tekken_coach.reader.faults import ReaderError, classify_fault
 from tekken_coach.reader.memory_source import MemorySource
-from tekken_coach.reader.monitor import PlayerView, changed_views, format_view, views_of
+from tekken_coach.reader.monitor import PlayerView, monitor_lines, views_of
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.reader.probe import ChangeRecord, PollSample, WatchPoint, parse_watch
 from tekken_coach.reader.version import GAME_PROCESS_NAME
@@ -422,16 +425,24 @@ def probe_state_main(args: argparse.Namespace) -> int:
     return 0
 
 
-def _live_frame_views(
+def _live_monitor_stream(
     source: MemorySource, table: OffsetTable, interval: float
-) -> Iterator[tuple[float, list[PlayerView]]]:  # pragma: no cover - live loop; consumers are tested
-    """Decode both players every ``interval`` s, yielding ``(t, views)`` — the monitor feed."""
+) -> Iterator[
+    tuple[float, DerivedPhase, list[PlayerView]]
+]:  # pragma: no cover - live loop; consumers are tested
+    """Decode both players every ``interval`` s, deriving the round phase — the monitor feed.
+
+    Threads a single :class:`RoundPhaseTracker` (the one stateful thing) so the ``[match]`` line can
+    show the derived phase + round + counter alongside the per-player decoded state (docs/02 §8).
+    """
     import time  # noqa: PLC0415
 
+    tracker = RoundPhaseTracker(table.sanity.round_start_health)
     started = time.monotonic()
     while True:
-        views = views_of(decode_frame(source, table))
-        yield time.monotonic() - started, views
+        frame = decode_frame(source, table)
+        phase = derive_phase(tracker, table, frame)
+        yield time.monotonic() - started, phase, views_of(frame)
         time.sleep(interval)
 
 
@@ -441,7 +452,9 @@ def monitor_main(args: argparse.Namespace) -> int:
     Attaches read-only, decodes both players every poll, and prints a line whenever a player's
     decoded state (``action_state`` + situational flags) changes — so you can perform each state and
     check the reader agrees (stand -> neutral, block -> blockstun, get juggled -> hitstun+juggle).
-    ``--raw`` appends the raw encoded state words, so a mis-decode is diagnosable on the spot.
+    A ``[match]`` line shows the derived match_state + round + raw counter whenever the phase
+    changes (Stage 1 round-gating verification). ``--raw`` appends the raw encoded state words, so a
+    mis-decode is diagnosable on the spot.
     """
     from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
     from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
@@ -463,8 +476,10 @@ def monitor_main(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     try:
-        for t, view in changed_views(_live_frame_views(source, table, args.interval)):
-            print(f"{t:>7.2f}  {format_view(view, show_raw=args.raw)}", flush=True)
+        for line in monitor_lines(
+            _live_monitor_stream(source, table, args.interval), show_raw=args.raw
+        ):
+            print(line, flush=True)
     except ReaderError as exc:
         return _report_fault(exc)
     except KeyboardInterrupt:

@@ -117,6 +117,10 @@
         "offset": 5496,
         "kind": "i32"
       },
+      "frames_since_round_start": {
+        "offset": 5568,
+        "kind": "u32"
+      },
       "recovery_state": {
         "offset": 1460,
         "kind": "u32"

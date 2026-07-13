@@ -52,7 +52,7 @@ from tekken_coach.reader.offsets import (
     OffsetTable,
     ScalarKind,
 )
-from tekken_coach.reader.state import StateSignal, classify_state
+from tekken_coach.reader.state import MODE_OFFLINE, StateSignal, classify_state
 from tekken_coach.schemas import (
     ActionState,
     CounterState,
@@ -379,6 +379,11 @@ def _decode_player(source: MemorySource, table: OffsetTable, index: int) -> Play
     else:
         health = i("health")
 
+    # The per-round frame counter (docs/02 §8, Stage 1 round-gating) — present on the real T8 table,
+    # absent on the legacy layout (defaults to 0 there, which the phase deriver never consults since
+    # legacy tables keep the calibrated global match_phase instead).
+    counter = i("frames_since_round_start") if "frames_since_round_start" in fields else 0
+
     return PlayerFrame(
         char_id=i("char_id"),
         move_id=i("move_id"),
@@ -387,6 +392,7 @@ def _decode_player(source: MemorySource, table: OffsetTable, index: int) -> Play
         health=health,
         pos=_read_position(source, table, base),
         facing=facing,
+        frames_since_round_start=counter,
         block_stun=facts.block_stun,
         hit_stun=facts.hit_stun,
         counter_state=CounterState(counter_name),
@@ -494,6 +500,124 @@ def read_state_signal(source: MemorySource, table: OffsetTable) -> StateSignal:
     return signal
 
 
+# ---------------------------------------------------------------------------
+# Derived round phase (Stage 1 round-gating, docs/02 §8)
+# ---------------------------------------------------------------------------
+#
+# The real Tekken 8 build exposes no usable *global* match-phase enum — the seeded global
+# match_phase/game_mode offsets read a stale constant and an inert word (project memory
+# ``capture-round-gating-deferred``). But every player struct carries ``frames_since_round_start``,
+# a per-round frame counter that resets to ~0 at each round start and rises at 60 fps during play.
+# :class:`RoundPhaseTracker` *derives* the match phase + round index from that counter (plus each
+# player's damage for the KO/round-decided edge), replacing the bogus global reads. This is the one
+# stateful thing in the read path: :func:`decode_frame` stays mechanical, and the capture sources
+# thread a single tracker across polls.
+
+# A per-round counter drop larger than this marks a round reset. Within a round the counter only
+# rises (to ~1500); observed resets drop by well over a thousand (e.g. 1381 -> 2), so 50 cleanly
+# separates a round boundary from a mere poll gap or a paused (frozen) counter.
+ROUND_RESET_DROP = 50
+
+
+@dataclass(frozen=True)
+class DerivedPhase:
+    """The round phase derived from the per-player frame counter (Stage 1 round-gating).
+
+    ``match_state`` is one of :attr:`~tekken_coach.schemas.MatchState.pre_round` /
+    ``in_round`` / ``round_over`` — never ``match_over`` (menu/results/match-over detection is
+    Stage 2, keyed on the in-match flag, not derivable from this counter). ``round`` is the 1-based
+    round index, incremented on each detected reset.
+    """
+
+    match_state: MatchState
+    round: int
+
+
+class RoundPhaseTracker:
+    """Derive the match phase + round index from ``frames_since_round_start`` (docs/02 §8).
+
+    Fed successive frames' counter and both players' damage, it emits a :class:`DerivedPhase` per
+    frame. It needs the *previous* counter to spot a reset, so it is stateful — but it is the only
+    stateful thing here, and the mechanical :func:`decode_frame` stays pure.
+
+    The rules (calibrated by observation, offline Bryan vs Paul on 5.02.01):
+
+    * **reset** — the first frame, or the counter dropping by more than :data:`ROUND_RESET_DROP` —
+      begins a new round: increment ``round``, clear the round-over latch, emit ``pre_round``. The
+      KO check is skipped on the boundary frame, where damage is mid-reset/stale.
+    * **round over** — either player's damage reaching ``round_start_health`` (a KO) latches
+      ``round_over`` until the next reset. The round winner's damage never approaches the threshold,
+      so it separates them cleanly. A frozen counter (a pause) is *not* a reset, so it never
+      misfires a boundary.
+
+    It deliberately cannot tell a results screen from a fresh round: after the final KO the counter
+    resets and climbs again just like a new round, so a post-match reset reads as a (spurious) new
+    round start. Distinguishing that is Stage 2 (the in-match flag), not derivable from the counter.
+    """
+
+    def __init__(self, round_start_health: int) -> None:
+        self._ko_threshold = round_start_health
+        self._prev_counter: int | None = None
+        self._round = 0
+        self._round_over = False
+
+    def update(self, counter: int, p1_damage: int, p2_damage: int) -> DerivedPhase:
+        """Advance the tracker by one frame and return the derived phase for it."""
+        reset = self._prev_counter is None or (self._prev_counter - counter > ROUND_RESET_DROP)
+        self._prev_counter = counter
+        if reset:
+            self._round += 1
+            self._round_over = False
+            return DerivedPhase(MatchState.pre_round, self._round)
+        if p1_damage >= self._ko_threshold or p2_damage >= self._ko_threshold:
+            self._round_over = True
+        state = MatchState.round_over if self._round_over else MatchState.in_round
+        return DerivedPhase(state, self._round)
+
+
+def table_derives_round_phase(table: OffsetTable) -> bool:
+    """Whether this build's match phase must be *derived* from the per-player counter (Stage 1).
+
+    True when the player struct exposes ``frames_since_round_start`` — the real T8 holder builds,
+    whose global match_phase/game_mode are un-calibratable. False for the legacy tables that carry
+    real global phase codes, which keep the :func:`read_state_signal` global path unchanged.
+    """
+    return "frames_since_round_start" in table.players.fields
+
+
+def derive_phase(
+    tracker: RoundPhaseTracker, table: OffsetTable, frame: FrameRecord
+) -> DerivedPhase:
+    """Derive one frame's round phase by feeding the counter + both damages to ``tracker``.
+
+    The counter is mirrored on both players, so P1's is read. Damage is reconstructed from the
+    decoded (computed) health — ``round_start_health - health`` equals ``damage_taken`` below the
+    KO threshold and saturates at it once a player is KO'd, which is exactly what the KO edge needs.
+    """
+    hp = table.sanity.round_start_health
+    p0, p1 = frame.players
+    return tracker.update(p0.frames_since_round_start, hp - p0.health, hp - p1.health)
+
+
+def phase_signal(phase: DerivedPhase) -> StateSignal:
+    """Build the capture :class:`StateSignal` from a derived round phase (Stage 1 round-gating).
+
+    ``game_mode`` is **user-driven** — we do not detect online vs. offline — so ``online`` is always
+    False and an active round reads as a live match. Menu/results/idle detection is Stage 2 (the
+    in-match flag), so Stage 1 cannot yet report ``idle`` on the results screen.
+    """
+    return classify_state(phase.match_state, MODE_OFFLINE)
+
+
+def stamp_phase(frame: FrameRecord, phase: DerivedPhase) -> FrameRecord:
+    """Return ``frame`` with its ``match_state`` + ``round`` replaced by the derived phase (§8).
+
+    The seeded global match_phase/round reads are bogus on the real build; the capture path stamps
+    the tracker's verdict over them so the persisted FrameRecord carries a correct phase and round.
+    """
+    return frame.model_copy(update={"match_state": phase.match_state, "round": phase.round})
+
+
 @dataclass(frozen=True)
 class FrameRead:
     """One frame plus the dropped-frame accounting for it (docs/02 §7, docs/04 §4.7).
@@ -561,16 +685,23 @@ def poll_frames(
 
 # ``MemoryReadError`` is re-exported for callers that catch it around a poll loop.
 __all__ = [
+    "ROUND_RESET_DROP",
+    "DerivedPhase",
     "FrameRead",
     "FrameReader",
     "MemoryReadError",
     "PlayerStateFacts",
+    "RoundPhaseTracker",
     "decode_frame",
     "decode_state",
+    "derive_phase",
+    "phase_signal",
     "poll_frames",
     "read_scalar",
     "read_state_signal",
     "resolve_anchor",
     "resolve_component",
     "resolve_player_base",
+    "stamp_phase",
+    "table_derives_round_phase",
 ]

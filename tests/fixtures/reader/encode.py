@@ -160,6 +160,9 @@ def encode_player_into(
         "facing": ("i32", pf.facing),
         "counter_state": ("u32", counter_code),
         "heat_timer_ms": ("u32", pf.heat.timer_ms),
+        # The per-round frame counter the phase deriver reads (docs/02 §8); packed only when the
+        # table declares the field (the real T8 layout), skipped on the legacy layout below.
+        "frames_since_round_start": ("u32", pf.frames_since_round_start),
     }
     # health is either a direct field or computed from damage_taken (docs/02 §3).
     if table.players.max_health is not None:

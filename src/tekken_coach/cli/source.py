@@ -13,11 +13,13 @@ Two implementations share the :class:`CaptureSource` protocol:
 * :class:`ScriptedCaptureSource` — the **fake** path. Replays a pre-built list of :class:`Poll`s
   with no game, no sleep, and deterministically. Tests build the live/clean lifecycles out of these.
 
-⚠️ Real-game bring-up is **blocked on deferred round-gating** (project memory
-``capture-round-gating-deferred``): :func:`read_state_signal` raises on build 5.02.01 because
-``match_phase`` / ``game_mode`` are not calibrated yet, so :class:`ReaderCaptureSource` cannot fully
-run live today. That is out of scope for C6 — the seam and the whole state machine are exercised
-through :class:`ScriptedCaptureSource`, and ``coach <log>`` works with no capture at all.
+Real-game phase sourcing (docs/02 §8, Stage 1 round-gating): the real T8 build (5.02.01) has no
+usable global match-phase enum, so :class:`ReaderCaptureSource` *derives* the phase per frame from
+the per-player ``frames_since_round_start`` counter via a single
+:class:`~tekken_coach.reader.decode.RoundPhaseTracker`, building the :class:`StateSignal` from the
+derived phase instead of the (raising) strict :func:`read_state_signal`. A legacy table with real
+global phase codes keeps the :func:`read_state_signal` path. The whole state machine is also
+exercised through :class:`ScriptedCaptureSource`, and ``coach <log>`` works with no capture at all.
 
 Read-only, by construction: this module reads frames and signals; it never writes memory or injects
 input (the reader package has no such primitive — docs/02 §2).
@@ -30,7 +32,15 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol
 
-from tekken_coach.reader.decode import FrameReader, read_state_signal
+from tekken_coach.reader.decode import (
+    FrameReader,
+    RoundPhaseTracker,
+    derive_phase,
+    phase_signal,
+    read_state_signal,
+    stamp_phase,
+    table_derives_round_phase,
+)
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.reader.state import StateSignal
@@ -107,12 +117,11 @@ class ReaderCaptureSource:
     """The real :class:`CaptureSource` over the live reader (docs/02, docs/01 §4.3).
 
     ``attach`` opens the process read-only, detects the running build, and selects the matching
-    offset table (failing closed with the §4 runbook on an unknown version). ``polls`` then reads
-    the strict :func:`read_state_signal` and decodes a full :func:`FrameRecord` each cadence tick.
-
-    Blocked live today: :func:`read_state_signal` raises on the uncalibrated 5.02.01 phase/mode
-    offsets (deferred round-gating). The class is complete and correct against a calibrated build;
-    the calibration is a separate live step (out of scope for C6).
+    offset table (failing closed with the §4 runbook on an unknown version). ``polls`` decodes a
+    full :func:`FrameRecord` each cadence tick and sources the gating :class:`StateSignal` two ways
+    (docs/02 §8, Stage 1 round-gating): on the real T8 build it *derives* the round phase from the
+    per-player counter through a :class:`RoundPhaseTracker` and stamps it over the frame; on a
+    legacy table with real global phase codes it uses the strict :func:`read_state_signal`.
     """
 
     def __init__(
@@ -157,12 +166,24 @@ class ReaderCaptureSource:
         assert self._source is not None and self._table is not None, "attach() before polls()"
         source = self._source
         table = self._table
-        reader = FrameReader()
+        reader = FrameReader()  # wraps decode_frame with dropped-frame accounting (docs/02 §7)
+        # The round-phase deriver is the one stateful thing threaded across polls (docs/02 §8): the
+        # real T8 build has no usable global phase enum, so we derive it from the player counter.
+        derives = table_derives_round_phase(table)
+        tracker = RoundPhaseTracker(table.sanity.round_start_health) if derives else None
         while True:
-            # Strict signal first (it decides whether to record), then the full frame the segmenter
-            # consumes. FrameReader wraps decode_frame with dropped-frame accounting (docs/02 §7).
-            signal = read_state_signal(source, table)
-            frame = reader.read_frame(source, table).frame
+            if tracker is not None:
+                # Decode the frame, derive its round phase from the counter, and stamp the phase
+                # over the bogus seeded global reads. The signal is built from the derived phase.
+                frame = reader.read_frame(source, table).frame
+                phase = derive_phase(tracker, table, frame)
+                signal = phase_signal(phase)
+                frame = stamp_phase(frame, phase)
+            else:
+                # Legacy build with real global phase codes: strict signal first (it decides whether
+                # to record), then the full frame the segmenter consumes.
+                signal = read_state_signal(source, table)
+                frame = reader.read_frame(source, table).frame
             yield Poll(frame=frame, signal=signal)
             time.sleep(self._interval)
 

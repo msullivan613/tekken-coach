@@ -15,23 +15,36 @@ Pure vs. impure: :func:`run_capture`, :func:`capture_from_reads`, :func:`write_c
 :func:`load_capture` are source-agnostic and offline-tested against a ``FakeMemorySource``. Only
 :func:`capture_live` attaches to a real Windows process (user-run).
 
-This is the **recording** side of the diagnostic/capture boundary (docs/02 §6): :func:`run_capture`
-reads the match-state signal through the *strict* decode first and refuses outright on a build whose
-``match_phase`` codes are uncalibrated, where ``decode_frame`` would merely report
-``MatchState.unknown``. Describing a frame you cannot fully read is diagnosis; writing it to disk is
-not.
+This is the **recording** side of the diagnostic/capture boundary (docs/02 §6). How the match phase
+is sourced depends on the build (docs/02 §8, Stage 1 round-gating): the real T8 table *derives* it
+per frame from the per-player ``frames_since_round_start`` counter (its global match_phase codes are
+un-calibratable), while a legacy table with real global phase codes reads the match-state signal
+through the *strict* decode first and refuses outright on uncalibrated codes — where
+``decode_frame`` would merely report ``MatchState.unknown``. Describing a frame you cannot fully
+read is diagnosis; writing it to disk is not.
 
 Nothing here writes to the game — it reads frames and writes a *file* (docs/02 §2).
 """
 
 from __future__ import annotations
 
+import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from tekken_coach.reader.decode import FrameRead, poll_frames, read_state_signal
+from tekken_coach.reader.decode import (
+    FrameRead,
+    FrameReader,
+    RoundPhaseTracker,
+    derive_phase,
+    poll_frames,
+    read_state_signal,
+    stamp_phase,
+    table_derives_round_phase,
+)
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.schemas import FrameRecord
@@ -39,6 +52,11 @@ from tekken_coach.schemas import FrameRecord
 # Bump only on a breaking change to the capture-file envelope (the FrameRecord schema has its own
 # version in docs/03 §6; this versions the wrapper).
 CAPTURE_FORMAT_VERSION = "1.0.0"
+
+# Live poll cadence: a real game advances its frame + round counters every ~16.7 ms (60 fps), so a
+# faster poll re-reads the same frame and the round deriver would never see the counter move. Only
+# the live path uses it; the offline suite polls back-to-back (interval 0) on a scripted source.
+LIVE_POLL_INTERVAL = 0.05
 
 
 class CaptureMeta(BaseModel):
@@ -79,6 +97,7 @@ def run_capture(
     count: int,
     *,
     game_version: str,
+    interval: float = 0.0,
 ) -> CaptureFile:
     """Poll ``count`` frames from ``source`` and assemble a :class:`CaptureFile`.
 
@@ -87,18 +106,50 @@ def run_capture(
     :class:`~tekken_coach.reader.faults.MemoryReadError` if the process becomes unreadable mid-poll
     (docs/02 §7) — the caller classifies it via :func:`~tekken_coach.reader.faults.classify_fault`.
 
-    **This is a path that records, so it is gated** (docs/01 §4.3, docs/02 §6). It reads the match
-    state signal once up front, through the *strict* decode, and refuses the whole capture if the
-    build's ``match_phase`` codes are uncalibrated. :func:`~tekken_coach.reader.decode.decode_frame`
-    tolerates that (it decodes ``MatchState.unknown``) so the doctor can diagnose an uncalibrated
-    build — but a capture that cannot tell an online ranked match from a practice round must not
-    write frames to disk. Before the tolerant decode existed, ``decode_frame`` raising *was* this
-    refusal; making the diagnostic lenient without restoring the gate here would have silently
-    turned a hard failure into a directory of garbage-phase captures.
+    Two ways the match phase is sourced (docs/02 §8, Stage 1 round-gating), by
+    :func:`~tekken_coach.reader.decode.table_derives_round_phase`:
+
+    * **derived** — on the real T8 build, whose global match_phase/game_mode are un-calibratable,
+      the phase is derived per frame from the per-player ``frames_since_round_start`` counter by a
+      single :class:`~tekken_coach.reader.decode.RoundPhaseTracker`, and stamped over each frame's
+      bogus seeded global reads. There is nothing to refuse — the phase is computed, not trusted.
+    * **gated** — on a legacy table with real global phase codes, it reads the match-state signal
+      once up front through the *strict* decode and refuses the whole capture if those codes are
+      uncalibrated (docs/01 §4.3): a capture that cannot tell an online ranked match from a practice
+      round must not write frames to disk.
+
+    ``interval`` seconds between polls (0 = back-to-back, for the offline suite); a live capture
+    must pass a non-zero interval so the game's frame + round counters advance between reads.
     """
-    read_state_signal(source, table)
-    reads = poll_frames(source, table, count)
+    if table_derives_round_phase(table):
+        reads = _poll_with_derived_phase(source, table, count, interval)
+    else:
+        read_state_signal(source, table)  # strict gate: legacy builds with real global phase codes
+        reads = poll_frames(source, table, count, interval=interval)
     return capture_from_reads(reads, game_version=game_version)
+
+
+def _poll_with_derived_phase(
+    source: MemorySource, table: OffsetTable, count: int, interval: float
+) -> list[FrameRead]:
+    """Poll ``count`` frames, deriving + stamping the round phase on each (Stage 1 round-gating).
+
+    Threads one :class:`~tekken_coach.reader.decode.RoundPhaseTracker` across the poll loop (the
+    only stateful thing) and replaces each frame's seeded global match_state/round with the
+    tracker's verdict. Mirrors :func:`~tekken_coach.reader.decode.poll_frames`'s gap accounting.
+    """
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    reader = FrameReader()
+    tracker = RoundPhaseTracker(table.sanity.round_start_health)
+    reads: list[FrameRead] = []
+    for i in range(count):
+        if interval > 0 and i > 0:
+            time.sleep(interval)
+        read = reader.read_frame(source, table)
+        phase = derive_phase(tracker, table, read.frame)
+        reads.append(replace(read, frame=stamp_phase(read.frame, phase)))
+    return reads
 
 
 def write_capture(path: str | Path, capture: CaptureFile) -> None:
@@ -135,6 +186,6 @@ def capture_live(
     source = WinMemorySource(process_name)
     version = version_override or detect_running_version(process_name)
     table = select_offset_table(version, offsets_dir)
-    capture = run_capture(source, table, count, game_version=version)
+    capture = run_capture(source, table, count, game_version=version, interval=LIVE_POLL_INTERVAL)
     write_capture(out_path, capture)
     return capture

@@ -196,6 +196,12 @@ class PlayerFrame(BaseModel):
     heat: HeatState
     rage: bool  # Rage available
     input: InputState | None = None  # may be null if inputs are not resolvable this frame
+    # Per-round frame counter (``frames_since_round_start``), mirrored identically on both player
+    # structs — ticks at 60 fps during active play, freezes while paused, and resets to ~0 at each
+    # round start. The reader derives the match phase + round index from it (Stage 1 round-gating,
+    # docs/02 §8) because the real T8 build exposes no usable global match-phase enum. Additive
+    # minor (03 §6): consumers ignore it; ``0`` on the legacy layout, which has no such counter.
+    frames_since_round_start: int = 0
     # The raw encoded state words this frame's flags were decoded from (03 §1). Tekken 8 stores
     # encoded state (``simple_move_state``, ``stun_type``, ...), not the per-flag booleans above, so
     # the reader maps value -> meaning through a calibratable data map (02 §8). Carrying the raw

@@ -6,14 +6,17 @@ frame -> views reduction, the console formatting, and the emit-on-change stream.
 
 from __future__ import annotations
 
+from tekken_coach.reader.decode import DerivedPhase
 from tekken_coach.reader.monitor import (
     PlayerView,
     changed_views,
+    format_phase,
     format_view,
+    monitor_lines,
     view_of,
     views_of,
 )
-from tekken_coach.schemas import ActionState, FrameRecord
+from tekken_coach.schemas import ActionState, FrameRecord, MatchState
 from tests.factories import make_frame_record
 
 
@@ -40,6 +43,17 @@ def test_view_of_no_flags_reads_clean() -> None:
     v = view_of(1, fr.players[1])
     assert v.player == 2 and v.flags == ()
     assert "[-]" in format_view(v)  # empty flag set renders as a dash
+
+
+def test_view_carries_the_round_counter_but_does_not_key_on_it() -> None:
+    # The per-round counter rides the line for eyeballing (docs/02 §8) but is NOT in the change key,
+    # so it does not flood a held state to one line per poll.
+    fr = _frame_with(ActionState.neutral)
+    pf = fr.players[0].model_copy(update={"frames_since_round_start": 742})
+    v = view_of(0, pf)
+    assert v.counter == 742
+    assert "cnt=742" in format_view(v)
+    assert 742 not in v.key  # counter is deliberately excluded from the change key
 
 
 def test_format_view_optionally_appends_raw_words() -> None:
@@ -112,3 +126,36 @@ def test_changed_views_tracks_players_independently() -> None:
     emitted = list(changed_views([(0.0, both_default), (0.1, views_of(p2_hit))]))
     # frame 0: both new; frame 1: only P2 changed
     assert [(v.player, v.action_state) for _, v in emitted][2:] == [(2, "hitstun")]
+
+
+def test_format_phase_shows_state_round_and_counter() -> None:
+    line = format_phase("in_round", 2, 813)
+    assert "in_round" in line and "round=2" in line and "counter=813" in line
+
+
+def test_monitor_lines_emits_phase_on_change_and_views_on_change() -> None:
+    # The live-loop core: a [match] line whenever the derived phase changes, per-player lines
+    # whenever a player's decoded state changes — both on-change so a held situation is one line.
+    def views_at(counter: int, p1_state: ActionState) -> list[PlayerView]:
+        fr = _frame_with(p1_state)
+        p1 = fr.players[0].model_copy(update={"frames_since_round_start": counter})
+        p2 = fr.players[1].model_copy(update={"frames_since_round_start": counter})
+        return views_of(fr.model_copy(update={"players": [p1, p2]}))
+
+    stream = [
+        (0.0, DerivedPhase(MatchState.pre_round, 1), views_at(1, ActionState.neutral)),
+        (0.1, DerivedPhase(MatchState.in_round, 1), views_at(60, ActionState.neutral)),
+        (0.2, DerivedPhase(MatchState.in_round, 1), views_at(120, ActionState.attack)),
+        (0.3, DerivedPhase(MatchState.round_over, 1), views_at(180, ActionState.attack)),
+    ]
+    lines = list(monitor_lines(stream))
+    match_lines = [ln for ln in lines if "[match]" in ln]
+    # Three distinct phases -> three [match] lines (in_round repeats but does not re-emit).
+    assert [ln.split("[match]")[1].split()[0] for ln in match_lines] == [
+        "pre_round",
+        "in_round",
+        "round_over",
+    ]
+    # P1's state change (neutral -> attack) surfaces; the held neutral does not repeat every poll.
+    assert sum("attack" in ln for ln in lines) == 1
+    assert sum("P1" in ln and "neutral" in ln for ln in lines) == 1
