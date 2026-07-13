@@ -212,8 +212,14 @@ def encode_frame(
     *,
     module_base: int = DEFAULT_MODULE_BASE,
     game_mode: str = "practice",
+    match_flag: int = 0,
 ) -> MemoryImage:
-    """Encode a whole ``FrameRecord`` into a ``{address: bytes}`` image for a fake source."""
+    """Encode a whole ``FrameRecord`` into a ``{address: bytes}`` image for a fake source.
+
+    ``match_flag`` is the Stage 2 global word (docs/02 §8, ``@0xd444``): it is *not* a FrameRecord
+    field (it is an internal gate input), so the caller supplies it here. It is planted only when
+    the table declares the global field, so legacy tables that don't carry it are unaffected.
+    """
     image: dict[int, bytes] = {}
     g = table.global_struct
     gbase = module_base + g.anchor.base_offset
@@ -225,9 +231,11 @@ def encode_frame(
         "game_mode": ("u32", mode_code),
         "round": ("u32", fr.round),
         "timer_ms": ("u32", fr.timer_ms),
+        "match_flag": ("u32", match_flag),
     }
     for name, (kind, value) in globals_.items():
-        image[gbase + g.fields[name].offset] = pack_scalar(kind, value)
+        if name in g.fields:  # match_flag rides only on tables that declare it (Stage 2)
+            image[gbase + g.fields[name].offset] = pack_scalar(kind, value)
 
     pbase = module_base + table.players.anchor.base_offset
     stride = table.players.stride

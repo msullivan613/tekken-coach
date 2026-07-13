@@ -128,9 +128,9 @@ def test_changed_views_tracks_players_independently() -> None:
     assert [(v.player, v.action_state) for _, v in emitted][2:] == [(2, "hitstun")]
 
 
-def test_format_phase_shows_state_round_and_counter() -> None:
-    line = format_phase("in_round", 2, 813)
-    assert "in_round" in line and "round=2" in line and "counter=813" in line
+def test_format_phase_shows_state_round_counter_and_flag() -> None:
+    line = format_phase("in_round", 2, 813, 73)
+    assert "in_round" in line and "round=2" in line and "counter=813" in line and "flag=73" in line
 
 
 def test_monitor_lines_emits_phase_on_change_and_views_on_change() -> None:
@@ -143,10 +143,10 @@ def test_monitor_lines_emits_phase_on_change_and_views_on_change() -> None:
         return views_of(fr.model_copy(update={"players": [p1, p2]}))
 
     stream = [
-        (0.0, DerivedPhase(MatchState.pre_round, 1), views_at(1, ActionState.neutral)),
-        (0.1, DerivedPhase(MatchState.in_round, 1), views_at(60, ActionState.neutral)),
-        (0.2, DerivedPhase(MatchState.in_round, 1), views_at(120, ActionState.attack)),
-        (0.3, DerivedPhase(MatchState.round_over, 1), views_at(180, ActionState.attack)),
+        (0.0, DerivedPhase(MatchState.pre_round, 1), 73, views_at(1, ActionState.neutral)),
+        (0.1, DerivedPhase(MatchState.in_round, 1), 73, views_at(60, ActionState.neutral)),
+        (0.2, DerivedPhase(MatchState.in_round, 1), 73, views_at(120, ActionState.attack)),
+        (0.3, DerivedPhase(MatchState.round_over, 1), 73, views_at(180, ActionState.attack)),
     ]
     lines = list(monitor_lines(stream))
     match_lines = [ln for ln in lines if "[match]" in ln]
@@ -159,3 +159,17 @@ def test_monitor_lines_emits_phase_on_change_and_views_on_change() -> None:
     # P1's state change (neutral -> attack) surfaces; the held neutral does not repeat every poll.
     assert sum("attack" in ln for ln in lines) == 1
     assert sum("P1" in ln and "neutral" in ln for ln in lines) == 1
+
+
+def test_monitor_lines_flag_rides_line_but_does_not_drive_reemit() -> None:
+    # The raw match_flag shows on the [match] line, but (like the counter) it is NOT in the change
+    # key: a churning flag under a held phase must not flood one [match] line per poll.
+    views = views_of(_frame_with(ActionState.neutral))
+    stream = [
+        (0.0, DerivedPhase(MatchState.menu, 0), 16, views),
+        (0.1, DerivedPhase(MatchState.menu, 0), 40, views),  # flag churns, phase held
+        (0.2, DerivedPhase(MatchState.menu, 0), 56, views),
+    ]
+    match_lines = [ln for ln in monitor_lines(stream) if "[match]" in ln]
+    assert len(match_lines) == 1  # held menu phase -> one line despite the churning flag
+    assert "flag=16" in match_lines[0]  # shows the flag at first sight

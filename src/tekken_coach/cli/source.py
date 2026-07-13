@@ -13,12 +13,13 @@ Two implementations share the :class:`CaptureSource` protocol:
 * :class:`ScriptedCaptureSource` — the **fake** path. Replays a pre-built list of :class:`Poll`s
   with no game, no sleep, and deterministically. Tests build the live/clean lifecycles out of these.
 
-Real-game phase sourcing (docs/02 §8, Stage 1 round-gating): the real T8 build (5.02.01) has no
-usable global match-phase enum, so :class:`ReaderCaptureSource` *derives* the phase per frame from
-the per-player ``frames_since_round_start`` counter via a single
-:class:`~tekken_coach.reader.decode.RoundPhaseTracker`, building the :class:`StateSignal` from the
-derived phase instead of the (raising) strict :func:`read_state_signal`. A legacy table with real
-global phase codes keeps the :func:`read_state_signal` path. The whole state machine is also
+Real-game phase sourcing (docs/02 §8, round-gating): the real T8 build (5.02.01) has no usable
+global match-phase enum, so :class:`ReaderCaptureSource` *derives* the full ``menu``…``match_over``
+phase per frame from the per-player ``frames_since_round_start`` counter plus the global
+``match_flag`` word via a single :class:`~tekken_coach.reader.decode.MatchPhaseTracker`, building
+the :class:`StateSignal` from the derived phase instead of the (raising) strict
+:func:`read_state_signal`. A legacy table with real global phase codes keeps the
+:func:`read_state_signal` path. The whole state machine is also
 exercised through :class:`ScriptedCaptureSource`, and ``coach <log>`` works with no capture at all.
 
 Read-only, by construction: this module reads frames and signals; it never writes memory or injects
@@ -34,9 +35,10 @@ from typing import Protocol
 
 from tekken_coach.reader.decode import (
     FrameReader,
-    RoundPhaseTracker,
-    derive_phase,
+    MatchPhaseTracker,
+    derive_match_phase,
     phase_signal,
+    read_match_flag,
     read_state_signal,
     stamp_phase,
     table_derives_round_phase,
@@ -167,16 +169,19 @@ class ReaderCaptureSource:
         source = self._source
         table = self._table
         reader = FrameReader()  # wraps decode_frame with dropped-frame accounting (docs/02 §7)
-        # The round-phase deriver is the one stateful thing threaded across polls (docs/02 §8): the
-        # real T8 build has no usable global phase enum, so we derive it from the player counter.
+        # The match-phase deriver is the one stateful thing threaded across polls (docs/02 §8): the
+        # real T8 build has no usable global phase enum, so we derive the full menu…match_over phase
+        # from the player counter plus the global match_flag word.
         derives = table_derives_round_phase(table)
-        tracker = RoundPhaseTracker(table.sanity.round_start_health) if derives else None
+        tracker = MatchPhaseTracker(table.sanity.round_start_health) if derives else None
         while True:
             if tracker is not None:
-                # Decode the frame, derive its round phase from the counter, and stamp the phase
-                # over the bogus seeded global reads. The signal is built from the derived phase.
+                # Decode the frame, read the match_flag, derive the full match phase, and stamp it
+                # over the bogus seeded global reads. The signal is built from the derived phase
+                # (classify_state maps menu -> idle, match_over -> a live_match edge).
                 frame = reader.read_frame(source, table).frame
-                phase = derive_phase(tracker, table, frame)
+                match_flag = read_match_flag(source, table)
+                phase = derive_match_phase(tracker, table, frame, match_flag)
                 signal = phase_signal(phase)
                 frame = stamp_phase(frame, phase)
             else:

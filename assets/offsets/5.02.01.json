@@ -16,6 +16,10 @@
         "offset": 53976,
         "kind": "u32"
       },
+      "match_flag": {
+        "offset": 54340,
+        "kind": "u32"
+      },
       "match_phase": {
         "offset": 54440,
         "kind": "u32"

@@ -38,9 +38,10 @@ from pydantic import BaseModel, Field
 from tekken_coach.reader.decode import (
     FrameRead,
     FrameReader,
-    RoundPhaseTracker,
-    derive_phase,
+    MatchPhaseTracker,
+    derive_match_phase,
     poll_frames,
+    read_match_flag,
     read_state_signal,
     stamp_phase,
     table_derives_round_phase,
@@ -110,9 +111,10 @@ def run_capture(
     :func:`~tekken_coach.reader.decode.table_derives_round_phase`:
 
     * **derived** — on the real T8 build, whose global match_phase/game_mode are un-calibratable,
-      the phase is derived per frame from the per-player ``frames_since_round_start`` counter by a
-      single :class:`~tekken_coach.reader.decode.RoundPhaseTracker`, and stamped over each frame's
-      bogus seeded global reads. There is nothing to refuse — the phase is computed, not trusted.
+      the phase is derived per frame from the per-player ``frames_since_round_start`` counter plus
+      the global ``match_flag`` word by a single
+      :class:`~tekken_coach.reader.decode.MatchPhaseTracker`, and stamped over each frame's bogus
+      seeded global reads. There is nothing to refuse — the phase is computed, not trusted.
     * **gated** — on a legacy table with real global phase codes, it reads the match-state signal
       once up front through the *strict* decode and refuses the whole capture if those codes are
       uncalibrated (docs/01 §4.3): a capture that cannot tell an online ranked match from a practice
@@ -132,22 +134,25 @@ def run_capture(
 def _poll_with_derived_phase(
     source: MemorySource, table: OffsetTable, count: int, interval: float
 ) -> list[FrameRead]:
-    """Poll ``count`` frames, deriving + stamping the round phase on each (Stage 1 round-gating).
+    """Poll ``count`` frames, deriving + stamping the match phase on each (round-gating, §8).
 
-    Threads one :class:`~tekken_coach.reader.decode.RoundPhaseTracker` across the poll loop (the
+    Threads one :class:`~tekken_coach.reader.decode.MatchPhaseTracker` across the poll loop (the
     only stateful thing) and replaces each frame's seeded global match_state/round with the
-    tracker's verdict. Mirrors :func:`~tekken_coach.reader.decode.poll_frames`'s gap accounting.
+    verdict — the full ``menu``…``match_over`` phase, derived from the per-player counter plus the
+    separately-read global ``match_flag``. Mirrors :func:`~tekken_coach.reader.decode.poll_frames`'s
+    gap accounting.
     """
     if count < 1:
         raise ValueError("count must be >= 1")
     reader = FrameReader()
-    tracker = RoundPhaseTracker(table.sanity.round_start_health)
+    tracker = MatchPhaseTracker(table.sanity.round_start_health)
     reads: list[FrameRead] = []
     for i in range(count):
         if interval > 0 and i > 0:
             time.sleep(interval)
         read = reader.read_frame(source, table)
-        phase = derive_phase(tracker, table, read.frame)
+        match_flag = read_match_flag(source, table)
+        phase = derive_match_phase(tracker, table, read.frame, match_flag)
         reads.append(replace(read, frame=stamp_phase(read.frame, phase)))
     return reads
 

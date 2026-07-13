@@ -141,13 +141,15 @@ def test_reloaded_frames_match_the_c0_schema_exactly(tmp_path: Path, table: Offs
 
 
 def _derive_table(table: OffsetTable) -> OffsetTable:
-    """A copy of the table that exposes ``frames_since_round_start`` — i.e. derives its round phase.
+    """A copy of the table exposing the counter + the global ``match_flag`` — i.e. it derives phase.
 
-    Placed at a free player-struct offset (128, past the last legacy field at 64) so the encoder
-    round-trips it. This turns on the Stage 1 round-gating path in ``run_capture`` (docs/02 §8).
+    ``frames_since_round_start`` at a free player-struct offset (128, past the last legacy field at
+    64), and the Stage 2 ``match_flag`` global at a free global offset (128) — both so the encoder
+    round-trips them. This turns on the round-gating (derived) path in ``run_capture`` (docs/02 §8).
     """
     derived = table.model_copy(deep=True)
     derived.players.fields["frames_since_round_start"] = FieldSpec(offset=128, kind="u32")
+    derived.global_struct.fields["match_flag"] = FieldSpec(offset=128, kind="u32")
     return derived
 
 
@@ -160,7 +162,7 @@ def _arc_frame(frame: int, counter: int, p2_health: int) -> FrameRecord:
         )
 
     # A constant global match_state (``menu``) across every frame: the derived output varies anyway,
-    # which is the point — it comes from the counter, not from the (bogus) global phase read.
+    # which is the point — it comes from the counter + flag, not from the (bogus) global phase read.
     return FrameRecord(
         frame=frame,
         match_state=MatchState.menu,  # overwritten by the derived phase
@@ -170,33 +172,54 @@ def _arc_frame(frame: int, counter: int, p2_health: int) -> FrameRecord:
     )
 
 
-def test_capture_derives_the_round_phase_from_the_counter_not_the_global_read() -> None:
-    # The real-game scenario (docs/02 §8, Stage 1 round-gating): a build whose global match_phase is
-    # useless but which exposes the per-player counter. run_capture DERIVES the phase from the
-    # counter (never consulting the strict gate, so it cannot raise) and stamps a correct
-    # match_state + round over the bogus seeded global reads. Every frame encodes the SAME global
-    # phase, yet the derived arc still moves pre_round -> in_round -> round_over -> pre_round ->
-    # in_round — which could ONLY come from the counter + damage.
+def _held_source(frames: list[FrameRecord], table: OffsetTable, flag: int) -> FakeMemorySource:
+    """A source encoding every frame with the same held ``match_flag`` (a loaded-stage hold)."""
+    images: list[MemoryImage] = [
+        encode_frame(fr, table, module_base=MODULE_BASE, game_mode="practice", match_flag=flag)
+        for fr in frames
+    ]
+    return FakeMemorySource(
+        images,
+        module_bases=module_base_for(table, MODULE_BASE),
+        advance_on=advance_on_for(table, MODULE_BASE),
+    )
+
+
+def test_capture_derives_the_match_phase_from_the_counter_and_flag_not_the_global_read() -> None:
+    # The real-game scenario (docs/02 §8, round-gating): a build whose global match_phase is useless
+    # but which exposes the per-player counter + the global match_flag. run_capture DERIVES phase
+    # via MatchPhaseTracker (never consulting the strict gate, so it cannot raise) and stamps a
+    # correct match_state + round over the bogus seeded global reads. Every frame encodes the SAME
+    # global phase and the SAME held match_flag (a loaded stage), yet the derived arc still moves
+    # through the round phases — which could ONLY come from the counter + damage.
     table = _derive_table(select_offset_table("2.01.01", REPO_OFFSETS))
 
-    # A 2-round arc: counter climbs then resets; P2 is KO'd (health 0) to end round 1.
-    frames = [
-        _arc_frame(1000, 10, 200),  # first frame  -> pre_round, round 1
-        _arc_frame(1001, 500, 200),  # climbing     -> in_round,  round 1
-        _arc_frame(1002, 1000, 0),  # P2 KO'd       -> round_over, round 1
-        _arc_frame(1003, 5, 200),  # counter reset  -> pre_round, round 2
-        _arc_frame(1004, 500, 200),  # climbing     -> in_round,  round 2
+    # A stage-load hold (counter idle at 0 -> in_stage confirms, no arm), then a 2-round arc
+    # (counter climbs then resets; P2 KO'd to end each round). The held flag (73) keeps us in-stage.
+    hold = [_arc_frame(1000 + i, 0, 200) for i in range(20)]  # >= STAGE_HOLD_POLLS
+    arc = [
+        _arc_frame(1020, 300, 200),  # counter climbs -> arms -> in_round, round 1
+        _arc_frame(1021, 1000, 0),  # P2 KO'd          -> round_over, round 1
+        _arc_frame(1022, 5, 200),  # counter reset      -> pre_round, round 2
+        _arc_frame(1023, 500, 200),  # climbing         -> in_round,  round 2
+        _arc_frame(1024, 1000, 0),  # P2 KO'd           -> round_over, round 2
     ]
-    capture = run_capture(_source(frames, table), table, 5, game_version="2.01.01")
+    frames = hold + arc
+    capture = run_capture(
+        _held_source(frames, table, 73), table, len(frames), game_version="2.01.01"
+    )
 
-    assert [fr.match_state for fr in capture.frames] == [
-        MatchState.pre_round,
+    states = [fr.match_state for fr in capture.frames]
+    # The load hold reads menu until a real round arms; then the derived round arc plays out.
+    assert set(states[:20]) == {MatchState.menu}
+    assert states[20:] == [
         MatchState.in_round,
         MatchState.round_over,
         MatchState.pre_round,
         MatchState.in_round,
+        MatchState.round_over,
     ]
-    assert [fr.round for fr in capture.frames] == [1, 1, 1, 2, 2]
+    assert [fr.round for fr in capture.frames][20:] == [1, 1, 2, 2, 2]
 
 
 def test_capture_file_rejects_a_malformed_frame() -> None:

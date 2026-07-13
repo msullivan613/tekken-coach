@@ -500,6 +500,21 @@ def read_state_signal(source: MemorySource, table: OffsetTable) -> StateSignal:
     return signal
 
 
+def read_match_flag(source: MemorySource, table: OffsetTable) -> int:
+    """Read the global ``match_flag`` word cheaply (Stage 2 round-gating, docs/02 §8).
+
+    The in-stage-vs-menu gate input for :class:`MatchPhaseTracker`: the ``@0xd444`` global word
+    that *holds* a single (mode-dependent) value for the whole time a stage is loaded and *churns*
+    through low UI values in a menu. Read like :func:`read_state_signal`'s global fields, off the
+    same anchor as ``frame_counter``. Like the strict signal it is an internal gate input — it is
+    **not** persisted on :class:`~tekken_coach.schemas.FrameRecord`.
+    """
+    g = table.global_struct
+    gbase = resolve_anchor(source, g.anchor)
+    spec = _field(g.fields, "match_flag")
+    return _read_int(source, gbase + spec.offset, spec.kind)
+
+
 # ---------------------------------------------------------------------------
 # Derived round phase (Stage 1 round-gating, docs/02 §8)
 # ---------------------------------------------------------------------------
@@ -618,6 +633,169 @@ def stamp_phase(frame: FrameRecord, phase: DerivedPhase) -> FrameRecord:
     return frame.model_copy(update={"match_state": phase.match_state, "round": phase.round})
 
 
+# ---------------------------------------------------------------------------
+# Derived match phase (Stage 2 round-gating, docs/02 §8)
+# ---------------------------------------------------------------------------
+#
+# Stage 1 (:class:`RoundPhaseTracker`) derives the round *arc* (pre_round/in_round/round_over) from
+# the per-player counter but deliberately never emits ``match_over``/``menu``: the counter resets
+# identically for a new round and for the post-match results screen, so a match-end is not derivable
+# from it alone. Stage 2 adds the missing edge from a second signal — the **global** ``match_flag``
+# word (``@0xd444``, project memory ``capture-round-gating-deferred``). Its observed behavior is
+# noisier than a clean enum, and the gate is built around that shape (re-mined from ``debug/
+# phase.jsonl``, a menu -> practice -> menu -> VS-5-round -> results -> menu arc, offline, 5.02.01):
+#
+# * In a **menu** it CHURNS — changes on nearly every poll, cycling low values (16/18/40/44/56...).
+# * In a **loaded stage** it HOLDS one value for the whole match (all rounds *and* results): VS held
+#   73 for 193 s; practice held 127. The held value is MODE-DEPENDENT and not even constant within a
+#   stage (practice jumped 73 -> 127 mid-session then re-held), so the gate is **value-agnostic**:
+#   it keys on hold-vs-churn, never on a specific value. (The held value in ranked / replay is
+#   unconfirmed — no capture exists — so this stage ships best-effort pending a live check.)
+#
+# Two real false-positives the gate must survive, both present in the capture: a ~37 s stable hold
+# at 40 in the pre-match setup menus (defeated by *arming on a real round* — none ran there), and
+# the single 73 -> 127 substate change inside practice (defeated by requiring *churn* — many changes
+# over a window — with a debounce a lone change can't meet).
+
+# Thresholds as elapsed-poll counts (the live capture cadence is 0.05 s, DEFAULT_POLL_INTERVAL, so
+# these map to ~0.5-1.0 s of wall time; the calibration probe polled slower, at ~0.25 s).
+#
+# Consecutive unchanged polls before ``match_flag`` counts as a loaded-stage HOLD (~0.75 s).
+STAGE_HOLD_POLLS = 15
+# Sliding window over which flag changes are counted to detect menu CHURN (~1.0 s).
+MENU_CHURN_POLLS = 20
+# Flag changes within that window required to declare churn (leave the stage). The leave debounce:
+# a lone substate change (practice 73 -> 127) contributes a single change and can never reach it, so
+# it does not flip the stage off; only a real return-to-menu churns enough.
+MENU_LEAVE_CHANGES = 3
+# The per-round counter must climb by at least this since the previous in-stage poll for a reported
+# ``in_round`` to ARM a match. A real round's counter rises at 60 fps; a menu whose counter is idle
+# (frozen at 0 or a stale value) never advances, so a menu hold never arms — this is what makes the
+# 37 s menu-40 hold a non-event, and it is robust to *whatever* stale value the menu counter holds.
+ARMING_COUNTER_ADVANCE = 1
+
+
+class MatchPhaseTracker:
+    """Derive the full match phase (menu … match_over) from the counter + ``match_flag`` (§8).
+
+    Owns a :class:`RoundPhaseTracker` for the round arc and layers the menu/match-over edges on top,
+    consuming ``(counter, p1_damage, p2_damage, match_flag)`` per poll and emitting a
+    :class:`DerivedPhase` whose ``match_state`` now spans the full
+    ``{menu, pre_round, in_round, round_over, match_over}`` set. It is the one stateful thing in the
+    read path; :func:`decode_frame` stays mechanical.
+
+    The rules (all calibrated by observation — see the module notes above):
+
+    * **hold vs churn** — ``match_flag`` holding one value for ``STAGE_HOLD_POLLS`` polls means a
+      loaded stage (``in_stage``); ``MENU_LEAVE_CHANGES`` changes within the last
+      ``MENU_CHURN_POLLS`` polls means a menu (leave the stage). Between the two the previous
+      verdict holds (hysteresis), which is what lets a lone substate change ride through without
+      flipping the stage off.
+    * **arm on a real round** — ``armed`` becomes True the first time, while ``in_stage``, the owned
+      :class:`RoundPhaseTracker` reports ``in_round`` *and* the counter actually advanced (the round
+      clock is running). A menu whose counter is idle never advances, so a menu hold — even the 37 s
+      hold at 40 — never arms and is never a match.
+    * **emit** — not armed → ``menu``; armed and in-stage → the round arc stamped through; armed and
+      the stage unloads (in_stage -> menu churn) → ``match_over`` exactly once, then disarm and read
+      ``menu`` until the next arm.
+
+    A fresh :class:`RoundPhaseTracker` is started on each stage load, so the round index restarts at
+    1 per match rather than climbing across the session.
+
+    **Timing:** ``match_over`` fires on **stage-unload** (results -> menu), *not* at the match-point
+    KO — the round-win target (first-to-2/-3/…) varies by mode/settings and is not reliably known,
+    whereas stage-unload is a clean, mode-agnostic edge and is exactly the between-matches downtime
+    C6's coach wants. Firing earlier is out of scope.
+    """
+
+    def __init__(self, round_start_health: int) -> None:
+        self._round_start_health = round_start_health
+        # match_flag hold/churn detection.
+        self._prev_flag: int | None = None
+        self._hold_run = 0  # consecutive polls the flag has held its current value
+        self._recent_changes: list[bool] = []  # last MENU_CHURN_POLLS polls: did the flag change?
+        self._in_stage = False
+        # Round arc + arming (reset per stage load).
+        self._rounds: RoundPhaseTracker | None = None
+        self._prev_counter: int | None = None
+        self._armed = False
+        self._round = 0  # last derived round index, for the match_over/menu emit
+
+    def update(self, counter: int, p1_damage: int, p2_damage: int, match_flag: int) -> DerivedPhase:
+        """Advance the tracker by one poll and return the derived match phase for it."""
+        in_stage = self._update_stage(match_flag)
+
+        if not in_stage:
+            # Menu churn (or a menu hold we never armed on). Tear down the per-stage round state so
+            # the next stage load starts a fresh match (round index restarts at 1). If we were
+            # mid-match, the stage just unloaded: emit match_over exactly once on this edge, then
+            # idle in the menu until the next arm.
+            was_armed = self._armed
+            self._reset_stage()
+            if was_armed:
+                return DerivedPhase(MatchState.match_over, self._round)
+            return DerivedPhase(MatchState.menu, 0)
+
+        # In a loaded stage. Run the round arc off a per-stage RoundPhaseTracker and arm on a real
+        # round (in_round with the counter actually advancing — a menu's idle counter never does).
+        if self._rounds is None:
+            self._rounds = RoundPhaseTracker(self._round_start_health)
+        phase = self._rounds.update(counter, p1_damage, p2_damage)
+        advanced = (
+            self._prev_counter is not None
+            and counter - self._prev_counter >= ARMING_COUNTER_ADVANCE
+        )
+        self._prev_counter = counter
+        if phase.match_state is MatchState.in_round and advanced:
+            self._armed = True
+        if not self._armed:
+            return DerivedPhase(MatchState.menu, 0)
+        self._round = phase.round
+        return phase
+
+    def _update_stage(self, match_flag: int) -> bool:
+        """Fold one ``match_flag`` reading into the hold-vs-churn verdict (``in_stage``)."""
+        changed = self._prev_flag is not None and match_flag != self._prev_flag
+        self._prev_flag = match_flag
+        self._hold_run = 1 if changed else self._hold_run + 1
+        self._recent_changes.append(changed)
+        if len(self._recent_changes) > MENU_CHURN_POLLS:
+            self._recent_changes.pop(0)
+        changes = sum(self._recent_changes)
+        # Hold wins over churn: right after a stage loads the window still holds the pre-load menu
+        # churn, but a long enough unchanged run is a stage regardless.
+        if self._hold_run >= STAGE_HOLD_POLLS:
+            self._in_stage = True
+        elif changes >= MENU_LEAVE_CHANGES:
+            self._in_stage = False
+        # else: neither condition met -> keep the previous verdict (hysteresis across the debounce).
+        return self._in_stage
+
+    def _reset_stage(self) -> None:
+        """Tear down the per-match round state so the next stage load starts a fresh match.
+
+        Idempotent — run on every not-in-stage poll — so a stage left *un-armed* (a menu hold that
+        never became a match) also drops its round tracker, and the next real stage restarts at 1.
+        """
+        self._armed = False
+        self._rounds = None
+        self._prev_counter = None
+
+
+def derive_match_phase(
+    tracker: MatchPhaseTracker, table: OffsetTable, frame: FrameRecord, match_flag: int
+) -> DerivedPhase:
+    """Derive one frame's full match phase, feeding the counter + damages + flag to ``tracker``.
+
+    The Stage 2 counterpart of :func:`derive_phase`: same counter/damage reconstruction (the counter
+    is mirrored on both players, so P1's is read; damage is ``round_start_health - health``), plus
+    the separately-read global ``match_flag`` (:func:`read_match_flag`) that gates in-stage vs menu.
+    """
+    hp = table.sanity.round_start_health
+    p0, p1 = frame.players
+    return tracker.update(p0.frames_since_round_start, hp - p0.health, hp - p1.health, match_flag)
+
+
 @dataclass(frozen=True)
 class FrameRead:
     """One frame plus the dropped-frame accounting for it (docs/02 §7, docs/04 §4.7).
@@ -685,18 +863,25 @@ def poll_frames(
 
 # ``MemoryReadError`` is re-exported for callers that catch it around a poll loop.
 __all__ = [
+    "ARMING_COUNTER_ADVANCE",
+    "MENU_CHURN_POLLS",
+    "MENU_LEAVE_CHANGES",
     "ROUND_RESET_DROP",
+    "STAGE_HOLD_POLLS",
     "DerivedPhase",
     "FrameRead",
     "FrameReader",
+    "MatchPhaseTracker",
     "MemoryReadError",
     "PlayerStateFacts",
     "RoundPhaseTracker",
     "decode_frame",
     "decode_state",
+    "derive_match_phase",
     "derive_phase",
     "phase_signal",
     "poll_frames",
+    "read_match_flag",
     "read_scalar",
     "read_state_signal",
     "resolve_anchor",

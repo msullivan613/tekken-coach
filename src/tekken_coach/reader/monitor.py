@@ -5,8 +5,9 @@ real time and eyeball it against what you actually did: stand, and it should rea
 block, ``blockstun``; get juggled, ``hitstun`` + ``juggle``. This renders the decoded
 :class:`~tekken_coach.schemas.PlayerFrame` for both players and prints a line whenever a player's
 *decoded state* changes (not every frame — a held state reads as one line, not a flood). A
-``[match]`` line also shows the derived match phase + round + raw counter whenever the phase
-changes, so the Stage 1 round-gating deriver (docs/02 §8) can be eyeballed against live play.
+``[match]`` line also shows the derived match phase (``menu``…``match_over``) + round + raw counter
++ the global ``match_flag`` whenever the phase changes, so the round-gating deriver (docs/02 §8) can
+be eyeballed against live play.
 
 Like :mod:`.probe`, the live ``while True`` loop is untestable in CI, so the parts worth testing are
 pulled out as pure functions over already-decoded :class:`~tekken_coach.schemas.FrameRecord`\\ s:
@@ -123,31 +124,38 @@ def changed_views(
                 yield t, view
 
 
-def format_phase(match_state: str, round_no: int, counter: int) -> str:
-    """Render the derived match phase as a console line (Stage 1 round-gating, docs/02 §8)."""
-    return f"[match] {match_state:<10} round={round_no:<2} counter={counter}"
+def format_phase(match_state: str, round_no: int, counter: int, match_flag: int) -> str:
+    """Render the derived match phase as a console line (round-gating, docs/02 §8).
+
+    Shows the now-fuller ``match_state`` (``menu``/``match_over`` included, Stage 2) plus the raw
+    global ``match_flag`` that gates in-stage vs menu, so both are eyeballable against real play.
+    """
+    return f"[match] {match_state:<10} round={round_no:<2} counter={counter:<5} flag={match_flag}"
 
 
 def monitor_lines(
-    stream: Iterable[tuple[float, DerivedPhase, Sequence[PlayerView]]],
+    stream: Iterable[tuple[float, DerivedPhase, int, Sequence[PlayerView]]],
     *,
     show_raw: bool = False,
 ) -> Iterator[str]:
-    """Yield formatted monitor lines from a ``(t, phase, views)`` stream (the live-loop core).
+    """Yield formatted monitor lines from a ``(t, phase, match_flag, views)`` stream (live loop).
 
     Emits a ``[match]`` line whenever the derived phase (``match_state`` + ``round``) changes, and a
     per-player line whenever a player's decoded state changes — both on-change so a held situation
-    reads as one line, not a per-poll flood. Pure and fully testable; the live ``monitor`` loop is a
-    thin shell that decodes frames, derives the phase, and prints these.
+    reads as one line, not a per-poll flood. The raw ``match_flag`` rides the ``[match]`` line for
+    eyeballing but is deliberately **not** in the change key (like the per-round counter): in a menu
+    it churns every poll, so keying on it would flood. Pure and fully testable; the live ``monitor``
+    loop is a thin shell that decodes frames, derives the phase + flag, and prints these.
     """
     prev_phase: tuple[str, int] | None = None
     prev_views: dict[int, tuple[str, tuple[str, ...], int]] = {}
-    for t, phase, views in stream:
+    for t, phase, match_flag, views in stream:
         pkey = (phase.match_state.value, phase.round)
         if pkey != prev_phase:
             prev_phase = pkey
             counter = views[0].counter if views else 0
-            yield f"{t:>7.2f}  {format_phase(phase.match_state.value, phase.round, counter)}"
+            line = format_phase(phase.match_state.value, phase.round, counter, match_flag)
+            yield f"{t:>7.2f}  {line}"
         for view in views:
             if _changed(prev_views, view):
                 yield f"{t:>7.2f}  {format_view(view, show_raw=show_raw)}"
