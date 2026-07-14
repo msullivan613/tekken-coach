@@ -210,15 +210,23 @@ class CaptureOrchestrator:
         self._last_frame = frame
 
     def _validate_user_char(self, frame: FrameRecord) -> None:
-        """Hard-error on a configured-vs-observed character mismatch on the user's side (§5)."""
+        """Hard-error on a configured-vs-observed character mismatch on the user's side (§5).
+
+        Accepts either the resolved name (``--char jin``) or the raw ``char:<id>`` form
+        (``--char char:6``): once a memory char map resolves id 6 to ``jin`` (Part B), the stub form
+        must keep validating too, so a config or muscle-memory ``char:6`` is not rejected for Jin.
+        """
         observed_id = frame.players[self._user_player].char_id
         observed = self._resolve_char(observed_id)
-        if not _char_matches(observed, self._user_char):
-            raise CharacterMismatchError(
-                f"configured --char {self._user_char!r} but P{self._user_player + 1} is "
-                f"{observed!r} (char_id {observed_id}). Getting the user's side wrong inverts all "
-                f"coaching (docs/01 §5); fix --user/--char and retry."
-            )
+        if _char_matches(observed, self._user_char) or _char_matches(
+            f"char:{observed_id}", self._user_char
+        ):
+            return
+        raise CharacterMismatchError(
+            f"configured --char {self._user_char!r} but P{self._user_player + 1} is "
+            f"{observed!r} (char_id {observed_id}). Getting the user's side wrong inverts all "
+            f"coaching (docs/01 §5); fix --user/--char and retry."
+        )
 
     def _feed(self, frame: FrameRecord, signal: StateSignal) -> None:
         """Segment one frame, label + append what closed, and flush at round end (docs/00 §4)."""

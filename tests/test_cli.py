@@ -313,6 +313,47 @@ def test_character_mismatch_is_a_hard_error(tmp_path: Path) -> None:
         )
 
 
+class _MemoryNamedSource(ScriptedCaptureSource):
+    """A scripted source exposing a memory char map (Part B), like the real reader on 5.02.01."""
+
+    @property
+    def char_names(self) -> dict[int, str]:
+        return {12: "kazuya"}  # memory id space; the resolver prefers this over the movemap
+
+
+def test_char_stub_and_name_both_validate_with_a_memory_map(tmp_path: Path) -> None:
+    # Part B regression guard: a memory char map resolves id 12 -> "kazuya", yet the raw char:12
+    # stub must STILL validate (a config / muscle-memory char:12 is not rejected once names
+    # resolve), alongside the resolved name; a wrong side is still a hard error (docs/01 §5).
+    script = [_live(f) for f in _one_match()]  # P1 is char_id 12
+    for good in ("char:12", "kazuya", "KAZUYA"):
+        out = tmp_path / f"{good.replace(':', '_')}.jsonl"
+        capture_mod.run_capture(
+            settings=resolve_settings(
+                mode="live", coach="skill", user="p1", char=good, out=str(out), config={}
+            ),
+            source=_MemoryNamedSource(script),
+            assets=_assets(),
+            renderer=Renderer(io.StringIO(), color=False),
+        )
+        assert len(load_session(out).header.matches) == 1
+
+    with pytest.raises(CharacterMismatchError):
+        capture_mod.run_capture(
+            settings=resolve_settings(
+                mode="live",
+                coach="skill",
+                user="p1",
+                char="paul",
+                out=str(tmp_path / "bad.jsonl"),
+                config={},
+            ),
+            source=_MemoryNamedSource(script),
+            assets=_assets(),
+            renderer=Renderer(io.StringIO(), color=False),
+        )
+
+
 def test_missing_user_identity_fails_before_attach(tmp_path: Path) -> None:
     """A bare capture with no --user/--char is a hard error, raised before touching the game."""
     source = ScriptedCaptureSource([])
