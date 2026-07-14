@@ -306,6 +306,12 @@ class CaptureOrchestrator:
             # Track health only during live play — the KO/timeout truth, never the reset menu frame.
             self._round_last_health = {i: p.health for i, p in enumerate(frame.players)}
         elif phase is MatchState.round_over:
+            # The KO frame is authoritative: the KO'd side is at (≤)0 *here*, so score from THIS
+            # frame, not the last in-round poll. A player KO'd within a single poll gap can read
+            # higher-health at that last in-round sample and would otherwise be mis-scored as the
+            # winner. round_over is still an in-stage frame (valid health) — not the reset menu
+            # frame the last-frame bug tripped on (that is match_over/idle). (review-fix)
+            self._round_last_health = {i: p.health for i, p in enumerate(frame.players)}
             self._score_round(ko=True)  # KO latched here → the loser hit 0 this round
 
     def _finalize_round(self) -> None:

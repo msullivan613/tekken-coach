@@ -211,6 +211,24 @@ def test_result_is_from_the_users_point_of_view(tmp_path: Path) -> None:
     assert _result(out_p2) == "loss"
 
 
+def test_ko_scores_from_the_killing_frame_not_the_last_in_round_poll(tmp_path: Path) -> None:
+    """A player KO'd within a single poll gap reads *higher* health at the last in-round sample,
+    then 0 at ``round_over``. The round must go to the survivor (the killing frame is the
+    authority), not the higher-health last-poll side — else a poll-gap KO inverts the round."""
+    out = tmp_path / "s.jsonl"
+    polls = [
+        _live(_fr(1000, MatchState.pre_round, 1, FULL_HP, FULL_HP)),
+        _live(_fr(1001, MatchState.in_round, 1, FULL_HP, FULL_HP)),
+        # Last in-round poll: P1 (user) is AHEAD on health here …
+        _live(_fr(1002, MatchState.in_round, 1, 80, 60)),
+        # … but is KO'd before the next in-round sample — round_over shows P1 at 0 → P2 won it.
+        _live(_fr(1003, MatchState.round_over, 1, 0, 60)),
+    ]
+    polls.append(_idle(polls[-1].frame))
+    _run(out, polls, user_player=0)
+    assert _result(out) == "loss"  # P2 KO'd P1 → user (P1) lost the only round
+
+
 def test_double_ko_style_even_round_does_not_tally_either_side(tmp_path: Path) -> None:
     """A round that ends level (both at equal health) tallies to neither side, so a lone even round
     leaves the match a draw rather than inventing a winner."""
