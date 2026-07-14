@@ -39,6 +39,7 @@ from tekken_coach.reader.decode import (
     FrameRead,
     FrameReader,
     MatchPhaseTracker,
+    MemoryReadError,
     derive_match_phase,
     poll_frames,
     read_match_flag,
@@ -141,6 +142,11 @@ def _poll_with_derived_phase(
     verdict — the full ``menu``…``match_over`` phase, derived from the per-player counter plus the
     separately-read global ``match_flag``. Mirrors :func:`~tekken_coach.reader.decode.poll_frames`'s
     gap accounting.
+
+    Menu-tolerant (Part A): ``match_flag`` (a module-relative global) is read first as the liveness
+    probe, so a genuinely-closed game still raises ``process_lost``; a poll whose player decode
+    faults out of a match (a null holder slot at the menu / character select) is skipped rather than
+    crashing, so a ``capture N`` started at the menu simply collects the frames once a match loads.
     """
     if count < 1:
         raise ValueError("count must be >= 1")
@@ -150,8 +156,11 @@ def _poll_with_derived_phase(
     for i in range(count):
         if interval > 0 and i > 0:
             time.sleep(interval)
-        read = reader.read_frame(source, table)
-        match_flag = read_match_flag(source, table)
+        match_flag = read_match_flag(source, table)  # liveness probe; propagate if the game is gone
+        try:
+            read = reader.read_frame(source, table)
+        except MemoryReadError:
+            continue  # out of a match (menu / character select) — skip this poll, keep polling
         phase = derive_match_phase(tracker, table, read.frame, match_flag)
         reads.append(replace(read, frame=stamp_phase(read.frame, phase)))
     return reads

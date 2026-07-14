@@ -173,3 +173,15 @@ def test_monitor_lines_flag_rides_line_but_does_not_drive_reemit() -> None:
     match_lines = [ln for ln in monitor_lines(stream) if "[match]" in ln]
     assert len(match_lines) == 1  # held menu phase -> one line despite the churning flag
     assert "flag=16" in match_lines[0]  # shows the flag at first sight
+
+
+def test_monitor_lines_tolerates_a_menu_phase_with_no_player_views() -> None:
+    # Part A: at the main menu the player decode faults, so the menu-tolerant stream yields a
+    # menu phase with EMPTY views (no crash). monitor_lines must render the [match] menu line and
+    # emit no per-player line — the contract the live loop depends on.
+    stream: list[tuple[float, DerivedPhase, int, list[PlayerView]]] = [
+        (0.0, DerivedPhase(MatchState.menu, 0), 40, [])
+    ]
+    lines = list(monitor_lines(stream))
+    assert len(lines) == 1
+    assert "[match]" in lines[0] and "menu" in lines[0] and "counter=0" in lines[0]

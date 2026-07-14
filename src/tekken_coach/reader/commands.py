@@ -38,6 +38,7 @@ from pathlib import Path
 from tekken_coach.reader.decode import (
     DerivedPhase,
     MatchPhaseTracker,
+    MemoryReadError,
     decode_frame,
     derive_match_phase,
     read_match_flag,
@@ -51,6 +52,7 @@ from tekken_coach.reader.monitor import PlayerView, monitor_lines, views_of
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.reader.probe import ChangeRecord, PollSample, WatchPoint, parse_watch
 from tekken_coach.reader.version import GAME_PROCESS_NAME
+from tekken_coach.schemas import MatchState
 
 DEFAULT_OFFSETS_DIR = "assets/offsets"
 DEFAULT_MOVEMAP_DIR = "assets/movemap"
@@ -436,14 +438,25 @@ def _live_monitor_stream(
     Threads a single :class:`MatchPhaseTracker` (the one stateful thing) so the ``[match]`` line can
     show the derived full phase (``menu``…``match_over``) + round + counter + the raw ``match_flag``
     alongside the per-player decoded state (docs/02 §8).
+
+    Menu-tolerant (Part A): ``match_flag`` (a module-relative global) is the liveness probe read
+    first, so a genuinely-closed game still surfaces ``process_lost``; but when the player decode
+    faults out of a match (a null holder slot at the menu / character select), it prints a ``menu``
+    ``[match]`` line with no player views instead of crashing.
     """
     import time  # noqa: PLC0415
 
     tracker = MatchPhaseTracker(table.sanity.round_start_health)
     started = time.monotonic()
     while True:
-        frame = decode_frame(source, table)
-        match_flag = read_match_flag(source, table)
+        match_flag = read_match_flag(source, table)  # liveness probe; propagate if the game is gone
+        try:
+            frame = decode_frame(source, table)
+        except MemoryReadError:
+            # Alive but out of a match: show a menu line (no views), don't advance the tracker.
+            yield time.monotonic() - started, DerivedPhase(MatchState.menu, 0), match_flag, []
+            time.sleep(interval)
+            continue
         phase = derive_match_phase(tracker, table, frame, match_flag)
         yield time.monotonic() - started, phase, match_flag, views_of(frame)
         time.sleep(interval)

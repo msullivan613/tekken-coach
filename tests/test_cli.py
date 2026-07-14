@@ -26,7 +26,7 @@ from tekken_coach.cli.orchestrate import (
     live_policy,
 )
 from tekken_coach.cli.render import SKILL_HANDOFF, Renderer
-from tekken_coach.cli.source import Poll, ScriptedCaptureSource
+from tekken_coach.cli.source import Poll, ScriptedCaptureSource, _idle_poll
 from tekken_coach.coach import BACKEND_API, BACKEND_SKILL_FALLBACK, CoachResult
 from tekken_coach.reader.state import SignalKind, StateSignal
 from tekken_coach.schemas import CaptureMode, FrameRecord, MatchState
@@ -218,6 +218,27 @@ def test_live_capture_coaches_per_match(tmp_path: Path) -> None:
     assert len(session.header.matches) == 2
     # Live coaches once per match → two hand-off lines.
     assert buf.getvalue().count(SKILL_HANDOFF) == 2
+
+
+def test_live_capture_closes_on_the_production_menu_boundary(tmp_path: Path) -> None:
+    # Part A end-to-end: the EXACT boundary the live source yields when a match ends → menu (the
+    # last good frame, menu-stamped, idle signal — `_idle_poll`). The orchestrator re-feeds it to
+    # the segmenter before closing (a repeated frame number). Proves that re-feed is a clean no-op:
+    # one match recorded, coached once, no crash — the players-gone match-over trigger.
+    out = tmp_path / "live.jsonl"
+    m1 = _one_match()
+    script = [_live(f) for f in m1] + [_idle_poll(m1[-1])]
+    buf = io.StringIO()
+    capture_mod.run_capture(
+        settings=_settings(out, mode="live"),
+        source=ScriptedCaptureSource(script),
+        assets=_assets(),
+        renderer=Renderer(buf, color=False),
+    )
+    session = load_session(out)
+    assert len(session.header.matches) == 1
+    assert len(session.interactions) >= 1
+    assert buf.getvalue().count(SKILL_HANDOFF) == 1
 
 
 # ---------------------------------------------------------------------------

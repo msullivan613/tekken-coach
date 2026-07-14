@@ -297,8 +297,19 @@ class OffsetTable(BaseModel):
     # roster is a C5 gap). Empty on older/hand-written tables; the doctor then falls back to the
     # movemap index.
     known_char_ids: list[int] = Field(default_factory=list)
+    # Game-MEMORY char id -> display name, established by observation (docs/02 §8) — the memory id
+    # space the reader reads, NOT the movemap/framedata id space (a different space; see
+    # ``known_char_ids``). Lets ``--char <name>`` validate against what the reader actually sees
+    # (project memory ``t8-reader-model-holder-aob``). Deliberately partial: only observed
+    # characters are baked, and an unobserved id falls back to ``char:<id>``. Keys are strings
+    # (JSON object keys); :meth:`char_names_by_id` gives the int-keyed view the resolver wants.
+    char_names: dict[str, str] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
+
+    def char_names_by_id(self) -> dict[int, str]:
+        """The ``char_names`` map keyed by int memory char id (JSON keys are strings)."""
+        return {int(cid): name for cid, name in self.char_names.items()}
 
 
 class OffsetIndexEntry(BaseModel):

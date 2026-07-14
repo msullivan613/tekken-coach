@@ -8,6 +8,7 @@ round-trip byte-for-byte.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -19,8 +20,9 @@ from tekken_coach.reader.capture import (
     run_capture,
     write_capture,
 )
-from tekken_coach.reader.faults import DecodeError
-from tekken_coach.reader.memory_source import FakeMemorySource, MemoryImage
+from tekken_coach.reader.decode import resolve_player_base
+from tekken_coach.reader.faults import DecodeError, MemoryReadError
+from tekken_coach.reader.memory_source import FakeMemorySource, MemoryImage, MemoryRegion
 from tekken_coach.reader.offsets import FieldSpec, OffsetTable, select_offset_table
 from tekken_coach.schemas import (
     ActionState,
@@ -220,6 +222,54 @@ def test_capture_derives_the_match_phase_from_the_counter_and_flag_not_the_globa
         MatchState.round_over,
     ]
     assert [fr.round for fr in capture.frames][20:] == [1, 1, 2, 2, 2]
+
+
+class _MenuThenMatchSource:
+    """Faults the per-player decode for the first ``menu_polls`` polls, then serves real frames.
+
+    Models 'launched at the menu, walked into a match' (Part A): the player holder slot is null at
+    the menu, so player-struct reads fault while the module-relative globals (frame_counter,
+    match_flag) still read. Delegates to a :class:`FakeMemorySource` for everything else.
+    """
+
+    def __init__(self, inner: FakeMemorySource, table: OffsetTable, menu_polls: int) -> None:
+        self._inner = inner
+        self._menu_polls = menu_polls
+        self._poll = 0
+        self._advance_on = advance_on_for(table, MODULE_BASE)  # the frame-counter address
+        bases = [resolve_player_base(inner, table, i) for i in (0, 1)]
+        self._player_lo = min(bases)
+        self._player_hi = max(bases) + 0x1000
+
+    def read(self, address: int, size: int) -> bytes:
+        if address == self._advance_on:
+            self._poll += 1  # a new poll: read_frame reads the frame counter first
+        if self._player_lo <= address < self._player_hi and self._poll <= self._menu_polls:
+            raise MemoryReadError(f"menu: player struct unreadable at 0x{address:x}")
+        return self._inner.read(address, size)
+
+    def module_base(self, module: str) -> int:
+        return self._inner.module_base(module)
+
+    def regions(self) -> Sequence[MemoryRegion]:
+        return self._inner.regions()
+
+
+def test_capture_at_the_menu_skips_faulting_polls_then_records_the_match() -> None:
+    # Part A: `capture N` started at the menu must not crash — the module-relative match_flag reads
+    # (liveness) succeed, so a genuinely-closed game would still raise, but a null player holder
+    # slot is skipped. The first 3 polls fault (menu); the rest record without crashing.
+    table = _derive_table(select_offset_table("2.01.01", REPO_OFFSETS))
+    hold = [_arc_frame(1000 + i, 0, 200) for i in range(20)]  # >= STAGE_HOLD_POLLS so it arms
+    arc = [_arc_frame(1020, 300, 200), _arc_frame(1021, 400, 200)]
+    frames = hold + arc
+    menu_polls = 3
+
+    source = _MenuThenMatchSource(_held_source(frames, table, 73), table, menu_polls)
+    capture = run_capture(source, table, len(frames), game_version="2.01.01")
+
+    # The menu polls are skipped (not captured), the rest recorded — no crash, no refusal.
+    assert capture.meta.frame_count == len(frames) - menu_polls
 
 
 def test_capture_file_rejects_a_malformed_frame() -> None:

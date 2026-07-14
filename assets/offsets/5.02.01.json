@@ -261,5 +261,12 @@
     7,
     8,
     39
-  ]
+  ],
+  "char_names": {
+    "0": "paul",
+    "6": "jin",
+    "7": "bryan",
+    "8": "kazuya",
+    "39": "armor_king"
+  }
 }

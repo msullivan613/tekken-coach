@@ -66,11 +66,23 @@ class Assets:
 
         return label
 
-    def char_resolver(self) -> CharResolver:
-        """A ``char_id -> name`` resolver from the move maps; ``char:<id>`` on a miss (docs/05)."""
+    def char_resolver(self, *, char_names: dict[int, str] | None = None) -> CharResolver:
+        """A ``char_id -> name`` resolver; ``char:<id>`` on a miss (docs/05).
+
+        The reader reads **memory** char ids, a *different* id space from the movemap's *framedata*
+        ids (project memory ``t8-reader-model-holder-aob``). So an observation-grounded memory-id
+        map (``char_names`` from the running build's offset table) is preferred; the movemap is the
+        fallback (legacy/fake builds, whose ids coincide); a ``char:<id>`` stub is the final
+        fallback for an unobserved id — which still lets ``--char char:<id>`` validate. This is what
+        makes ``--char jin`` accept memory char_id 6 instead of only ``--char char:6``.
+        """
+        memory = char_names or {}
         by_id = {m.char_id: m.char_name for m in self.move_maps.values() if m.char_id is not None}
 
         def resolve(char_id: int) -> str:
+            observed = memory.get(char_id)
+            if observed is not None:
+                return observed
             return by_id.get(char_id, f"char:{char_id}")
 
         return resolve
@@ -162,7 +174,9 @@ def run_capture(
         policy=policy_for(settings.mode),
         writer=writer,
         labeler=assets.labeler(),
-        char_resolver=assets.char_resolver(),
+        # Resolve char ids through the running build's MEMORY char map (Part B) so ``--char jin``
+        # validates against memory char_id 6; the movemap (framedata id space) is the fallback.
+        char_resolver=assets.char_resolver(char_names=source.char_names),
         user_player=settings.user_player,
         user_char=settings.char,
         reporter=report,
