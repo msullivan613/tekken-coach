@@ -154,7 +154,14 @@ class CaptureOrchestrator:
         self._match_no = 0
         self._interaction_count = 0
         self._unit_match_id = ""
-        self._unit_rounds: set[int] = set()
+        # Rounds that actually had play (docs #4): the round count must exclude the post-match
+        # results screen, which resets the per-round counter and so reads as a spurious new round
+        # (both players at full health, no interaction, no KO). A round joins ``_real_rounds`` the
+        # moment it shows real-play evidence — damage below its start-health baseline, an emitted
+        # interaction, or a ``round_over`` (KO) phase. Keyed on the same ``frame.round`` the
+        # segmenter sees, so distinct rounds are counted once and the results screen never counts.
+        self._real_rounds: set[int] = set()
+        self._round_start_hp: dict[int, tuple[int, ...]] = {}
         self._last_frame: FrameRecord | None = None
         self._prev_phase: MatchState | None = None
         self._online_refused = 0
@@ -204,7 +211,8 @@ class CaptureOrchestrator:
         self._match_no += 1
         self._unit_match_id = f"{self._writer.header.created_at}#{self._match_no}"
         self._seg = Segmenter(self._unit_match_id, self._cfg)
-        self._unit_rounds = set()
+        self._real_rounds = set()
+        self._round_start_hp = {}
         self._prev_phase = None
         self._in_unit = True
         self._last_frame = frame
@@ -232,13 +240,31 @@ class CaptureOrchestrator:
         """Segment one frame, label + append what closed, and flush at round end (docs/00 §4)."""
         assert self._seg is not None
         self._last_frame = frame
-        self._unit_rounds.add(frame.round)
+        self._note_real_round(frame)
         for interaction in self._seg.feed(frame):
             self._emit(interaction)
+            self._real_rounds.add(interaction.round)  # an emitted interaction is real play
         phase = signal.match_state
+        if phase is MatchState.round_over:
+            self._real_rounds.add(frame.round)  # a KO closed this round — real play
         if phase in _FLUSH_PHASES and phase is not self._prev_phase:
             self._writer.flush()  # round-end / match-end crash-safety flush
         self._prev_phase = phase
+
+    def _note_real_round(self, frame: FrameRecord) -> None:
+        """Mark ``frame.round`` real once damage is dealt (docs #4 damage signal).
+
+        The first frame of a round snapshots its start-health baseline (re-derived here rather than
+        reaching into the segmenter's private copy); any later health below that baseline is damage,
+        which only real play produces. The results screen sits at full health, so it never trips
+        this — nor the interaction/KO signals in :meth:`_feed` — and so never inflates the count.
+        """
+        baseline = self._round_start_hp.get(frame.round)
+        if baseline is None:
+            baseline = tuple(p.health for p in frame.players)
+            self._round_start_hp[frame.round] = baseline
+        if any(p.health < base for p, base in zip(frame.players, baseline, strict=True)):
+            self._real_rounds.add(frame.round)
 
     def _emit(self, interaction: Interaction) -> None:
         self._writer.append(self._label(interaction))
@@ -271,7 +297,7 @@ class CaptureOrchestrator:
                 match_id=self._unit_match_id,
                 opponent_char=opponent,
                 result=result,
-                rounds=len(self._unit_rounds),
+                rounds=len(self._real_rounds),  # rounds that actually had play (docs #4)
             )
         )
 

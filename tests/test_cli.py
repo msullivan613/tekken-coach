@@ -69,6 +69,25 @@ def _one_match() -> list[FrameRecord]:
     return streams.blocked_no_punish()
 
 
+def _restamp(frames: list[FrameRecord], *, round_no: int, offset: int) -> list[FrameRecord]:
+    """Re-stamp a single-round stream onto ``round_no``, offsetting frame numbers so a multi-round
+    match stays monotonic (the round-count fixtures reuse one exchange across several rounds)."""
+    return [f.model_copy(update={"round": round_no, "frame": f.frame + offset}) for f in frames]
+
+
+def _with_hp(frame: FrameRecord, p0_hp: int, p1_hp: int) -> FrameRecord:
+    """Override both players' health on a frame (the streams sit at full health; damage is what
+    marks a round *played* — docs #4)."""
+    return frame.model_copy(
+        update={
+            "players": [
+                frame.players[0].model_copy(update={"health": p0_hp}),
+                frame.players[1].model_copy(update={"health": p1_hp}),
+            ]
+        }
+    )
+
+
 def _assets() -> capture_mod.Assets:
     return capture_mod.load_assets()
 
@@ -239,6 +258,85 @@ def test_live_capture_closes_on_the_production_menu_boundary(tmp_path: Path) -> 
     assert len(session.header.matches) == 1
     assert len(session.interactions) >= 1
     assert buf.getvalue().count(SKILL_HANDOFF) == 1
+
+
+# ---------------------------------------------------------------------------
+# Per-match round count (docs #4) — count only rounds that actually had play
+# ---------------------------------------------------------------------------
+
+
+def _run_live(out: Path, script: list[Poll]) -> None:
+    """Drive a live capture over a scripted poll stream through the full CLI path (so the header is
+    finalized on disk) and discard the rendered output."""
+    capture_mod.run_capture(
+        settings=_settings(out, mode="live"),
+        source=ScriptedCaptureSource(script),
+        assets=_assets(),
+        renderer=Renderer(io.StringIO(), color=False),
+    )
+
+
+def _results_round(*, round_no: int, start_frame: int) -> list[FrameRecord]:
+    """The post-match results screen as the reader sees it: the per-round counter reset makes it a
+    fresh round index, both players idle at full health — no interaction, no damage, no KO."""
+    return (
+        streams.Timeline(
+            streams.KAZUYA,
+            streams.DEFENDER,
+            0.0,
+            streams.NEAR_X,
+            start_frame=start_frame,
+            round=round_no,
+        )
+        .step(12, streams.IDLE, streams.IDLE)
+        .build()
+    )
+
+
+def test_round_count_drops_the_spurious_results_round(tmp_path: Path) -> None:
+    """docs #4: three real (KO) rounds plus the trailing results screen must report ``rounds == 3``
+    — the results reset reads as a spurious round-4 start, but it had no play."""
+    out = tmp_path / "live.jsonl"
+    played = [f for n in (1, 2, 3) for f in _restamp(_one_match(), round_no=n, offset=n * 1000)]
+    played += _results_round(round_no=4, start_frame=9000)
+    _run_live(out, [_live(f) for f in played] + [_idle(played[-1])])
+
+    session = load_session(out)
+    assert len(session.header.matches) == 1
+    assert session.header.matches[0].rounds == 3
+
+
+def test_round_count_includes_a_timeout_round(tmp_path: Path) -> None:
+    """A timeout round deals damage but never KOs (no ``round_over``, no interaction — both idle);
+    the damage-below-baseline signal must still count it (docs #4)."""
+    out = tmp_path / "live.jsonl"
+    base = (
+        streams.Timeline(streams.KAZUYA, streams.DEFENDER, 0.0, streams.NEAR_X, round=1)
+        .step(20, streams.IDLE, streams.IDLE)
+        .build()
+    )
+    # Frame 0 sets the full-health baseline; P2's health then declines but never reaches a KO.
+    frames = [base[0]] + [
+        _with_hp(f, streams.FULL_HP, streams.FULL_HP - 5 * (i + 1)) for i, f in enumerate(base[1:])
+    ]
+    _run_live(out, [_live(f) for f in frames] + [_idle(frames[-1])])
+
+    session = load_session(out)
+    assert session.header.matches[0].rounds == 1
+
+
+def test_round_count_survives_the_production_idle_boundary(tmp_path: Path) -> None:
+    """The `feat/live-at-menu` production close (`_idle_poll`: the last good frame, menu-stamped)
+    must report the real round count, not the results-inflated one (docs #4)."""
+    out = tmp_path / "live.jsonl"
+    played = _restamp(_one_match(), round_no=1, offset=1000)
+    played += _restamp(_one_match(), round_no=2, offset=2000)
+    played += _results_round(round_no=3, start_frame=9000)
+    _run_live(out, [_live(f) for f in played] + [_idle_poll(played[-1])])
+
+    session = load_session(out)
+    assert len(session.header.matches) == 1
+    assert session.header.matches[0].rounds == 2
 
 
 # ---------------------------------------------------------------------------
