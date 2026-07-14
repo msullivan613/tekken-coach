@@ -166,6 +166,17 @@ class CaptureOrchestrator:
         self._prev_phase: MatchState | None = None
         self._online_refused = 0
 
+        # Per-round-winner tally for the current unit (docs/01 §5): a match's ``result`` is decided
+        # by who won more rounds, not by a single terminal health snapshot — the last frame is a
+        # results/menu frame where health is reset/ambiguous, so both sides read equal → ``draw``.
+        # ``_round_wins`` maps a player index to rounds won; the rest is the per-round bookkeeping
+        # that scores a round when it ends (KO at ``round_over``; higher health at a timeout/close).
+        self._round_wins: dict[int, int] = {}
+        self._cur_round: int | None = None
+        self._round_start_health: dict[int, int] = {}
+        self._round_last_health: dict[int, int] = {}  # last *in-round* health, never the menu frame
+        self._cur_round_scored = False
+
     # -- introspection (used by the no-mid-match invariant test) -----------
 
     @property
@@ -217,6 +228,13 @@ class CaptureOrchestrator:
         self._in_unit = True
         self._last_frame = frame
 
+        # Fresh per-unit round-win tally + per-round bookkeeping.
+        self._round_wins = {}
+        self._cur_round = None
+        self._round_start_health = {}
+        self._round_last_health = {}
+        self._cur_round_scored = False
+
     def _validate_user_char(self, frame: FrameRecord) -> None:
         """Hard-error on a configured-vs-observed character mismatch on the user's side (§5).
 
@@ -241,6 +259,7 @@ class CaptureOrchestrator:
         assert self._seg is not None
         self._last_frame = frame
         self._note_real_round(frame)
+        self._track_round_winner(frame, signal.match_state)
         for interaction in self._seg.feed(frame):
             self._emit(interaction)
             self._real_rounds.add(interaction.round)  # an emitted interaction is real play
@@ -266,6 +285,58 @@ class CaptureOrchestrator:
         if any(p.health < base for p, base in zip(frame.players, baseline, strict=True)):
             self._real_rounds.add(frame.round)
 
+    def _track_round_winner(self, frame: FrameRecord, phase: MatchState) -> None:
+        """Accumulate the per-round winner as play unfolds (docs/01 §5).
+
+        A round is won by whoever has more health when it ends: on a KO the loser is at 0 and the
+        winner is above it; on a timeout the winner simply held more health. So both cases reduce to
+        "higher health at the round's last *in-round* frame" — deliberately the last frame of real
+        play, not the trailing results/menu frame whose health is reset. A ``round_over`` (KO)
+        scores the round on the spot; a round that ends without a KO (a timeout, or a Ctrl-C-cut
+        final round) is scored when the next round opens or the unit closes (in
+        :meth:`_finalize_round`).
+        """
+        if frame.round != self._cur_round:
+            self._finalize_round()  # score the round that just ended without a KO (timeout)
+            self._cur_round = frame.round
+            self._round_start_health = {i: p.health for i, p in enumerate(frame.players)}
+            self._round_last_health = {}
+            self._cur_round_scored = False
+        if phase is MatchState.in_round:
+            # Track health only during live play — the KO/timeout truth, never the reset menu frame.
+            self._round_last_health = {i: p.health for i, p in enumerate(frame.players)}
+        elif phase is MatchState.round_over:
+            self._score_round(ko=True)  # KO latched here → the loser hit 0 this round
+
+    def _finalize_round(self) -> None:
+        """Score the current round if it ended without a KO (timeout / truncated final round)."""
+        self._score_round(ko=False)
+
+    def _score_round(self, *, ko: bool) -> None:
+        """Tally the current round's winner from the last in-round health, once (docs/01 §5).
+
+        A KO is proof of a real, decided round, so it scores unconditionally. A no-KO round only
+        scores if real play happened *and* damage was dealt — this is what keeps the trailing
+        results round (both full health, no KO) from flipping the tally."""
+        if self._cur_round is None or self._cur_round_scored or not self._round_last_health:
+            return
+        if not ko and not self._round_had_damage():
+            return
+        self._cur_round_scored = True
+        health = self._round_last_health
+        if health[0] > health[1]:
+            self._round_wins[0] = self._round_wins.get(0, 0) + 1
+        elif health[1] > health[0]:
+            self._round_wins[1] = self._round_wins.get(1, 0) + 1
+        # Equal health (e.g. a double KO / true draw round) tallies to neither side.
+
+    def _round_had_damage(self) -> bool:
+        """Did anyone lose health this round vs. its start baseline — i.e. was it real play?"""
+        return any(
+            self._round_last_health.get(i, start) < start
+            for i, start in self._round_start_health.items()
+        )
+
     def _emit(self, interaction: Interaction) -> None:
         self._writer.append(self._label(interaction))
         self._interaction_count += 1
@@ -287,11 +358,16 @@ class CaptureOrchestrator:
         """Append this unit's :class:`MatchSummary` to the (in-memory) header (docs/03 §5)."""
         frame = self._last_frame
         assert frame is not None
+        # Score a final round decided by timeout / cut short by Ctrl-C (a KO'd final round already
+        # tallied at its ``round_over``); then decide the match from the round-win tally — robust to
+        # the ambiguous terminal results/menu frame, which the old last-frame health diff read as a
+        # draw (docs/01 §5). ``result`` is from the user's POV.
+        self._finalize_round()
         opponent_idx = 1 - self._user_player
         opponent = self._resolve_char(frame.players[opponent_idx].char_id)
-        user_hp = frame.players[self._user_player].health
-        opp_hp = frame.players[opponent_idx].health
-        result = "win" if user_hp > opp_hp else "loss" if user_hp < opp_hp else "draw"
+        user_wins = self._round_wins.get(self._user_player, 0)
+        opp_wins = self._round_wins.get(opponent_idx, 0)
+        result = "win" if user_wins > opp_wins else "loss" if user_wins < opp_wins else "draw"
         self._writer.header.matches.append(
             MatchSummary(
                 match_id=self._unit_match_id,
