@@ -119,12 +119,27 @@ def _coach_command(args: argparse.Namespace) -> int:
 
 
 def _map_moves_command(args: argparse.Namespace) -> int:
-    """Build the movemap: passive miner over a log (``--from-log``) or live harness (``--live``)."""
-    if bool(args.from_log) == bool(args.live):
-        print("error: pass exactly one of --from-log <path> or --live", file=sys.stderr)
+    """Dispatch ``map-moves``: build (``--from-log``/``--live``) or validate (``--report``/audit).
+
+    The two validators (brief #8) compose on the same surface: ``--report`` eyeballs the built
+    movemap (optionally with ``--from-log`` for sample counts), ``--audit <log>`` flags observed-vs-
+    canonical drift. They are read-only and mutually exclusive with each other and with ``--live``.
+    """
+    if sum([bool(args.report), bool(args.audit), bool(args.live)]) > 1:
+        print("error: pass at most one of --report / --audit / --live", file=sys.stderr)
         return 2
+    if args.audit:
+        return _map_moves_audit(args)
+    if args.report:
+        return _map_moves_report(args)
 
     from tekken_coach.framedata.loader import load_current_framedata
+
+    if bool(args.from_log) == bool(args.live):
+        print(
+            "error: pass exactly one of --from-log / --live / --report / --audit", file=sys.stderr
+        )
+        return 2
 
     if args.live:
         if not args.char:
@@ -167,6 +182,58 @@ def _map_moves_command(args: argparse.Namespace) -> int:
     report = mine_session(session, snapshot, only_char=args.char)
     merges = merge_report(report, snapshot, movemap_dir=args.movemap, overwrite=args.overwrite)
     for line in format_report(report, merges):
+        print(line)
+    return 0
+
+
+def _map_moves_report(args: argparse.Namespace) -> int:
+    """``map-moves --report`` — the eyeball aid over the built movemap (brief #8 Layer 5)."""
+    from tekken_coach.framedata.anchors import load_anchors
+    from tekken_coach.framedata.loader import load_current_framedata, load_move_maps
+    from tekken_coach.framedata.movemap_report import build_report, format_report
+
+    session = None
+    if args.from_log:
+        log_path = Path(args.from_log)
+        if not log_path.exists():
+            print(f"error: session log not found: {log_path}", file=sys.stderr)
+            return 1
+        try:
+            session = load_session(log_path)
+        except IncompatibleSchemaVersionError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    move_maps = load_move_maps(args.movemap)
+    snapshot = load_current_framedata(args.framedata)
+    anchors = load_anchors(args.anchors)
+    report = build_report(move_maps, snapshot, anchors, session=session, only_char=args.char)
+    for line in format_report(report):
+        print(line)
+    return 0
+
+
+def _map_moves_audit(args: argparse.Namespace) -> int:
+    """``map-moves --audit <log>`` — observed-vs-canonical drift alarm (brief #8 Layer 2)."""
+    from tekken_coach.framedata.anchors import load_anchors
+    from tekken_coach.framedata.loader import load_current_framedata, load_move_maps
+    from tekken_coach.framedata.movemap_audit import audit_session, format_audit
+
+    log_path = Path(args.audit)
+    if not log_path.exists():
+        print(f"error: session log not found: {log_path}", file=sys.stderr)
+        return 1
+    try:
+        session = load_session(log_path)
+    except IncompatibleSchemaVersionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    move_maps = load_move_maps(args.movemap)
+    snapshot = load_current_framedata(args.framedata)
+    anchors = load_anchors(args.anchors)
+    report = audit_session(session, snapshot, move_maps, anchors, only_char=args.char)
+    for line in format_audit(report):
         print(line)
     return 0
 
@@ -291,7 +358,13 @@ def _add_update_offsets_flags(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_map_moves_flags(parser: argparse.ArgumentParser) -> None:
-    """Flags for ``map-moves`` (brief #6 CLI wiring). ``--from-log`` XOR ``--live``."""
+    """Flags for ``map-moves`` (brief #6/#8 CLI wiring).
+
+    One action: ``--from-log`` (mine), ``--live`` (Stage B), ``--report`` (eyeball the built map,
+    brief #8 Layer 5), or ``--audit <log>`` (drift alarm, brief #8 Layer 2). ``--report`` may take
+    ``--from-log`` alongside it purely for per-entry sample counts.
+    """
+    from tekken_coach.framedata.anchors import DEFAULT_ANCHORS_PATH
     from tekken_coach.framedata.loader import DEFAULT_FRAMEDATA_DIR
     from tekken_coach.framedata.loader import DEFAULT_MOVEMAP_DIR as FD_MOVEMAP_DIR
 
@@ -301,10 +374,22 @@ def _add_map_moves_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--live", action="store_true", help="interactive live harness against the game (Stage B)"
     )
+    parser.add_argument(
+        "--report", action="store_true", help="report the built movemap with confidence tags (#8)"
+    )
+    parser.add_argument(
+        "--audit",
+        default=None,
+        metavar="LOG",
+        help="flag observed-vs-canonical on-block drift (#8)",
+    )
     parser.add_argument("--char", default=None, help="restrict to / target this character (name)")
     parser.add_argument("--movemap", default=str(FD_MOVEMAP_DIR), help="movemap output directory")
     parser.add_argument(
         "--framedata", default=str(DEFAULT_FRAMEDATA_DIR), help="frame-data snapshot directory"
+    )
+    parser.add_argument(
+        "--anchors", default=str(DEFAULT_ANCHORS_PATH), help="regression anchors file (#8)"
     )
     parser.add_argument(
         "--overwrite", action="store_true", help="replace existing curated move-map entries"
