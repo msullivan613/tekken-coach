@@ -70,6 +70,7 @@ from tekken_coach.reader.memory_source import FakeMemorySource, MemoryImage, Mem
 from tekken_coach.reader.monitor import (
     PlayerView,
     changed_views,
+    format_input,
     format_phase,
     format_view,
     monitor_lines,
@@ -135,6 +136,7 @@ __all__ = [
     "classify_state",
     "decode_frame",
     "derive_phase",
+    "format_input",
     "format_phase",
     "format_view",
     "detect_running_version",

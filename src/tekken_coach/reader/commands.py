@@ -470,7 +470,10 @@ def monitor_main(args: argparse.Namespace) -> int:
     check the reader agrees (stand -> neutral, block -> blockstun, get juggled -> hitstun+juggle).
     A ``[match]`` line shows the derived match_state (``menu``…``match_over``) + round + raw counter
     + the global ``match_flag`` whenever the phase changes (round-gating verification). ``--raw``
-    appends the raw encoded state words, so a mis-decode is diagnosable on the spot.
+    appends the raw encoded state words, so a mis-decode is diagnosable on the spot. ``--input``
+    runs the brief #9 input-reconstruction probe: it keys change-detection on the decoded input and
+    appends ``in=dir:buttons``, so pressing each button / holding each direction surfaces one line —
+    the recipe for validating the ``input_valid``/``input_dir``/``input_buttons`` offsets.
     """
     from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
     from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
@@ -493,7 +496,9 @@ def monitor_main(args: argparse.Namespace) -> int:
         )
     try:
         for line in monitor_lines(
-            _live_monitor_stream(source, table, args.interval), show_raw=args.raw
+            _live_monitor_stream(source, table, args.interval),
+            show_raw=args.raw,
+            show_input=args.show_input,
         ):
             print(line, flush=True)
     except ReaderError as exc:
@@ -625,6 +630,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--raw",
         action="store_true",
         help="append the raw encoded state words to each line, so a mis-decode is diagnosable.",
+    )
+    p_monitor.add_argument(
+        "--input",
+        dest="show_input",
+        action="store_true",
+        help="input-reconstruction probe (brief #9): key change-detection on the decoded input and "
+        "append it (in=dir:buttons), so each button press / held direction surfaces one line.",
     )
     p_monitor.set_defaults(func=monitor_main)
 

@@ -10,13 +10,14 @@ from tekken_coach.reader.decode import DerivedPhase
 from tekken_coach.reader.monitor import (
     PlayerView,
     changed_views,
+    format_input,
     format_phase,
     format_view,
     monitor_lines,
     view_of,
     views_of,
 )
-from tekken_coach.schemas import ActionState, FrameRecord, MatchState
+from tekken_coach.schemas import ActionState, FrameRecord, InputState, MatchState
 from tests.factories import make_frame_record
 
 
@@ -173,6 +174,73 @@ def test_monitor_lines_flag_rides_line_but_does_not_drive_reemit() -> None:
     match_lines = [ln for ln in monitor_lines(stream) if "[match]" in ln]
     assert len(match_lines) == 1  # held menu phase -> one line despite the churning flag
     assert "flag=16" in match_lines[0]  # shows the flag at first sight
+
+
+# --- input-reconstruction probe (brief #9) -----------------------------------------------------
+
+
+def _frame_with_input(dir_: int, buttons: list[str]) -> FrameRecord:
+    """A frame whose P1 carries the given decoded input (P2 pinned to a stable neutral baseline)."""
+    fr = _frame_with(ActionState.neutral)
+    p1 = fr.players[0].model_copy(update={"input": InputState(dir=dir_, buttons=buttons)})
+    return fr.model_copy(update={"players": [p1, fr.players[1]]})
+
+
+def test_format_input_renders_dir_buttons_bare_dir_and_none() -> None:
+    assert format_input((6, ("2",))) == "6:2"
+    assert format_input((3, ("1", "2"))) == "3:1+2"
+    assert format_input((5, ())) == "5:-"  # a bare direction, no button
+    assert format_input(None) == "none"
+
+
+def test_view_of_populates_input_from_the_frame() -> None:
+    fr = _frame_with_input(3, ["1", "2"])
+    v = view_of(0, fr.players[0])
+    assert v.input == (3, ("1", "2"))
+    assert v.input_key == (3, ("1", "2"))
+    # Input is not in the default state key (so the normal monitor is unchanged)...
+    assert v.key == ("neutral", (), fr.players[0].move_id)
+    # ...and not shown unless asked for.
+    assert "in=" not in format_view(v)
+    assert "in=3:1+2" in format_view(v, show_input=True)
+
+
+def test_view_of_none_input_is_none() -> None:
+    fr = _frame_with(ActionState.neutral)
+    p1 = fr.players[0].model_copy(update={"input": None})
+    v = view_of(0, fr.model_copy(update={"players": [p1, fr.players[1]]}).players[0])
+    assert v.input is None
+    assert "in=none" in format_view(v, show_input=True)
+
+
+def test_changed_views_with_input_surfaces_each_distinct_press_while_state_is_held() -> None:
+    # The probe's whole point: standing still (action_state=neutral, move_id held) pressing 2 then 3
+    # then holding df must emit three lines — the state key would collapse them to one.
+    stream = [
+        (0.0, views_of(_frame_with_input(5, []))),  # neutral, no buttons
+        (0.1, views_of(_frame_with_input(5, ["2"]))),  # press 2
+        (0.2, views_of(_frame_with_input(5, ["2"]))),  # hold 2 -> no re-emit
+        (0.3, views_of(_frame_with_input(5, ["3"]))),  # press 3
+        (0.4, views_of(_frame_with_input(3, []))),  # hold df, release buttons
+    ]
+    p1 = [
+        (round(t, 1), v.input) for t, v in changed_views(stream, with_input=True) if v.player == 1
+    ]
+    assert p1 == [(0.0, (5, ())), (0.1, (5, ("2",))), (0.3, (5, ("3",))), (0.4, (3, ()))]
+
+
+def test_monitor_lines_show_input_keys_and_renders_the_input() -> None:
+    def at(dir_: int, buttons: list[str]) -> list[PlayerView]:
+        return views_of(_frame_with_input(dir_, buttons))
+
+    stream = [
+        (0.0, DerivedPhase(MatchState.in_round, 1), 73, at(5, [])),
+        (0.1, DerivedPhase(MatchState.in_round, 1), 73, at(3, ["2"])),  # df+2 while state held
+    ]
+    lines = list(monitor_lines(stream, show_input=True))
+    p1_lines = [ln for ln in lines if "P1" in ln]
+    assert sum("in=3:2" in ln for ln in p1_lines) == 1  # the df+2 press surfaced
+    assert sum("in=5:-" in ln for ln in p1_lines) == 1  # the prior bare-neutral surfaced too
 
 
 def test_monitor_lines_tolerates_a_menu_phase_with_no_player_views() -> None:
