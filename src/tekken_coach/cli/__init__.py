@@ -114,6 +114,64 @@ def _coach_command(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# map-moves — build the movemap by frame-fingerprint join (brief #6)
+# ---------------------------------------------------------------------------
+
+
+def _map_moves_command(args: argparse.Namespace) -> int:
+    """Build the movemap: passive miner over a log (``--from-log``) or live harness (``--live``)."""
+    if bool(args.from_log) == bool(args.live):
+        print("error: pass exactly one of --from-log <path> or --live", file=sys.stderr)
+        return 2
+
+    from tekken_coach.framedata.loader import load_current_framedata
+
+    if args.live:
+        if not args.char:
+            print("error: --live requires --char <name>", file=sys.stderr)
+            return 2
+        user = (args.user or "p1").lower()
+        if user not in ("p1", "p2"):
+            print(f"error: --user must be p1 or p2, got {args.user!r}", file=sys.stderr)
+            return 2
+        from tekken_coach.framedata.movemap_live import run_live
+
+        return run_live(
+            char=args.char,
+            user_player=0 if user == "p1" else 1,
+            process=args.process,
+            offsets_dir=args.offsets,
+            movemap_dir=args.movemap,
+            framedata_dir=args.framedata,
+            version_override=args.version,
+            overwrite=args.overwrite,
+        )
+
+    # --from-log: passive miner
+    from tekken_coach.framedata.movemap_miner import (
+        format_report,
+        merge_report,
+        mine_session,
+    )
+
+    log_path = Path(args.from_log)
+    if not log_path.exists():
+        print(f"error: session log not found: {log_path}", file=sys.stderr)
+        return 1
+    try:
+        session = load_session(log_path)
+    except IncompatibleSchemaVersionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    snapshot = load_current_framedata(args.framedata)
+    report = mine_session(session, snapshot, only_char=args.char)
+    merges = merge_report(report, snapshot, movemap_dir=args.movemap, overwrite=args.overwrite)
+    for line in format_report(report, merges):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # fetch-framedata — ingest a snapshot (delegates to the C1 callable)
 # ---------------------------------------------------------------------------
 
@@ -188,6 +246,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_coach.add_argument("--coach", choices=("skill", "api"), default=None, help="coaching backend")
     p_coach.set_defaults(func=_coach_command)
 
+    p_map = sub.add_parser(
+        "map-moves", help="build the movemap by frame-fingerprint join (brief #6)"
+    )
+    _add_map_moves_flags(p_map)
+    p_map.set_defaults(func=_map_moves_command)
+
     # --- delegated commands (already implemented elsewhere) --------------
     p_update = sub.add_parser("update-offsets", help="post-patch offset re-discovery (docs/02 §4)")
     _add_update_offsets_flags(p_update)
@@ -224,6 +288,32 @@ def _add_update_offsets_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--derive", action="store_true", help="C4h fully derive the layout")
     parser.add_argument("--holder-scan", action="store_true", help="C4i AoB holder model")
     parser.add_argument("--debug-dir", default=None, help="(--holder-scan) write a debug capture")
+
+
+def _add_map_moves_flags(parser: argparse.ArgumentParser) -> None:
+    """Flags for ``map-moves`` (brief #6 CLI wiring). ``--from-log`` XOR ``--live``."""
+    from tekken_coach.framedata.loader import DEFAULT_FRAMEDATA_DIR
+    from tekken_coach.framedata.loader import DEFAULT_MOVEMAP_DIR as FD_MOVEMAP_DIR
+
+    parser.add_argument(
+        "--from-log", default=None, help="mine an existing session .jsonl (Stage A)"
+    )
+    parser.add_argument(
+        "--live", action="store_true", help="interactive live harness against the game (Stage B)"
+    )
+    parser.add_argument("--char", default=None, help="restrict to / target this character (name)")
+    parser.add_argument("--movemap", default=str(FD_MOVEMAP_DIR), help="movemap output directory")
+    parser.add_argument(
+        "--framedata", default=str(DEFAULT_FRAMEDATA_DIR), help="frame-data snapshot directory"
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true", help="replace existing curated move-map entries"
+    )
+    # Live-only (Stage B) flags — ignored by the --from-log path.
+    parser.add_argument("--user", default=None, help="(--live) which player is you: p1|p2")
+    parser.add_argument("--process", default=GAME_PROCESS_NAME, help="(--live) target process name")
+    parser.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR, help="(--live) offset-table dir")
+    parser.add_argument("--version", default=None, help="(--live) override detected game version")
 
 
 def _add_fetch_framedata_flags(parser: argparse.ArgumentParser) -> None:

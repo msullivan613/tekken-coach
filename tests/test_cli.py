@@ -537,7 +537,7 @@ def test_coach_command_missing_log(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Command surface (docs/07 §1.1) — six commands, delegates wired
+# Command surface (docs/07 §1.1) — six commands + map-moves (brief #6), delegates wired
 # ---------------------------------------------------------------------------
 
 
@@ -574,6 +574,7 @@ def test_command_surface_registers_six_commands() -> None:
         "update-offsets",
         "fetch-framedata",
         "doctor",
+        "map-moves",
     }
     # The delegated commands dispatch to the reader's own mains (not re-authored here).
     assert sub.choices["doctor"].get_default("func") is doctor_main
