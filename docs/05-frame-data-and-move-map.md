@@ -9,7 +9,7 @@
 
 | Asset | Question it answers | Source of truth | Volatility |
 |---|---|---|---|
-| **Move map** | move_id 2145 = "df+2" for Kazuya | game-derived + community DBs | shifts on patches; **can't be fully derived at runtime** |
+| **Move map** | move_id 2145 = "df+2" for Kazuya | built by observed-behaviour ↔ Wavu join (§2) | shifts on patches; **can't be fully derived at runtime** |
 | **Frame data** | "df+2" is −13 on block, mid, i15 | community sites (Wavu / TekkenDocs) | shifts on balance patches |
 
 They are separate because the move **ID→name** binding is a property of the game build (memory),
@@ -20,10 +20,23 @@ can change either or both ([02](02-memory-reader.md) §4).
 
 ### 2.1 Why it can't be purely runtime-derived
 The Tekken 8 TekkenBot fork we build on ([02](02-memory-reader.md)) **stopped parsing the move
-list from memory** and shifted to a shipped database, because the in-memory move list became
-unreliable to parse. We inherit that: the move map is a **maintained asset**, seeded from
-community data and the fork's `assets/database/`, not something we can regenerate from a clean
-memory read alone.
+list from memory** and shifted to observing moves at runtime, because the in-memory move list
+became unreliable to parse. We inherit that lesson: the move map is a **maintained asset**, not
+something we can regenerate from a clean memory read alone.
+
+But we cannot *seed* it from anyone else's data either. **No source publishes memory `move_id`s** —
+they are properties of a specific game build, not of any community dataset. In particular the fork's
+own database (`assets/database/frame_data` + `opponent_moves`) is **not** a usable seed: it is
+**self-built at runtime by observation and git-ignored** (the shipped dirs contain only a
+`.gitignore`; `src/frame_data/Database.py:record_move` accumulates *observed* frame
+advantage/startup/hit_type keyed on the memory `move_id`). It therefore stores **`move_id →
+observed frames`, never notation** — so it cannot supply the `move_id → framedata_key` (notation)
+binding we need at all.
+
+So we **build that binding from observed behaviour ourselves**, via the **frame-fingerprint join**
+(§2.3, `map-moves`): match a move's *observed* frame behaviour against the Wavu snapshot (§3) and
+adopt only a unique survivor. This is version-correct by construction — it is built from *this*
+build's `move_id`s — and needs no external move-ID dataset (none exists).
 
 ### 2.2 Structure
 One file per character, keyed by move ID:
@@ -48,9 +61,26 @@ assets/movemap/
 `framedata_key` is the join key into the frame-data table (§3) and is kept explicit because
 notation strings and frame-data table keys don't always match character-to-character.
 
-### 2.3 Seeding & maintenance
-- **Seed** from the fork's `assets/database/frame_data` + `opponent_moves` and from community
-  notation lists, per character.
+### 2.3 Building & maintenance — the frame-fingerprint join (`map-moves`)
+The map is built by the `map-moves` command (`tekken_coach.framedata.movemap_build` +
+`movemap_miner` + `movemap_live`, shipped by C6). It fingerprints a move's *observed* behaviour —
+`(char_id, move_id, observed on_block[, startup])` — against the character's Wavu snapshot (§3) and
+auto-maps `move_id → framedata_key` **only when exactly one snapshot move matches within a tight
+tolerance**; anything ambiguous is a reported **collision**, never a guess. Two paths:
+
+- **Passive miner** (`map-moves --from-log <session.jsonl>`): forms a consensus observed `on_block`
+  per `(char, move_id)` group over a captured log and runs the join. A unique Wavu match is
+  auto-mapped and written; ties are reported as `collision`.
+- **Honest limit — the passive path is collision-mostly today.** `on_block` alone is a **coarse
+  discriminator**: many moves share the same on-block value, so from a real log it auto-maps only
+  the rare move whose observed on-block is *unique* in the snapshot — empirically ~zero for a fresh
+  character. Do not oversell it: its practical output is the **collision report that guides the live
+  pass**, not a populated map.
+- **Live harness** (`map-moves --live --char <c>`): observes **startup** too (attacker `move_frame`
+  at contact), which breaks the on-block ties. This is where the map actually gets populated — one
+  user-confirmed move at a time, reusing the miner's exact join/consensus core.
+- **Prerequisite:** a character needs its Wavu framedata present first (`fetch-framedata <char>`,
+  §3.3). A group whose snapshot is absent is reported `needs_framedata` — never a crash.
 - **Coverage is scoped** (summary §8): only the user's played matchups need a *complete* map for
   v1. Unmapped IDs are not fatal — they resolve to `move_id:<n>` and xref marks
   `frame_data_matched:false`, so an unknown move degrades to "unlabeled interaction," not a crash.
@@ -248,7 +278,7 @@ response:
 ```
 game patch drops
    ├─ memory offsets may shift ──► run update-offsets (02 §4) → new assets/offsets/<ver>.json
-   ├─ move IDs may shift       ──► re-seed / re-verify assets/movemap for scoped chars
+   ├─ move IDs may shift       ──► re-run map-moves (passive over recent logs + a short live pass) for scoped chars
    └─ frame data may shift     ──► run fetch-framedata → new snapshot-<date>/ → review diff → repoint `current`
 Then: bump header stamps (game_version, framedata_snapshot) so new logs are reproducible (03 §6).
 ```
@@ -258,7 +288,7 @@ Then: bump header stamps (game_version, framedata_snapshot) so new logs are repr
   ([02](02-memory-reader.md)), which is the forcing function to run the three steps above.
 - **Between patches** (drift guard): the §4.2 observed-vs-canonical alarm and the move-map
   miss-rate (`frame_data_matched:false` frequency) are monitored; a rising miss rate means the map
-  needs re-seeding even without a version bump.
+  needs another `map-moves` pass even without a version bump.
 - **Snapshots are immutable and dated**; `current` is a pointer. Old logs remain reproducible
   against the snapshot they were captured with.
 
@@ -277,4 +307,5 @@ Then: bump header stamps (game_version, framedata_snapshot) so new logs are repr
 - TekkenDocs (frame data JSON): <https://tekkendocs.com>
 - Wavu Wank (ratings/replays API — *not* frame data): <https://wank.wavu.wiki/api>
 - okizeme.gg (manual cross-check reference; no public API): <https://okizeme.gg>
-- Fork whose DB approach we inherit: <https://github.com/dcep93/TekkenBot>
+- Fork whose *lesson* (the move map is a maintained asset; its own move DB is self-built by
+  observation and git-ignored, holding no notation) we inherit: <https://github.com/dcep93/TekkenBot>

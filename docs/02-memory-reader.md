@@ -24,12 +24,15 @@ wholesale — see §5.
 - A GitHub-Actions build pipeline for redistributing after a patch.
 
 ### What it warns us about (important)
-- The fork **stopped parsing the move list out of memory** and moved to a shipped database
-  (`assets/database/frame_data`, supplemented by `assets/database/opponent_moves`), because the
-  in-memory move list became unreliable/unavailable to parse. **We inherit this reality:** the
-  move-ID → name map is a **maintained asset**, not something we can fully derive at runtime. This
-  is why [05](05-frame-data-and-move-map.md) treats the move map as a first-class data-ingest
-  problem, and it confirms the summary §7 cost-sink warning.
+- The fork **stopped parsing the move list out of memory** and moved to observing moves at runtime,
+  because the in-memory move list became unreliable/unavailable to parse. Its
+  `assets/database/frame_data` + `opponent_moves` dirs are **self-built and git-ignored** (they ship
+  only a `.gitignore`; the fork accumulates *observed* frames keyed on `move_id`, storing **no
+  notation**) — so they are **not** usable seed data. **We inherit only the lesson**, not the data:
+  the move-ID → name map is a **maintained asset**, not something we can fully derive at runtime or
+  seed from anyone's shipped DB. This is why [05](05-frame-data-and-move-map.md) treats the move map
+  as a first-class data-ingest problem and builds the binding by the frame-fingerprint join
+  ([05](05-frame-data-and-move-map.md) §2.1/§2.3); it confirms the summary §7 cost-sink warning.
 - Its guidance to **wipe the frame-data folder after a patch** to avoid stale data tells us patch
   handling must invalidate cached per-move data, not just offsets.
 
