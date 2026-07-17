@@ -133,6 +133,13 @@ def format_view(view: PlayerView, *, show_raw: bool = False, show_input: bool = 
     return line
 
 
+# "No previous sighting of this player" — distinct from a key that is legitimately ``None``.
+# ``input_key`` is ``None`` whenever input is unresolvable, so a plain ``dict.get()`` default of
+# ``None`` would collide the two and swallow the first view of an all-``None`` input stream: the
+# probe would go silent forever against exactly the dead offsets it exists to detect.
+_MISSING = object()
+
+
 def _view_key(view: PlayerView, *, with_input: bool) -> object:
     """The change key for a view: the decoded input for the probe, else the decoded state."""
     return view.input_key if with_input else view.key
@@ -143,9 +150,13 @@ def _changed(previous: dict[int, object], view: PlayerView, *, with_input: bool 
 
     ``with_input`` selects the probe key (:attr:`PlayerView.input_key`) so a bare button press
     surfaces even while the player stands still; otherwise the state key drives change-detection.
+
+    A player's **first** view always counts as changed, including when its key is ``None``: absence
+    is tracked with :data:`_MISSING` rather than ``None`` so an unresolvable input renders once as
+    ``in=none`` instead of emitting nothing at all.
     """
     key = _view_key(view, with_input=with_input)
-    if previous.get(view.player) == key:
+    if previous.get(view.player, _MISSING) == key:
         return False
     previous[view.player] = key
     return True

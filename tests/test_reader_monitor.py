@@ -229,6 +229,38 @@ def test_changed_views_with_input_surfaces_each_distinct_press_while_state_is_he
     assert p1 == [(0.0, (5, ())), (0.1, (5, ("2",))), (0.3, (5, ("3",))), (0.4, (3, ()))]
 
 
+def _frame_without_input() -> FrameRecord:
+    """A frame where neither player's input resolves — what dead ``input_*`` offsets produce."""
+    fr = _frame_with(ActionState.neutral)
+    players = [pf.model_copy(update={"input": None}) for pf in fr.players]
+    return fr.model_copy(update={"players": players})
+
+
+def test_changed_views_emits_the_first_view_when_input_is_none() -> None:
+    # The probe must be able to *say* "no input": with dead offsets every key is None, and a
+    # `dict.get()` default of None would read that first view as "unchanged" and emit nothing at
+    # all — silence indistinguishable from the tool not running.
+    stream = [(0.0, views_of(_frame_without_input()))]
+    emitted = list(changed_views(stream, with_input=True))
+    assert [(v.player, v.input) for _, v in emitted] == [(1, None), (2, None)]
+
+
+def test_changed_views_all_none_input_stream_emits_once_per_player_then_goes_quiet() -> None:
+    stream = [(t / 10, views_of(_frame_without_input())) for t in range(5)]
+    emitted = [(round(t, 1), v.player) for t, v in changed_views(stream, with_input=True)]
+    assert emitted == [(0.0, 1), (0.0, 2)]  # first sighting each, then the held None key is quiet
+
+
+def test_monitor_lines_render_in_none_on_a_dead_offset_build() -> None:
+    stream = [
+        (t / 10, DerivedPhase(MatchState.in_round, 1), 73, views_of(_frame_without_input()))
+        for t in range(5)
+    ]
+    p1_lines = [ln for ln in monitor_lines(stream, show_input=True) if "P1" in ln]
+    assert len(p1_lines) == 1
+    assert "in=none" in p1_lines[0]
+
+
 def test_monitor_lines_show_input_keys_and_renders_the_input() -> None:
     def at(dir_: int, buttons: list[str]) -> list[PlayerView]:
         return views_of(_frame_with_input(dir_, buttons))
