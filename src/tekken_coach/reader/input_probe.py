@@ -87,6 +87,11 @@ PROTOCOL: tuple[Step, ...] = (
 )
 
 
+def _base_label(label: str) -> str:
+    """``"1 (again)"`` -> ``"1"``: the action a step performs, stripped of its repeat marker."""
+    return label.split(" (again)")[0]
+
+
 @dataclass(frozen=True)
 class Window:
     """A stretch of the script with a known expectation: ``kind`` is ``"hold"`` or ``"rest"``."""
@@ -97,20 +102,30 @@ class Window:
     step: Step | None  # None for the leading baseline rest
 
 
-def step_windows(protocol: Sequence[Step] = PROTOCOL, start: float = 0.0) -> list[Window]:
-    """Lay the protocol out on the probe's elapsed-seconds clock, from ``start``.
+def step_windows(
+    protocol: Sequence[Step] = PROTOCOL, start: float = 0.0, scale: float = 1.0
+) -> list[Window]:
+    """Lay the protocol out on the probe's clock: starting at ``start``, stretched by ``scale``.
 
     ``start`` is when the user began the script relative to ``probe-state``'s ``t=0``; the recorded
-    log and the script are two clocks, and :func:`best_alignment` searches this parameter rather
-    than trusting the user to have started both at the same instant.
+    log and the script are two clocks, and :func:`best_alignment` fits this rather than trusting the
+    user to have started both at the same instant.
+
+    ``scale`` stretches every hold and rest, because **a human reading a checklist does not keep the
+    script's tempo** — they run slow, consistently. A real 5.02.01 pass held each step for ~4.6 s
+    against the script's 4.0 s: only 15% slow, but it compounds, and by the last of 15 steps the
+    schedule was **8.6 s** out — so the script's tail scored against the gaps between the user's
+    actual presses and read as "this field never reacts". A single fixed offset cannot express that;
+    the drift is a *rate*, not a delay. Measured on that pass, a linear ``start + scale`` fit tracks
+    every step to within 0.44 s, which the :data:`SETTLE` margin absorbs.
     """
-    windows = [Window(start, start + BASELINE, "rest", None)]
-    t = start + BASELINE
+    windows = [Window(start, start + BASELINE * scale, "rest", None)]
+    t = start + BASELINE * scale
     for step in protocol:
-        windows.append(Window(t, t + step.hold, "hold", step))
-        t += step.hold
-        windows.append(Window(t, t + step.rest, "rest", step))
-        t += step.rest
+        windows.append(Window(t, t + step.hold * scale, "hold", step))
+        t += step.hold * scale
+        windows.append(Window(t, t + step.rest * scale, "rest", step))
+        t += step.rest * scale
     return windows
 
 
@@ -244,10 +259,10 @@ def dominant_value(points: Sequence[tuple[float, Value]], window: Window) -> Val
 
 # --- ranking ------------------------------------------------------------------------------------
 
-# `reacts` and `quiet_other` are not preferences to be weighed against the rest — they are the two
-# NECESSARY conditions, and together they are the role discriminator: the button mask moves on the
-# button steps *and stays still* through the direction steps. They multiply the score rather than
-# contributing to it, because a weighted sum lets a field that fails one of them coast in on the
+# `reacts`, `quiet_other` and `discriminates` are not preferences to be weighed against the rest —
+# they are the NECESSARY conditions. Two of them form the role discriminator: the button mask moves
+# on the button steps *and stays still* through the direction steps. They multiply the score rather
+# than contributing to it, because a weighted sum lets a field that fails one coast in on the
 # others: a dead-constant offset satisfies "stable rest value", "steady", "consistent" and a
 # "plausible cardinality" perfectly while never once reacting to input, and would otherwise outrank
 # a real field.
@@ -303,11 +318,12 @@ def score_candidate(
     *,
     protocol: Sequence[Step] = PROTOCOL,
     start: float = 0.0,
+    scale: float = 1.0,
     acting_player: int = 1,
 ) -> CandidateScore:
     """Score one watched offset as a candidate for ``role`` (``"button"`` or ``"dir"``)."""
     points = obs.series.get(acting_player, {}).get(name, [])
-    windows = step_windows(protocol, start)
+    windows = step_windows(protocol, start, scale)
     rests = [w for w in windows if w.kind == "rest"]
     holds = [w for w in windows if w.kind == "hold" and w.step is not None]
     mine = [w for w in holds if w.step is not None and w.step.role == role]
@@ -338,12 +354,29 @@ def score_candidate(
         assert window.step is not None
         values_by_step[window.step.label] = dominant_value(points, window)
 
+    # Reacting to input is not the same as ENCODING it, and this is what tells them apart: a real
+    # input_dir gives a *different* value for each direction, a real button mask a different value
+    # per button. Without this, anything downstream of the pad outscores the pad — on the real
+    # 5.02.01 sweep the winner was a vertical-velocity byte reading 32 for u/u-f/u-b and 0 for
+    # every other direction (0.91), and an "attack button is held" flag reading 1 for all of
+    # 1/2/3/4 (0.83). Both are perfectly acting-exclusive, role-specific and rest-stable; they just
+    # cannot say *which* input happened, which is the entire job. Necessary, so it gates.
+    # Collapse the repeats ("f" / "f (again)") first: re-performing an action is a consistency
+    # check, not a distinct action to be encoded distinctly.
+    by_action = {_base_label(label): value for label, value in values_by_step.items()}
+    discriminates = _fraction(len({*by_action.values()}), len(by_action))
+    if discriminates < 1.0:
+        notes.append(
+            f"reads only {len({*by_action.values()})} distinct value(s) across {len(by_action)} "
+            f"distinct {role} actions — reacts to input, does not encode which"
+        )
+
     # A repeat of the same action ("1" vs "1 (again)") must read the same value — a real field maps
     # action -> value; a frame counter or a churning neighbour drifts.
     repeats = [(w.step.label, w) for w in mine if w.step is not None and "(again)" in w.step.label]
     consistent = 1.0
     for label, window in repeats:
-        base = label.split(" (again)")[0]
+        base = _base_label(label)
         if base in values_by_step and values_by_step[base] != dominant_value(points, window):
             consistent = 0.0
             notes.append(f"{base!r} read differently on its repeat")
@@ -367,6 +400,7 @@ def score_candidate(
     parts = {
         "reacts": reacts,
         "quiet_other": quiet_other,
+        "discriminates": discriminates,
         "rest_stable": rest_stable,
         "steady": steady,
         "consistent": consistent,
@@ -377,7 +411,7 @@ def score_candidate(
     return CandidateScore(
         name=name,
         role=role,
-        score=reacts * quiet_other * quality,
+        score=reacts * quiet_other * discriminates * quality,
         rest_value=rest_value,
         values_by_step=values_by_step,
         distinct=distinct,
@@ -392,15 +426,27 @@ def rank_for_role(
     *,
     protocol: Sequence[Step] = PROTOCOL,
     start: float = 0.0,
+    scale: float = 1.0,
     acting_player: int = 1,
     limit: int | None = None,
+    names: Sequence[str] | None = None,
 ) -> list[CandidateScore]:
-    """Every watched offset scored as ``role``, best first (ties broken by offset for stability)."""
+    """Every watched offset scored as ``role``, best first (ties broken by offset for stability).
+
+    ``names`` restricts scoring to a subset — :func:`best_alignment` uses it to fit the schedule
+    against only the plausible candidates instead of every swept byte.
+    """
     scores = [
         score_candidate(
-            obs, name, role, protocol=protocol, start=start, acting_player=acting_player
+            obs,
+            name,
+            role,
+            protocol=protocol,
+            start=start,
+            scale=scale,
+            acting_player=acting_player,
         )
-        for name in obs.fields
+        for name in (obs.fields if names is None else names)
     ]
     scores.sort(key=lambda c: (-c.score, _name_sort_key(c.name)))
     return scores[:limit] if limit is not None else scores
@@ -433,27 +479,72 @@ def log_span(obs: Observation) -> tuple[float, float]:
 _ALIGN_SLACK = 3.0
 
 
+def alignment_candidates(obs: Observation, acting_player: int = 1, limit: int = 60) -> list[str]:
+    """The few offsets worth fitting the schedule against: acting-player-exclusive, low-cardinality.
+
+    Fitting against every swept byte is both wasteful and wrong. Wasteful because a whole-struct
+    sweep is thousands of offsets and the fit re-scores all of them at every trial (start, scale) —
+    minutes of work per axis. Wrong because the fit takes the *best* candidate per role, and a byte
+    of a position float can out-fit a real input field at some accidental offset, dragging the
+    schedule off. Only fields that could be input get a vote: they must move on the acting player,
+    stay still on the static dummy, and take few enough values to encode a stick or a button mask.
+    """
+    mine = obs.series.get(acting_player, {})
+    others = [by_field for player, by_field in obs.series.items() if player != acting_player]
+    ranked: list[tuple[int, str]] = []
+    for name, points in mine.items():
+        values = {value for _, value in points}
+        if len(values) < 2:
+            continue  # never moved: nothing to align against
+        if any(len({v for _, v in by_field.get(name, [])}) > 1 for by_field in others):
+            continue  # moves on the dummy too, so it cannot be this player's input
+        if len(values) > max(_CARDINALITY_CEILING.values()):
+            continue  # churning: a float or a counter, not an encoded input
+        ranked.append((len(points), name))
+    # Most-toggled first: a field pressed once per step carries far more schedule signal than one
+    # that flipped twice all pass.
+    ranked.sort(key=lambda pair: (-pair[0], _name_sort_key(pair[1])))
+    return [name for _, name in ranked[:limit]]
+
+
 def _alignment_fit(
-    obs: Observation, start: float, protocol: Sequence[Step], acting_player: int
+    obs: Observation,
+    start: float,
+    scale: float,
+    protocol: Sequence[Step],
+    acting_player: int,
+    names: Sequence[str],
 ) -> float:
-    """How well the script explains the log at ``start``: the best candidate score, summed per role.
+    """How well the script explains the log at ``(start, scale)``: best candidate score, per role.
 
     Scored on the single best candidate per role because at most a couple of offsets are real
-    inputs; the other few hundred are noise that no alignment improves, so averaging would drown the
-    signal that is being aligned.
+    inputs; the rest are noise that no alignment improves, so averaging would drown the very signal
+    being aligned.
     """
     return sum(
         max(
             (
                 c.score
                 for c in rank_for_role(
-                    obs, role, protocol=protocol, start=start, acting_player=acting_player
+                    obs,
+                    role,
+                    protocol=protocol,
+                    start=start,
+                    scale=scale,
+                    acting_player=acting_player,
+                    names=names,
                 )
             ),
             default=0.0,
         )
         for role in ("button", "dir")
     )
+
+
+# How far off the script's tempo a human can plausibly run. A real 5.02.01 pass came in at 1.15x;
+# the range is generous on the slow side because reading a checklist and pressing is slower than
+# reading a checklist, never faster.
+_SCALE_RANGE = (0.85, 1.8)
 
 
 def best_alignment(
@@ -463,37 +554,56 @@ def best_alignment(
     acting_player: int = 1,
     coarse: float = 1.0,
     fine: float = 0.1,
-) -> float:
-    """Find when the user actually started the script, by fitting it to the log.
+    scale: float | None = None,
+) -> tuple[float, float]:
+    """Fit ``(start, scale)`` — when the user began the script, and how slowly they ran it.
 
     The probe's clock and the user's reading of the checklist are two clocks, and **nothing
     synchronizes them**: the user starts the probe in one terminal, alt-tabs into the game, finds
-    the checklist and begins. A late start is normal, not an anomaly, so the search range is
-    **derived from the recording** — the script has to fit inside it, which bounds the start to
-    ``[log_start, log_end - script_duration]`` (plus slack) — rather than assumed to be near zero.
-    Guessing a narrow window around 0 would mean a user who took 15 s to alt-tab gets every
-    candidate scored against noise, and the report concludes NO CANDIDATE for fields that are
-    really there — a confident false negative, the one outcome worse than saying nothing.
+    the checklist and begins. So the start is fitted, over a range **derived from the recording**
+    (the script has to fit inside it) rather than assumed near zero — a user who took 15 s to
+    alt-tab would otherwise have every candidate scored against noise, and the report would conclude
+    NO CANDIDATE for fields that are really there.
 
-    Searched coarse-then-fine: the fit is smooth on the scale of the :data:`SETTLE` margin, so a
-    1 s sweep of a possibly-minutes-long feasible range finds the right neighbourhood cheaply and
-    the refinement only pays for a second's worth of offsets.
+    ``scale`` is the same argument applied to tempo, and it is not optional in practice: a human
+    does not hold the script's rhythm. The real 5.02.01 pass ran at **1.15x** — modest, but it
+    compounds over 15 steps into **8.6 s** of drift, which slid the whole tail of the script into
+    the gaps between the user's actual presses. Fitting only an offset cannot express that, because
+    the error is a rate. Pass ``scale`` to pin it and fit the start alone.
+
+    Searched coarse-then-fine on both axes, against :func:`alignment_candidates` only — the fit is
+    smooth on the :data:`SETTLE` scale, so a coarse pass finds the neighbourhood cheaply.
     """
+    names = alignment_candidates(obs, acting_player)
     first, last = log_span(obs)
+    scales = (
+        [scale]
+        if scale is not None
+        else [
+            _SCALE_RANGE[0] + i * 0.05
+            for i in range(int((_SCALE_RANGE[1] - _SCALE_RANGE[0]) / 0.05) + 1)
+        ]
+    )
+
+    def sweep(lo: float, hi: float, step: float, scales: Sequence[float]) -> tuple[float, float]:
+        best_fit, best = -1.0, (lo, scales[0])
+        for trial_scale in scales:
+            for tick in range(int((hi - lo) / step) + 1):
+                start = lo + tick * step
+                fit = _alignment_fit(obs, start, trial_scale, protocol, acting_player, names)
+                if fit > best_fit:
+                    best_fit, best = fit, (start, trial_scale)
+        return best
+
     lo = first - _ALIGN_SLACK
-    hi = max(last - script_duration(protocol), first) + _ALIGN_SLACK
-
-    def sweep(lo: float, hi: float, step: float) -> float:
-        best_fit, best_start = -1.0, lo
-        for tick in range(int((hi - lo) / step) + 1):
-            start = lo + tick * step
-            fit = _alignment_fit(obs, start, protocol, acting_player)
-            if fit > best_fit:
-                best_fit, best_start = fit, start
-        return best_start
-
-    around = sweep(lo, hi, coarse)
-    return sweep(around - coarse, around + coarse, fine)
+    hi = max(last - script_duration(protocol) * _SCALE_RANGE[0], first) + _ALIGN_SLACK
+    start_c, scale_c = sweep(lo, hi, coarse, scales)
+    fine_scales = (
+        [scale_c]
+        if scale is not None
+        else [scale_c - 0.04, scale_c - 0.02, scale_c, scale_c + 0.02, scale_c + 0.04]
+    )
+    return sweep(start_c - coarse, start_c + coarse, fine, fine_scales)
 
 
 # --- reporting ----------------------------------------------------------------------------------
@@ -525,13 +635,14 @@ def format_report(
     *,
     protocol: Sequence[Step] = PROTOCOL,
     start: float = 0.0,
+    scale: float = 1.0,
     acting_player: int = 1,
     top: int = 5,
 ) -> Iterator[str]:
     """The analyzer verdict: the top candidates per role, and whether to believe any of them."""
     yield (
         f"analyzed {len(obs.fields)} watched offsets x {len(obs.players)} players; "
-        f"script aligned at t={start:.1f}s (acting player P{acting_player})"
+        f"script fitted at t={start:.1f}s, tempo {scale:.2f}x (acting player P{acting_player})"
     )
     # A pass that was cut short scores every candidate against windows the recording never covers,
     # which reads as NO CANDIDATE — indistinguishable from "the fields aren't here" unless we say
@@ -539,7 +650,7 @@ def format_report(
     # records nothing (nobody moves after the last release), so a complete pass's log always stops
     # short of the full duration, and comparing against that would warn on every good run.
     ends_at = log_span(obs)[1]
-    last_action = start + observable_duration(protocol)
+    last_action = start + observable_duration(protocol) * scale
     if ends_at < last_action:
         yield (
             f"WARNING: the recording ends at t={ends_at:.0f}s but the script's last action lands "
@@ -548,7 +659,13 @@ def format_report(
         )
     for role, field in (("dir", "input_dir"), ("button", "input_buttons")):
         ranked = rank_for_role(
-            obs, role, protocol=protocol, start=start, acting_player=acting_player, limit=top
+            obs,
+            role,
+            protocol=protocol,
+            start=start,
+            scale=scale,
+            acting_player=acting_player,
+            limit=top,
         )
         best = ranked[0] if ranked else None
         yield ""

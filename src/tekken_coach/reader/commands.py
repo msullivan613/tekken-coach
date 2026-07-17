@@ -592,8 +592,11 @@ def analyze_input_main(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    start = args.start if args.start is not None else best_alignment(obs, acting_player=args.player)
-    for line in format_report(obs, start=start, acting_player=args.player, top=args.top):
+    fitted_start, fitted_scale = best_alignment(obs, acting_player=args.player, scale=args.scale)
+    start = args.start if args.start is not None else fitted_start
+    for line in format_report(
+        obs, start=start, scale=fitted_scale, acting_player=args.player, top=args.top
+    ):
         print(line)
     return 0
 
@@ -755,6 +758,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_analyze.add_argument(
         "--player", type=int, default=1, help="the acting player (default 1; the dummy is static)"
+    )
+    p_analyze.add_argument(
+        "--scale",
+        type=float,
+        default=None,
+        help="pin the tempo the pass was performed at (1.15 = 15%% slower than the script) instead "
+        "of fitting it. A human reading a checklist runs slow, and it compounds.",
     )
     p_analyze.add_argument("--top", type=int, default=5, help="candidates to show per role")
     p_analyze.set_defaults(func=analyze_input_main)

@@ -42,14 +42,16 @@ def _label_base(label: str) -> str:
     return label.split(" (again)")[0]
 
 
-def _planted_rows(start: float = 0.0) -> list[dict[str, object]]:
+def _planted_rows(start: float = 0.0, scale: float = 1.0) -> list[dict[str, object]]:
     """A recording where ``@0x40`` is the real input_dir and ``@0x48`` the real input_buttons.
 
     The decoys are the ways a bogus offset can *look* right, one per discriminator: ``@0x8`` ticks
     every sample (a frame counter), ``@0x10`` is dead constant (perfect on every criterion except
     ever reacting), ``@0x18`` reacts to *everything* (both roles — it fails the role split), and
     ``@0x20`` tracks the direction perfectly but does so on **both** players, which a real input
-    field cannot: the P2 dummy is untouched all pass.
+    field cannot: the P2 dummy is untouched all pass. ``@0x30`` is the decoy the real 5.02.01 sweep
+    actually produced: an "an attack button is held" flag — flawless on every criterion except that
+    it reads the same value for 1/2/3/4, so it reacts to input without encoding which.
     """
     rows: list[dict[str, object]] = []
     tick = 0
@@ -63,17 +65,26 @@ def _planted_rows(start: float = 0.0) -> list[dict[str, object]]:
             "@0x10": 7,
             "@0x18": any_press,
             "@0x20": dir_,
+            "@0x30": 1 if btn else 0,
             "@0x40": dir_,
             "@0x48": btn,
         }
         # The dummy: shared globals still tick, its @0x20 mirrors P1 (the decoy), but its own copy
         # of the real input fields sits at rest — nobody is holding its pad.
-        p2 = {"@0x8": tick, "@0x10": 7, "@0x18": 0, "@0x20": dir_, "@0x40": 5, "@0x48": 0}
+        p2 = {
+            "@0x8": tick,
+            "@0x10": 7,
+            "@0x18": 0,
+            "@0x20": dir_,
+            "@0x30": 0,
+            "@0x40": 5,
+            "@0x48": 0,
+        }
         rows.append({"t": round(t, 2), "player": 1, "fields": p1})
         rows.append({"t": round(t, 2), "player": 2, "fields": p2})
 
     emit(start, 5, 0)  # baseline: neutral stick, no buttons
-    for window in step_windows(PROTOCOL, start):
+    for window in step_windows(PROTOCOL, start, scale):
         if window.step is None:
             continue
         base = _label_base(window.step.label)
@@ -86,13 +97,14 @@ def _planted_rows(start: float = 0.0) -> list[dict[str, object]]:
     return rows
 
 
-def _planted(start: float = 0.0) -> Observation:
-    return load_observation(json.dumps(row) for row in _planted_rows(start))
+def _planted(start: float = 0.0, scale: float = 1.0) -> Observation:
+    return load_observation(json.dumps(row) for row in _planted_rows(start, scale))
 
 
 def _report_for(obs: Observation) -> list[str]:
     """The report exactly as `analyze-input` produces it: fit the script, then rank."""
-    return list(format_report(obs, start=best_alignment(obs), top=3))
+    start, scale = best_alignment(obs)
+    return list(format_report(obs, start=start, scale=scale, top=3))
 
 
 # --- protocol ------------------------------------------------------------------------------------
@@ -231,10 +243,11 @@ def test_best_alignment_recovers_a_start_far_later_than_any_fixed_window_would_g
     # CANDIDATE for fields that are really there — a confident false negative. The feasible range
     # comes from the recording instead, so the start is found wherever it actually is.
     obs = _planted(start=18.0)
-    recovered = best_alignment(obs)
+    recovered, scale = best_alignment(obs)
     assert abs(recovered - 18.0) <= SETTLE
-    assert rank_for_role(obs, "dir", start=recovered)[0].name == "@0x40"
-    assert rank_for_role(obs, "button", start=recovered)[0].name == "@0x48"
+    assert scale == pytest.approx(1.0, abs=0.06)  # performed on tempo, so no stretch is inferred
+    assert rank_for_role(obs, "dir", start=recovered, scale=scale)[0].name == "@0x40"
+    assert rank_for_role(obs, "button", start=recovered, scale=scale)[0].name == "@0x48"
 
 
 def test_analyzing_a_late_started_pass_still_names_the_planted_fields() -> None:
@@ -258,10 +271,10 @@ def test_best_alignment_recovers_a_late_start_and_the_ranking_survives_it() -> N
     # so the recovered start is only asked to land inside that margin — and, the part that actually
     # matters, to be good enough that the ranking still finds the planted fields.
     obs = _planted(start=2.6)
-    recovered = best_alignment(obs)
+    recovered, scale = best_alignment(obs)
     assert abs(recovered - 2.6) <= SETTLE
-    assert rank_for_role(obs, "dir", start=recovered)[0].name == "@0x40"
-    assert rank_for_role(obs, "button", start=recovered)[0].name == "@0x48"
+    assert rank_for_role(obs, "dir", start=recovered, scale=scale)[0].name == "@0x40"
+    assert rank_for_role(obs, "button", start=recovered, scale=scale)[0].name == "@0x48"
 
 
 def test_a_misaligned_score_is_worse_than_the_aligned_one() -> None:
@@ -317,3 +330,38 @@ def test_format_report_refuses_to_name_a_candidate_when_the_sweep_is_clean() -> 
     assert "input_dir: NO CANDIDATE" in report
     assert "input_buttons: NO CANDIDATE" in report
     assert "Do not bake a guess." in report
+
+
+def test_a_field_that_reacts_to_input_but_does_not_encode_which_is_not_crowned() -> None:
+    # The decoy the real 5.02.01 sweep produced: an "attack button is held" flag. It is
+    # acting-exclusive, role-specific, rest-stable, steady and consistent — flawless on every
+    # criterion the scorer had — and it scored 0.83, above the plausibility floor, while reading the
+    # SAME value for 1/2/3/4. Reacting to input is not encoding it; without a discrimination gate
+    # the analyzer crowns the thing downstream of the pad instead of the pad.
+    flag = score_candidate(_planted(), "@0x30", "button")
+    assert flag.parts["reacts"] == 1.0  # it really does fire on every button step...
+    assert flag.parts["discriminates"] == pytest.approx(0.2)  # ...with one value for five actions
+    assert flag.score < MIN_PLAUSIBLE
+    assert any("does not encode which" in n for n in flag.notes)
+    assert rank_for_role(_planted(), "button")[0].name == "@0x48"  # the real mask still wins
+
+
+def test_best_alignment_recovers_a_pass_performed_slower_than_the_script() -> None:
+    # A human reading a checklist runs slow, and it compounds: the real 5.02.01 pass came in at
+    # 1.15x, only 15% off, but that is 8.6s of drift by the last of 15 steps — enough to slide the
+    # script's tail into the gaps between presses, so every field there reads as "never reacts".
+    # The error is a rate, not a delay; a start-only fit cannot express it.
+    obs = _planted(start=4.0, scale=1.15)
+    start, scale = best_alignment(obs)
+    assert scale == pytest.approx(1.15, abs=0.06)
+    assert rank_for_role(obs, "dir", start=start, scale=scale)[0].name == "@0x40"
+    assert rank_for_role(obs, "button", start=start, scale=scale)[0].name == "@0x48"
+
+
+def test_a_drifting_pass_is_lost_when_the_tempo_is_pinned_wrong() -> None:
+    # The failure the scale fit exists to prevent, pinned: force tempo 1.0 on a 1.15x pass and the
+    # real field's reactions fall outside their windows.
+    obs = _planted(start=4.0, scale=1.15)
+    on_tempo = score_candidate(obs, "@0x40", "dir", start=4.0, scale=1.0)
+    fitted = score_candidate(obs, "@0x40", "dir", start=4.0, scale=1.15)
+    assert on_tempo.score < MIN_PLAUSIBLE < fitted.score
