@@ -167,10 +167,18 @@ class Observation:
 
 
 def _name_sort_key(name: str) -> tuple[int, object]:
-    """Sort ``@0x38`` before ``@0x100`` (numerically), and any other name lexically after."""
+    """Sort watch-point names in address order; any other name lexically after.
+
+    Handles both shapes the probe emits: a flat offset (``@0x38``) and an offset behind a pointer
+    slot (``@0x38+0x1c``, or ``@0x20/0x8+0x1c`` with hops — brief #11), keyed by ``(slot hops,
+    offset)`` so a behind-a-pointer sweep's columns read in address order too. Lexically, ``+0x100``
+    would sort before ``+0x1c``, which makes a 256-column report needlessly hard to scan.
+    """
     if name.startswith("@0x"):
+        slot_text, _, offset_text = name[1:].partition("+")
         try:
-            return (0, int(name[1:], 16))
+            hops = tuple(int(piece, 16) for piece in slot_text.split("/"))
+            return (0, (hops, int(offset_text, 16) if offset_text else 0))
         except ValueError:
             pass
     return (1, name)

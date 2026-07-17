@@ -79,16 +79,35 @@ _FORMATS: dict[ScalarKind, tuple[str, int]] = {
 }
 
 
-def read_scalar(source: MemorySource, address: int, kind: ScalarKind) -> int | float | bool:
-    """Read one scalar of ``kind`` at ``address`` through the read-only source."""
+def scalar_size(kind: ScalarKind) -> int:
+    """The byte width of ``kind`` — what a sweep steps by, and what a block slice takes."""
+    return _FORMATS[kind][1]
+
+
+def unpack_scalar(raw: bytes, kind: ScalarKind) -> int | float | bool:
+    """Decode one scalar of ``kind`` from exactly its bytes.
+
+    Split out from :func:`read_scalar` so a caller that already holds the bytes can decode without a
+    read. That is what makes the block-read sweep possible (brief #11): one ``ReadProcessMemory``
+    per object per poll, sliced here — instead of one syscall per watched offset, which capped #10's
+    5376-offset sweep at 4.7 Hz and could not resolve a 2-second hold.
+    """
     fmt, size = _FORMATS[kind]
-    raw = source.read(address, size)
     if len(raw) != size:
-        raise DecodeError(f"short read at 0x{address:x}: got {len(raw)}, need {size}")
+        raise DecodeError(f"cannot decode {kind}: got {len(raw)} bytes, need {size}")
     (value,) = struct.unpack(fmt, raw)
     if kind == "bool8":
         return bool(value)
     return value  # type: ignore[no-any-return]
+
+
+def read_scalar(source: MemorySource, address: int, kind: ScalarKind) -> int | float | bool:
+    """Read one scalar of ``kind`` at ``address`` through the read-only source."""
+    size = _FORMATS[kind][1]
+    raw = source.read(address, size)
+    if len(raw) != size:
+        raise DecodeError(f"short read at 0x{address:x}: got {len(raw)}, need {size}")
+    return unpack_scalar(raw, kind)
 
 
 def _read_int(source: MemorySource, address: int, kind: ScalarKind) -> int:

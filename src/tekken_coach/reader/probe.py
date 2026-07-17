@@ -28,7 +28,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import cast, get_args
 
-from tekken_coach.reader.offsets import ScalarKind
+from tekken_coach.reader.offsets import ComponentAnchor, ScalarKind
 
 # The state-map draft this chunk emits: an empty flag list per observed value, for a human to fill.
 SKELETON_NOTES = (
@@ -75,29 +75,92 @@ def due_for_beat(last_beat: float | None, t: float, every: float = HEARTBEAT_SEC
     return last_beat is None or t - last_beat >= every
 
 
-def heartbeat_line(t: float, changes: int, points: int) -> str:
+@dataclass
+class PollRate:
+    """How fast the sweep is actually polling — a correctness property, not a vanity metric.
+
+    #10's whole-struct sweep managed **4.7 Hz** (one read per watched offset, 10752 a poll). The
+    script asks for 2-second holds, so at 4.7 Hz a hold is ~9 samples and a *tap* can fall between
+    two polls and never be observed at all — the sweep would report "this offset never reacted"
+    about a button that was pressed. A rate this loop cannot sustain silently corrupts the negative
+    it reports, so the run measures and prints it rather than leaving the user to guess.
+    """
+
+    polls: int = 0
+    elapsed: float = 0.0
+
+    @property
+    def hz(self) -> float:
+        """Observed polls per second (0.0 before the first interval elapses)."""
+        return self.polls / self.elapsed if self.elapsed > 0 else 0.0
+
+    def summary(self) -> str:
+        """The end-of-run line, against #10's baseline."""
+        return f"poll rate: {self.hz:.1f} Hz over {self.polls} polls (#10's sweep managed 4.7 Hz)"
+
+
+def heartbeat_line(t: float, changes: int, points: int, hz: float | None = None) -> str:
     """The wide-sweep console line: the probe's own clock, which is the checklist's clock.
 
     Deliberately shows ``t``: the input-protocol checklist is timestamped against exactly this
     elapsed-seconds clock, so a user watching this line can follow the script against it — which
-    also gives the analyzer's alignment fit an easier job.
+    also gives the analyzer's alignment fit an easier job. ``hz`` rides along when known, so a
+    sweep too slow to catch a tap is visible *during* the pass, not after it.
     """
-    return f"{t:>7.2f}  watching {points} offsets — {changes} changes recorded"
+    rate = f" @ {hz:.1f} Hz" if hz is not None else ""
+    return f"{t:>7.2f}  watching {points} offsets{rate} — {changes} changes recorded"
+
+
+@dataclass(frozen=True)
+class SlotPath:
+    """A pointer slot to dereference before sweeping — the ``--watch-behind`` target (brief #11).
+
+    Mirrors :class:`~tekken_coach.reader.offsets.ComponentAnchor` exactly (``slot_offset`` + hops),
+    because that is the shape a hit gets baked into: if a sweep behind ``0x38`` finds input, the
+    result is a ``players.components.input`` ``ComponentAnchor`` — a **data** edit to the offset
+    table, not a schema change. The table already knows how to express what we are looking for.
+    """
+
+    slot_offset: int
+    pointer_path: tuple[int, ...] = ()
+
+    def label(self) -> str:
+        """The spec-shaped label (``0x38``, or ``0x20/0x8`` with hops)."""
+        hops = "".join(f"/0x{o:x}" for o in self.pointer_path)
+        return f"0x{self.slot_offset:x}{hops}"
+
+    def to_component(self) -> ComponentAnchor:
+        """As a :class:`~tekken_coach.reader.offsets.ComponentAnchor` — the deref stays the
+        tested one.
+
+        ``--watch-behind`` resolves its landing through
+        :func:`~tekken_coach.reader.decode.resolve_component` — the same call the decoder uses for
+        ``transform`` — rather than reimplementing a pointer walk. It also means a confirmed hit
+        transcribes into the offset table verbatim: the thing that found it *is* the thing that
+        reads it.
+        """
+        return ComponentAnchor(slot_offset=self.slot_offset, pointer_path=list(self.pointer_path))
 
 
 @dataclass(frozen=True)
 class WatchPoint:
-    """One ad-hoc player-struct offset to watch during ``probe-state`` exploration (docs/02 §8).
+    """One ad-hoc offset to watch during ``probe-state`` exploration (docs/02 §8, brief #11).
 
     The seeded state-word offsets can go stale across a build (as the fork's ``move_id`` did), so
     ``--watch`` lets a run observe *candidate* raw offsets directly — without editing the table —
-    to find where the live state words moved to. ``name`` is the ``@0x<offset>`` label the columns
-    and JSONL use.
+    to find where the live state words moved to. ``name`` is the label the columns and JSONL use.
+
+    ``slot`` is ``None`` for a plain player-struct offset (named ``@0x1c``). When set, the offset is
+    read **behind** that pointer slot instead (named ``@0x38+0x1c``): the sweep resolves
+    ``player_base + slot_offset``, walks the hops, and reads ``offset`` from the landing. The names
+    are what ``analyze-input`` prints, so a slot stays legible in the ranking with no change to the
+    analyzer — it scores fields by name and does not care what a name means.
     """
 
     name: str
     offset: int
     kind: ScalarKind
+    slot: SlotPath | None = None
 
 
 def _watch_offsets(off_text: str, kind: str, part: str) -> list[int]:
@@ -161,6 +224,150 @@ def parse_watch(spec: str) -> list[WatchPoint]:
     if not points:
         raise ValueError("watch spec is empty (expected OFFSET:KIND pairs, e.g. 0x434:u32).")
     return points
+
+
+def _parse_slot(text: str, part: str) -> SlotPath:
+    """Parse a ``SLOT`` or ``SLOT/HOP/HOP`` term into a :class:`SlotPath`."""
+    numbers: list[int] = []
+    for piece in text.split("/"):
+        try:
+            numbers.append(int(piece.strip(), 0))
+        except ValueError:
+            raise ValueError(
+                f"watch-behind spec {part!r}: {piece.strip()!r} is not a valid slot offset"
+            ) from None
+    if any(n < 0 for n in numbers):
+        raise ValueError(f"watch-behind spec {part!r}: offsets must be non-negative")
+    return SlotPath(slot_offset=numbers[0], pointer_path=tuple(numbers[1:]))
+
+
+def parse_watch_behind(spec: str) -> list[WatchPoint]:
+    """Parse ``--watch-behind "0x20/8:0x0-0x100:u8,0x38:0x0-0x100:u8"`` into watch points.
+
+    Each comma-separated term is ``SLOT[/HOP...]:OFFSET-END:KIND`` — dereference
+    ``player_base + SLOT``, walk each ``/HOP``, then sweep ``OFFSET-END`` behind the landing. The
+    offset/kind half is :func:`parse_watch`'s exact grammar, reused rather than reimplemented, so a
+    range, a bare offset and every :data:`WATCH_KINDS` kind mean here what they mean there. Points
+    are named ``@0x38+0x1c``.
+
+    This is the deref #10's sweep could not do. #10 proved the *flat* struct carries no raw input;
+    it could not speak to what hangs off the struct's pointers, because a pointer slot never changes
+    and a change-sweep only sees change (brief #11).
+    """
+    points: list[WatchPoint] = []
+    for raw in spec.split(","):
+        part = raw.strip()
+        if not part:
+            continue
+        fields = [s.strip() for s in part.split(":")]
+        if len(fields) != 3:
+            raise ValueError(
+                f"watch-behind spec {part!r} must be SLOT[/HOP]:OFFSET-END:KIND "
+                "(e.g. 0x38:0x0-0x100:u8 or 0x20/8:0x0-0x100:u8)"
+            )
+        slot_text, off_text, kind = fields
+        if kind not in WATCH_KINDS:
+            raise ValueError(
+                f"watch-behind spec {part!r}: unknown kind {kind!r} "
+                f"(use one of {sorted(WATCH_KINDS)})"
+            )
+        slot = _parse_slot(slot_text, part)
+        for offset in _watch_offsets(off_text, kind, part):
+            points.append(
+                WatchPoint(
+                    name=f"@{slot.label()}+0x{offset:x}",
+                    offset=offset,
+                    kind=cast(ScalarKind, kind),
+                    slot=slot,
+                )
+            )
+    if not points:
+        raise ValueError(
+            "watch-behind spec is empty (expected SLOT:OFFSET-END:KIND terms, "
+            "e.g. 0x38:0x0-0x100:u8)."
+        )
+    return points
+
+
+@dataclass(frozen=True)
+class ReadPlan:
+    """One object to block-read per player per poll, and where its values land in the row.
+
+    ``slot`` is ``None`` for the player struct itself, or the :class:`SlotPath` to dereference
+    first. ``indices`` maps each of ``points`` to its column in the assembled row, so grouping by
+    object does not reorder the columns the header and JSONL promised.
+    """
+
+    slot: SlotPath | None
+    points: tuple[WatchPoint, ...]
+    indices: tuple[int, ...]
+    start: int
+    size: int
+
+
+def build_read_plan(points: Sequence[WatchPoint]) -> list[ReadPlan]:
+    """Group ``points`` into one block read per object, preserving column order.
+
+    The whole perf story in one function: N watched offsets become len(plan) reads per player per
+    poll (see :func:`block_span`), and every point keeps the column index it had.
+    """
+    grouped: dict[SlotPath | None, list[int]] = {}
+    for index, point in enumerate(points):
+        grouped.setdefault(point.slot, []).append(index)
+    plans: list[ReadPlan] = []
+    for slot, indices in grouped.items():
+        chosen = tuple(points[i] for i in indices)
+        start, size = block_span(chosen)
+        plans.append(
+            ReadPlan(slot=slot, points=chosen, indices=tuple(indices), start=start, size=size)
+        )
+    return plans
+
+
+def assemble_row(
+    plans: Sequence[ReadPlan], blocks: Sequence[bytes], width: int
+) -> tuple[int | float, ...]:
+    """Slice each plan's block into the row, at the columns the plan reserved.
+
+    Pure: the live half reads ``blocks`` (one per plan, in plan order); this decides what the values
+    mean positionally. A missing/short block is the caller's error, not something to paper over —
+    :func:`slice_point` raises rather than emit a zero that would read as an observation.
+    """
+    row: list[int | float] = [0] * width
+    for plan, block in zip(plans, blocks, strict=True):
+        for point, index in zip(plan.points, plan.indices, strict=True):
+            row[index] = slice_point(block, plan.start, point)
+    return tuple(row)
+
+
+def block_span(points: Sequence[WatchPoint]) -> tuple[int, int]:
+    """The ``(start, size)`` byte span covering every point — one read instead of ``len(points)``.
+
+    Perf is load-bearing here, not a nicety. #10 measured its 5376-offset sweep at **4.7 Hz** doing
+    10752 individual reads per poll, and a sweep that slow cannot resolve a 2-second button hold.
+    Chasing K slots x 256 bytes x 2 players would multiply that until the pass is worthless. One
+    block read per object per poll makes it Kx2 syscalls, and the slicing
+    (:func:`slice_point`) is free by comparison.
+    """
+    if not points:
+        raise ValueError("cannot compute a block span for zero watch points")
+    start = min(p.offset for p in points)
+    end = max(p.offset + _KIND_SIZE[p.kind] for p in points)
+    return start, end - start
+
+
+def slice_point(block: bytes, block_start: int, point: WatchPoint) -> int | float:
+    """Decode one watch point from an already-read ``block`` that starts at ``block_start``.
+
+    ``bool8`` folds to ``int`` (the JSONL and the analyzer want numbers); ``f32`` stays a float —
+    matching what the per-read path produced, so a recorded log is identical either way.
+    """
+    from tekken_coach.reader.decode import unpack_scalar  # noqa: PLC0415
+
+    lo = point.offset - block_start
+    raw = block[lo : lo + _KIND_SIZE[point.kind]]
+    value = unpack_scalar(raw, point.kind)
+    return int(value) if isinstance(value, bool) else value
 
 
 @dataclass(frozen=True)

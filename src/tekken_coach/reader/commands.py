@@ -42,8 +42,8 @@ from tekken_coach.reader.decode import (
     decode_frame,
     derive_match_phase,
     read_match_flag,
-    read_scalar,
     resolve_anchor,
+    resolve_component,
     resolve_player_base,
 )
 from tekken_coach.reader.faults import ReaderError, classify_fault
@@ -52,12 +52,17 @@ from tekken_coach.reader.monitor import PlayerView, monitor_lines, views_of
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.reader.probe import (
     ChangeRecord,
+    PollRate,
     PollSample,
+    ReadPlan,
     WatchPoint,
+    assemble_row,
+    build_read_plan,
     due_for_beat,
     heartbeat_line,
     is_wide_sweep,
     parse_watch,
+    parse_watch_behind,
 )
 from tekken_coach.reader.version import GAME_PROCESS_NAME
 from tekken_coach.schemas import MatchState
@@ -237,15 +242,29 @@ def _table_points(table: OffsetTable, names: list[str]) -> list[WatchPoint]:
     return [WatchPoint(name=n, offset=fields[n].offset, kind=fields[n].kind) for n in names]
 
 
+def _plan_address(source: MemorySource, base: int, plan: ReadPlan) -> int:
+    """The address ``plan``'s block starts at, resolved **fresh** for this poll.
+
+    Never cache a landing. The pointer is re-dereferenced every poll because the object it points at
+    can be freed and reallocated between polls; a cached address would then read some other object's
+    bytes and report them as this player's input — silent garbage that looks like data. Re-resolving
+    costs one 8-byte read and is the difference between an observation and a fiction.
+    """
+    if plan.slot is None:
+        return base + plan.start
+    return resolve_component(source, base, plan.slot.to_component()) + plan.start
+
+
 def _read_points_at(
-    source: MemorySource, base: int, points: list[WatchPoint]
+    source: MemorySource, base: int, plans: list[ReadPlan], width: int
 ) -> tuple[int | float, ...]:
-    """Read the watch points at an explicit struct ``base`` (bool8 -> int; f32 kept as float)."""
-    values: list[int | float] = []
-    for p in points:
-        v = read_scalar(source, base + p.offset, p.kind)
-        values.append(int(v) if isinstance(v, bool) else v)
-    return tuple(values)
+    """Read every watch point at struct ``base`` — one block read per object, sliced offline.
+
+    bool8 folds to int; f32 stays float. See :func:`~tekken_coach.reader.probe.block_span` for why
+    this is a block read and not a read per offset (#10's sweep managed 4.7 Hz doing the latter).
+    """
+    blocks = [source.read(_plan_address(source, base, plan), plan.size) for plan in plans]
+    return assemble_row(plans, blocks, width)
 
 
 def _watch_bases(source: MemorySource, table: OffsetTable, is_global: bool) -> list[int]:
@@ -262,11 +281,13 @@ def _watch_bases(source: MemorySource, table: OffsetTable, is_global: bool) -> l
 def _live_samples(
     source: MemorySource,
     table: OffsetTable,
-    points: list[WatchPoint],
+    plans: list[ReadPlan],
+    width: int,
     interval: float,
     seconds: float,
     *,
     is_global: bool = False,
+    rate: PollRate | None = None,
 ) -> Iterator[PollSample]:  # pragma: no cover - live loop; the pure consumers are tested
     """Poll the watched struct(s) forever (or for ``seconds``), yielding one :class:`PollSample`.
 
@@ -280,8 +301,12 @@ def _live_samples(
     started = time.monotonic()
     while seconds <= 0 or time.monotonic() - started < seconds:
         bases = _watch_bases(source, table, is_global)
-        rows = tuple(_read_points_at(source, base, points) for base in bases)
-        yield PollSample(t=time.monotonic() - started, rows=rows)
+        rows = tuple(_read_points_at(source, base, plans, width) for base in bases)
+        now = time.monotonic() - started
+        if rate is not None:
+            rate.polls += 1
+            rate.elapsed = now
+        yield PollSample(t=now, rows=rows)
         time.sleep(interval)
 
 
@@ -316,6 +341,82 @@ def _skeleton_path(args: argparse.Namespace) -> Path | None:
     return None
 
 
+def _slots_main(
+    args: argparse.Namespace, source: MemorySource, table: OffsetTable
+) -> int:  # pragma: no cover - live enumeration; classify_slots/format_slot_table are tested
+    """``probe-state --slots``: enumerate the player struct's plausible pointer slots (#11 Stage 1).
+
+    No protocol, no timing discipline, no presses — ~10 seconds standing in a Practice match is
+    enough, because it asks a question about *structure*, not behaviour: which 8-byte slots hold a
+    readable heap address, and which of those look per-player. The few polls it takes exist only to
+    tell a stable slot from a churning one.
+
+    Everything decidable lives in :mod:`tekken_coach.reader.slots`; this is the live shell that
+    block-reads both structs and hands the bytes over.
+    """
+    import time  # noqa: PLC0415
+
+    from tekken_coach.reader.slots import (  # noqa: PLC0415
+        DEFAULT_SLOT_END,
+        DEFAULT_SLOT_START,
+        RegionIndex,
+        classify_slots,
+        format_slot_table,
+    )
+
+    start, end = DEFAULT_SLOT_START, DEFAULT_SLOT_END
+    size = end - start
+    print(f"enumerating pointer slots in 0x{start:x}-0x{end:x} for 2 players")
+    print("stand in a Practice match; no presses needed — this reads structure, not behaviour.")
+
+    try:
+        # The pointer-validity oracle, read once: VirtualQueryEx's committed map. This is a query of
+        # what is mapped — it reads no contents and adds no write path (docs/02 §2).
+        regions = RegionIndex(source.regions())
+        samples: list[list[bytes]] = []
+        for _ in range(args.polls):
+            bases = [resolve_player_base(source, table, index) for index in (0, 1)]
+            # One block read per player per poll — the whole struct region at once.
+            samples.append([source.read(base + start, size) for base in bases])
+            time.sleep(args.interval)
+    except ReaderError as exc:
+        return _report_fault(exc)
+    except KeyboardInterrupt:
+        print("\nstopped.")
+        return 1
+
+    findings = classify_slots(samples, regions, start=start)
+    print()
+    for line in format_slot_table(findings, regions, top=args.top):
+        print(line)
+    if args.record:
+        _ensure_parent_dirs(Path(args.record))
+        Path(args.record).write_text(
+            json.dumps(
+                {
+                    "range": [start, end],
+                    "polls": args.polls,
+                    "slots": [
+                        {
+                            "offset": f.offset,
+                            "values": [f"0x{v:x}" for v in f.values],
+                            "plausible": list(f.plausible),
+                            "stable": f.stable,
+                            "per_player": f.per_player,
+                            "chase": f.chase,
+                        }
+                        for f in findings
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"\nslot table -> {args.record}")
+    return 0
+
+
 def probe_state_main(args: argparse.Namespace) -> int:
     """Stream the raw encoded state words for both players (the docs/02 §8 calibration protocol).
 
@@ -346,6 +447,13 @@ def probe_state_main(args: argparse.Namespace) -> int:
     except ReaderError as exc:
         return _report_fault(exc)
 
+    if args.slots:
+        return _slots_main(args, source, table)
+
+    if args.watch and args.watch_behind:
+        print("--watch and --watch-behind are alternatives; pass one.", file=sys.stderr)
+        return 1
+
     if args.is_global and not args.watch:
         print(
             "--global requires --watch: the global/match struct has no default field set to probe. "
@@ -356,7 +464,7 @@ def probe_state_main(args: argparse.Namespace) -> int:
         return 1
 
     spec = table.state_codes.encoded_state
-    if not args.watch and spec is None:
+    if not (args.watch or args.watch_behind) and spec is None:
         print(
             f"offset table {version} has no encoded-state map; nothing to probe. Run "
             "`update-offsets --base-scan` first (it writes the state-word offsets into the table).",
@@ -367,11 +475,13 @@ def probe_state_main(args: argparse.Namespace) -> int:
     # Default: watch the table's encoded-state fields (+ move context). `--watch` overrides that
     # with ad-hoc candidate offsets (a range sweep locates a field whose seeded offset went stale,
     # docs/02 §8); `--global` points the sweep at the global/match struct instead of the players.
-    if args.watch:
+    if args.watch or args.watch_behind:
+        flag = "--watch" if args.watch else "--watch-behind"
+        parse = parse_watch if args.watch else parse_watch_behind
         try:
-            points = parse_watch(args.watch)
+            points = parse(args.watch or args.watch_behind)
         except ValueError as exc:
-            print(f"invalid --watch: {exc}", file=sys.stderr)
+            print(f"invalid {flag}: {exc}", file=sys.stderr)
             return 1
         names = [p.name for p in points]
         skeleton_fields = names  # summarize distinct values for every watched candidate
@@ -381,12 +491,16 @@ def probe_state_main(args: argparse.Namespace) -> int:
         points = _table_points(table, names)
         skeleton_fields = sorted(spec.flags)
 
+    # One block read per object per poll instead of one per offset: #10's 5376-offset sweep ran at
+    # 4.7 Hz doing 10752 syscalls a poll, too slow to resolve a 2s hold. This makes it len(plans)x2.
+    plans = build_read_plan(points)
     struct_label = "the global/match struct" if args.is_global else "2 players"
     # A wide sweep's column list and per-change rows are tens of KB each — printing them floods the
     # terminal and starves the poll loop. Name the points only when they fit on screen.
     wide = is_wide_sweep(names)
     header = f"probing {len(names)} fields x {struct_label} (Ctrl-C to stop)"
     print(header if wide else f"{header}: {', '.join(names)}")
+    print(f"reading {len(plans)} block(s) per struct per poll ({len(names)} points)")
     if args.is_global:
         print("move through phases: menu -> match -> round -> round over -> results -> menu")
     elif wide:
@@ -406,12 +520,20 @@ def probe_state_main(args: argparse.Namespace) -> int:
     # `with` block would not fit; flushed per line so a Ctrl-C loses at most a tail (docs/02 §8).
     record_file = open(args.record, "w", encoding="utf-8") if args.record else None  # noqa: SIM115
     observed: list[ChangeRecord] = []
+    rate = PollRate()
     try:
         last_beat: float | None = None
         for changes, record in enumerate(
             change_records(
                 _live_samples(
-                    source, table, points, args.interval, args.seconds, is_global=args.is_global
+                    source,
+                    table,
+                    plans,
+                    len(names),
+                    args.interval,
+                    args.seconds,
+                    is_global=args.is_global,
+                    rate=rate,
                 ),
                 names,
             ),
@@ -423,7 +545,7 @@ def probe_state_main(args: argparse.Namespace) -> int:
                 print(_format_change(record, names), flush=True)
             elif due_for_beat(last_beat, record.t):
                 last_beat = record.t
-                print(heartbeat_line(record.t, changes, len(names)), flush=True)
+                print(heartbeat_line(record.t, changes, len(names), rate.hz), flush=True)
             if record_file is not None:
                 # Flush per line: the run is Ctrl-C-terminated, so a lost tail is fine but a
                 # session-long buffer would lose everything on interrupt.
@@ -439,6 +561,7 @@ def probe_state_main(args: argparse.Namespace) -> int:
         if record_file is not None:
             record_file.close()
 
+    print(rate.summary())
     if args.record:
         print(f"recorded observations -> {args.record}")
     if skeleton_path is not None:
@@ -548,15 +671,30 @@ def input_protocol_main(args: argparse.Namespace) -> int:
     )
 
     total = step_windows(PROTOCOL, args.start)[-1].t1
+    record = args.record
     print("Record the pass in Practice (you as P1, the P2 dummy left STANDING — its stillness is")
-    print("what tells the analyzer which struct is yours), then run the sweep in another terminal:")
+    print("what tells the analyzer which struct is yours), then run the sweep in another terminal.")
     print()
-    print('  py -m tekken_coach.reader.commands probe-state --watch "0x0-0x100:u8" \\')
-    print("      --record debug/input.jsonl")
+    print(
+        "Sweep BEHIND the pointer slots (#11): the flat struct 0x0-0x1600 is a settled negative —"
+    )
+    print("#10 swept it twice and input is not there. Get the slots to chase from Stage 1 first:")
+    print()
+    print("  py -m tekken_coach.reader.commands probe-state --slots")
+    print()
+    print("then pass the ones it ranks CHASE (it prints this line for you, filled in):")
+    print()
+    print('  py -m tekken_coach.reader.commands probe-state --watch-behind "0x38:0x0-0x100:u8" \\')
+    print(f"      --record {record}")
     print()
     print(f"Then follow this script ({total:.0f}s), and analyze the log offline:")
     print()
-    print("  py -m tekken_coach.reader.commands analyze-input debug/input.jsonl")
+    print(f"  py -m tekken_coach.reader.commands analyze-input {record}")
+    print()
+    # A distinct filename per run, deliberately: #10's first recorded pass was lost to an overwrite
+    # of debug/input.jsonl, and the brief that needed it back paid for the re-run in user time.
+    print(f"NOTE: {record} is a fresh name on purpose — do not overwrite a previous run's log.")
+    print("Pass --record to name it yourself if you are doing a second pass.")
     print()
     for line in render_checklist(PROTOCOL, args.start):
         print(line)
@@ -704,6 +842,38 @@ def build_parser() -> argparse.ArgumentParser:
         "the skeleton then summarizes the distinct values each candidate took.",
     )
     p_probe.add_argument(
+        "--watch-behind",
+        dest="watch_behind",
+        default=None,
+        help="sweep BEHIND a pointer slot instead of inside the player struct (#11 Stage 2), as "
+        'comma-separated SLOT[/HOP]:OFFSET-END:KIND terms (e.g. "0x38:0x0-0x100:u8,0x20/8:0x0-'
+        '0x100:u8"). Resolves player_base+SLOT, walks each /HOP, and sweeps the range at the '
+        "landing — re-resolved every poll. Use the slots --slots ranked as CHASE. A flat sweep "
+        "cannot see a component: the pointer to it never changes, so a change-sweep skips it.",
+    )
+    p_probe.add_argument(
+        "--slots",
+        action="store_true",
+        help="#11 Stage 1: enumerate the player struct's plausible pointer slots (non-null, "
+        "aligned, landing in a committed region) and rank them by what makes one worth chasing — "
+        "resolves for both players, P1/P2 point at DIFFERENT objects, stable across polls. Needs "
+        "no presses and ~10s in a Practice match; its table picks --watch-behind's targets.",
+    )
+    p_probe.add_argument(
+        "--polls",
+        type=int,
+        default=20,
+        help="(--slots only) polls to sample before classifying (default 20) — enough to tell a "
+        "stable slot from a churning one.",
+    )
+    p_probe.add_argument(
+        "--top",
+        type=int,
+        default=40,
+        help="(--slots only) slots to print (default 40; 0 = all). The full table always goes to "
+        "--record.",
+    )
+    p_probe.add_argument(
         "--global",
         dest="is_global",
         action="store_true",
@@ -742,6 +912,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="shift every timestamp by N seconds, if you start the script after the probe.",
+    )
+    p_script.add_argument(
+        "--record",
+        default="debug/behind-1.jsonl",
+        help="the --record path to recommend in the printed instructions. Use a DISTINCT name per "
+        "run: #10's first recorded pass was lost by overwriting the previous log, and a live pass "
+        "costs user time to redo.",
     )
     p_script.set_defaults(func=input_protocol_main)
 

@@ -179,13 +179,20 @@ def test_parser_wires_the_input_rederivation_commands() -> None:
 def test_input_protocol_prints_the_script_and_the_commands_around_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    code = commands.input_protocol_main(argparse.Namespace(start=0.0))
+    code = commands.input_protocol_main(
+        argparse.Namespace(start=0.0, record="debug/behind-1.jsonl")
+    )
     out = capsys.readouterr().out
     assert code == 0
-    assert "probe-state --watch" in out  # how to record the pass
+    assert "probe-state --slots" in out  # #11 Stage 1: get the slots to chase first
+    assert "probe-state --watch-behind" in out  # #11 Stage 2: how to record the pass
     assert "analyze-input" in out  # what to do with the log afterwards
     assert "dummy left STANDING" in out  # the discriminator the analyzer depends on
     assert "press+hold 1 for 2s" in out
+    # A distinct record name per run: #10's first pass was lost to an overwrite, and re-running a
+    # live pass spends the one resource this work is actually short of — the user's time.
+    assert "debug/behind-1.jsonl" in out
+    assert "do not overwrite" in out
 
 
 def _analyze_args(record: object, **kwargs: object) -> argparse.Namespace:
