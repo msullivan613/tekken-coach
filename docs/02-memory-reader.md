@@ -468,6 +468,45 @@ unmapped.
 > reviewer prefers to seed the map from the fork's enums as facts, that is a defensible reading of
 > rule 1 — but it should be an explicit decision recorded here, not something that happened silently.
 
+## 9. Input-offset re-derivation (same shape, different unknown)
+
+The `input_*` offsets were never derived — they were seeded from the fork and are stale on 5.02.01.
+A live pass of ~79 s of mashing read `input_valid@55` false on **every** frame while
+`frames_since_round_start` (the same struct) read fine: the holder chain works, that flag is not a
+validity flag, and because it short-circuited the decode, `input_dir@56`/`input_buttons@64` were
+never even read. All three are **removed** from the table rather than re-seeded — `input_valid` is
+optional in the decoder now, so leaving the other two would mean reporting whatever those bytes hold
+as real input. No input group ⇒ `input` decodes to `None`, which the segmenter already tolerates.
+
+Re-deriving them is the §8 pattern again — sweep candidates, script the stimulus, read the values
+back — except the unknown is *where* the field is, not what its values mean:
+
+```
+python -m tekken_coach.reader.commands input-protocol          # the scripted pass to follow
+python -m tekken_coach.reader.commands probe-state \
+    --watch "0x0-0x100:u8" --record debug/input.jsonl          # record it (widen the range as needed)
+python -m tekken_coach.reader.commands analyze-input debug/input.jsonl
+```
+
+The analyzer ranks every swept offset against the script. Three discriminators do the work:
+
+| a real input field… | …so a candidate is rejected when |
+|---|---|
+| moves only on the acting player's struct (in Practice the P2 dummy is static) | it also changes on the dummy |
+| moves on its **own** axis only — the button mask does not track the stick | it reacts to both button and direction steps |
+| returns to one rest value on release, and holds steady while held | it has no stable rest value, or churns |
+
+The first two are *necessary*, so they gate the score rather than being weighed into it: a
+dead-constant offset scores perfectly on "stable rest", "steady" and "consistent" while never once
+reacting to input, and a weighted sum would let it outrank a real field.
+
+The winner's observed value-per-action table is what answers the encoding questions — whether
+`input_dir` is numpad 1-9 or a raw stick value needing a mapping, and whether the button mask really
+is bit order `1,2,3,4` (`decode._BUTTON_BITS`). Bake back only what the analyzer names above its
+plausibility floor; **a clean sweep is a finding, not a failure** — the fields may live on an
+input-manager/global object rather than the player struct, and the honest next step is to say so and
+widen, never to guess an offset.
+
 ## Sources
 - TekkenBot Tekken 8 fork: <https://github.com/dcep93/TekkenBot>
 - Ancestral TekkenBot (T7) and layout root: <https://github.com/WAZAAAAA0/TekkenBot>

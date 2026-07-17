@@ -12,7 +12,8 @@ Two things the spec is emphatic about (docs/03 §1 Notes):
   flags (``block_stun``, ``hit_stun``, ``counter_state``, ``throw_active``, ``airborne``,
   ``juggle``) are carried **separately** on the ``PlayerFrame``, not folded away.
 * ``input`` may be ``null`` (unresolvable during replay playback). We honor that: no input group,
-  or a false ``input_valid`` flag, yields ``input=None``, and the segmenter never requires it.
+  or a table that declares an ``input_valid`` flag which reads false, yields ``input=None``, and the
+  segmenter never requires it.
 
 Two layout realities are decoded through one seam (:class:`PlayerStateFacts`). The C4c/legacy table
 carries one ``bool8`` per flag; the real Tekken 8 entity struct carries a few **encoded state
@@ -309,14 +310,21 @@ def _decode_input(
 ) -> InputState | None:
     """Read the optional per-frame input (docs/03 §1).
 
-    Returns ``None`` when the table has no input group or the ``input_valid`` flag is false —
-    inputs are not always resolvable (e.g. during replay playback), and the segmenter must not
-    require them.
+    Returns ``None`` when the table has no ``input_dir``/``input_buttons``, or when it declares an
+    ``input_valid`` flag that reads false — inputs are not always resolvable (e.g. during replay
+    playback), and the segmenter must not require them.
+
+    ``input_valid`` is **optional**: a table that omits it decodes input unconditionally. Requiring
+    it is what silently killed the 5.02.01 read — the seeded ``input_valid@55`` was a fork-era
+    leftover that reads false forever, so every frame decoded to ``None`` no matter how good the
+    other two offsets were. A validity gate is only worth having if a real one is found; binding the
+    decode to a bogus field is strictly worse than not gating at all.
     """
-    if "input_valid" not in fields or "input_dir" not in fields or "input_buttons" not in fields:
+    if "input_dir" not in fields or "input_buttons" not in fields:
         return None
-    valid = read_scalar(source, base + _field(fields, "input_valid").offset, "bool8")
-    if not valid:
+    if "input_valid" in fields and not read_scalar(
+        source, base + _field(fields, "input_valid").offset, "bool8"
+    ):
         return None
     dir_spec = _field(fields, "input_dir")
     btn_spec = _field(fields, "input_buttons")

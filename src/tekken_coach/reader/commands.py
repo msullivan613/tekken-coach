@@ -508,6 +508,71 @@ def monitor_main(args: argparse.Namespace) -> int:
     return 0
 
 
+def input_protocol_main(args: argparse.Namespace) -> int:
+    """Print the scripted press-through pass for the input-offset re-derivation (brief #10).
+
+    The user's whole part in re-sourcing the dead ``input_*`` offsets is one recorded pass following
+    this script; everything after it is offline (``analyze-input``). Printed rather than paced so it
+    can sit on a second monitor next to the game — the exact start instant does not matter, since
+    ``analyze-input`` fits the script to the log.
+    """
+    from tekken_coach.reader.input_probe import (  # noqa: PLC0415
+        PROTOCOL,
+        render_checklist,
+        step_windows,
+    )
+
+    total = step_windows(PROTOCOL, args.start)[-1].t1
+    print("Record the pass in Practice (you as P1, the P2 dummy left STANDING — its stillness is")
+    print("what tells the analyzer which struct is yours), then run the sweep in another terminal:")
+    print()
+    print('  py -m tekken_coach.reader.commands probe-state --watch "0x0-0x100:u8" \\')
+    print("      --record debug/input.jsonl")
+    print()
+    print(f"Then follow this script ({total:.0f}s), and analyze the log offline:")
+    print()
+    print("  py -m tekken_coach.reader.commands analyze-input debug/input.jsonl")
+    print()
+    for line in render_checklist(PROTOCOL, args.start):
+        print(line)
+    return 0
+
+
+def analyze_input_main(args: argparse.Namespace) -> int:
+    """Rank swept offsets as ``input_dir`` / ``input_buttons`` from a recorded pass (brief #10).
+
+    Offline and read-only: it consumes the ``probe-state --record`` JSONL, so the ranking can be
+    re-run against a saved log without the game. It reports observed value sets and refuses to name
+    a candidate that does not clear
+    :data:`~tekken_coach.reader.input_probe.MIN_PLAUSIBLE` — a clean sweep is a real finding (the
+    fields may not live on the player struct at all), not a prompt to crown the least-bad offset.
+    """
+    from tekken_coach.reader.input_probe import (  # noqa: PLC0415
+        best_alignment,
+        format_report,
+        load_observation_file,
+    )
+
+    path = Path(args.record)
+    if not path.exists():
+        print(f"no such record: {path}", file=sys.stderr)
+        return 1
+    obs = load_observation_file(path)
+    if not obs.fields:
+        print(f"{path} has no observed changes — was the sweep watching anything?", file=sys.stderr)
+        return 1
+    if args.player not in obs.players:
+        print(
+            f"player {args.player} is not in {path} (saw {obs.players}); pass --player.",
+            file=sys.stderr,
+        )
+        return 1
+    start = args.start if args.start is not None else best_alignment(obs, acting_player=args.player)
+    for line in format_report(obs, start=start, acting_player=args.player, top=args.top):
+        print(line)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m tekken_coach.reader.commands",
@@ -639,6 +704,35 @@ def build_parser() -> argparse.ArgumentParser:
         "append it (in=dir:buttons), so each button press / held direction surfaces one line.",
     )
     p_monitor.set_defaults(func=monitor_main)
+
+    p_script = sub.add_parser(
+        "input-protocol",
+        help="print the scripted press-through pass to follow while probe-state records (#10)",
+    )
+    p_script.add_argument(
+        "--start",
+        type=float,
+        default=0.0,
+        help="shift every timestamp by N seconds, if you start the script after the probe.",
+    )
+    p_script.set_defaults(func=input_protocol_main)
+
+    p_analyze = sub.add_parser(
+        "analyze-input",
+        help="rank swept offsets as input_dir/input_buttons from a probe-state --record log (#10)",
+    )
+    p_analyze.add_argument("record", help="the probe-state --record JSONL from the scripted pass")
+    p_analyze.add_argument(
+        "--start",
+        type=float,
+        default=None,
+        help="when the script began on the probe's clock (default: fit it to the log).",
+    )
+    p_analyze.add_argument(
+        "--player", type=int, default=1, help="the acting player (default 1; the dummy is static)"
+    )
+    p_analyze.add_argument("--top", type=int, default=5, help="candidates to show per role")
+    p_analyze.set_defaults(func=analyze_input_main)
 
     return parser
 

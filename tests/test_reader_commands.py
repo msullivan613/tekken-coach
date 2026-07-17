@@ -161,3 +161,62 @@ def test_probe_targets_watch_the_state_words_plus_move_context() -> None:
     names = commands._probe_targets(_encoded_table())
     assert names[:3] == ["move_id", "move_frame", "counter_state"]
     assert "stun_type" in names and "simple_move_state" in names
+
+
+# --- input-offset re-derivation (brief #10) ------------------------------------------------------
+
+
+def test_parser_wires_the_input_rederivation_commands() -> None:
+    parser = commands.build_parser()
+    assert parser.parse_args(["input-protocol"]).func is commands.input_protocol_main
+    args = parser.parse_args(["analyze-input", "debug/input.jsonl"])
+    assert args.func is commands.analyze_input_main
+    assert args.record == "debug/input.jsonl"
+    assert args.start is None  # default: fit the script to the log rather than trust the clocks
+    assert args.player == 1
+
+
+def test_input_protocol_prints_the_script_and_the_commands_around_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = commands.input_protocol_main(argparse.Namespace(start=0.0))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "probe-state --watch" in out  # how to record the pass
+    assert "analyze-input" in out  # what to do with the log afterwards
+    assert "dummy left STANDING" in out  # the discriminator the analyzer depends on
+    assert "press+hold 1 for 2s" in out
+
+
+def _analyze_args(record: object, **kwargs: object) -> argparse.Namespace:
+    return argparse.Namespace(record=str(record), start=None, player=1, top=3, **kwargs)
+
+
+def test_analyze_input_reports_a_missing_record_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = commands.analyze_input_main(_analyze_args(tmp_path / "nope.jsonl"))
+    assert code == 1
+    assert "no such record" in capsys.readouterr().err
+
+
+def test_analyze_input_rejects_an_empty_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    code = commands.analyze_input_main(_analyze_args(empty))
+    assert code == 1
+    assert "no observed changes" in capsys.readouterr().err
+
+
+def test_analyze_input_rejects_a_player_absent_from_the_log(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record = tmp_path / "one.jsonl"
+    record.write_text('{"t": 0.0, "player": 1, "fields": {"@0x8": 1}}\n', encoding="utf-8")
+    args = _analyze_args(record)
+    args.player = 2
+    code = commands.analyze_input_main(args)
+    assert code == 1
+    assert "is not in" in capsys.readouterr().err

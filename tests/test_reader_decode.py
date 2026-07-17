@@ -215,6 +215,26 @@ def test_input_null_when_group_absent(table: OffsetTable) -> None:
     assert all(p.input is None for p in decoded.players)
 
 
+def test_input_decodes_without_a_validity_flag(table: OffsetTable) -> None:
+    # input_valid is OPTIONAL: a table that declares no validity flag decodes input unconditionally.
+    # Requiring one is what silently killed the 5.02.01 read — the seeded input_valid was a fork-era
+    # leftover reading false forever, so input decoded to None however good dir/buttons were. If no
+    # genuine flag exists, not gating beats gating on a bogus field.
+    ungated = table.model_copy(deep=True)
+    ungated.players.fields.pop("input_valid")
+    fr = make_frame_record()
+    image = encode_frame(fr, table, module_base=MODULE_BASE)
+    source = FakeMemorySource(
+        [image],
+        module_bases=module_base_for(table, MODULE_BASE),
+        advance_on=advance_on_for(table, MODULE_BASE),
+    )
+    decoded = decode_frame(source, ungated)
+    # P2's input_valid is 0 in the fixture, yet without the flag declared both players still decode.
+    assert decoded.players[0].input == fr.players[0].input
+    assert decoded.players[1].input is not None
+
+
 def test_missing_required_field_raises_decode_error(table: OffsetTable) -> None:
     broken = table.model_copy(deep=True)
     broken.players.fields.pop("char_id")
