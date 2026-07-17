@@ -54,6 +54,36 @@ _KIND_SIZE: dict[str, int] = {
 # A sweep this wide almost certainly means a typo, not intent — fail loud rather than read forever.
 _MAX_WATCH_POINTS = 8192
 
+# Above this many watched points, the aligned per-change row stops being readable and starts being a
+# denial of service on the terminal: a row is ~20 chars per column, so a whole-struct sweep prints a
+# ~100 KB line per change at ~20 changes/s. Rendering that is slower than the game runs, so the pass
+# the user is trying to perform gets wrecked by the tool meant to observe it. Wide sweeps print a
+# heartbeat instead; the JSONL still records every column, which is what the analyzer reads.
+WIDE_SWEEP_COLUMNS = 24
+
+# How often a wide sweep prints its heartbeat.
+HEARTBEAT_SECONDS = 1.0
+
+
+def is_wide_sweep(names: Sequence[str]) -> bool:
+    """Whether a sweep watches too many points to print rows (:data:`WIDE_SWEEP_COLUMNS`)."""
+    return len(names) > WIDE_SWEEP_COLUMNS
+
+
+def due_for_beat(last_beat: float | None, t: float, every: float = HEARTBEAT_SECONDS) -> bool:
+    """Whether a wide sweep should print its heartbeat at ``t`` (always for the first change)."""
+    return last_beat is None or t - last_beat >= every
+
+
+def heartbeat_line(t: float, changes: int, points: int) -> str:
+    """The wide-sweep console line: the probe's own clock, which is the checklist's clock.
+
+    Deliberately shows ``t``: the input-protocol checklist is timestamped against exactly this
+    elapsed-seconds clock, so a user watching this line can follow the script against it — which
+    also gives the analyzer's alignment fit an easier job.
+    """
+    return f"{t:>7.2f}  watching {points} offsets — {changes} changes recorded"
+
 
 @dataclass(frozen=True)
 class WatchPoint:

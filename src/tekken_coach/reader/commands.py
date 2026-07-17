@@ -50,7 +50,15 @@ from tekken_coach.reader.faults import ReaderError, classify_fault
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.monitor import PlayerView, monitor_lines, views_of
 from tekken_coach.reader.offsets import OffsetTable
-from tekken_coach.reader.probe import ChangeRecord, PollSample, WatchPoint, parse_watch
+from tekken_coach.reader.probe import (
+    ChangeRecord,
+    PollSample,
+    WatchPoint,
+    due_for_beat,
+    heartbeat_line,
+    is_wide_sweep,
+    parse_watch,
+)
 from tekken_coach.reader.version import GAME_PROCESS_NAME
 from tekken_coach.schemas import MatchState
 
@@ -374,14 +382,21 @@ def probe_state_main(args: argparse.Namespace) -> int:
         skeleton_fields = sorted(spec.flags)
 
     struct_label = "the global/match struct" if args.is_global else "2 players"
-    print(f"probing {len(names)} fields x {struct_label} (Ctrl-C to stop): {', '.join(names)}")
+    # A wide sweep's column list and per-change rows are tens of KB each — printing them floods the
+    # terminal and starves the poll loop. Name the points only when they fit on screen.
+    wide = is_wide_sweep(names)
+    header = f"probing {len(names)} fields x {struct_label} (Ctrl-C to stop)"
+    print(header if wide else f"{header}: {', '.join(names)}")
     if args.is_global:
         print("move through phases: menu -> match -> round -> round over -> results -> menu")
+    elif wide:
+        print("follow the `input-protocol` checklist — the t below is the clock it is written in.")
     else:
         print(
             "perform one state at a time (block a jab, eat a jab, stagger, get thrown, jump, ...)"
         )
-    print(f"\n{'time':>7}  {'struct':<6}  " + "  ".join(f"{n:>14}" for n in names))
+    if not wide:
+        print(f"\n{'time':>7}  {'struct':<6}  " + "  ".join(f"{n:>14}" for n in names))
 
     skeleton_path = _skeleton_path(args)
     # Create parent dirs for the outputs so the documented `--record debug/...` invocation does not
@@ -392,13 +407,23 @@ def probe_state_main(args: argparse.Namespace) -> int:
     record_file = open(args.record, "w", encoding="utf-8") if args.record else None  # noqa: SIM115
     observed: list[ChangeRecord] = []
     try:
-        for record in change_records(
-            _live_samples(
-                source, table, points, args.interval, args.seconds, is_global=args.is_global
+        last_beat: float | None = None
+        for changes, record in enumerate(
+            change_records(
+                _live_samples(
+                    source, table, points, args.interval, args.seconds, is_global=args.is_global
+                ),
+                names,
             ),
-            names,
+            start=1,
         ):
-            print(_format_change(record, names), flush=True)
+            # A whole-struct sweep prints a ~100 KB row per change; rendering that is slower than
+            # the game, so it would wreck the very pass it is recording. Heartbeat instead.
+            if not wide:
+                print(_format_change(record, names), flush=True)
+            elif due_for_beat(last_beat, record.t):
+                last_beat = record.t
+                print(heartbeat_line(record.t, changes, len(names)), flush=True)
             if record_file is not None:
                 # Flush per line: the run is Ctrl-C-terminated, so a lost tail is fine but a
                 # session-long buffer would lose everything on interrupt.

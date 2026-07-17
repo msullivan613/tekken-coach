@@ -20,11 +20,16 @@ from tekken_coach.reader.decode import decode_frame
 from tekken_coach.reader.memory_source import FakeMemorySource
 from tekken_coach.reader.offsets import EncodedStateSpec, load_state_map
 from tekken_coach.reader.probe import (
+    WIDE_SWEEP_COLUMNS,
     ChangeRecord,
     PollSample,
     build_skeleton,
     change_records,
     distinct_values,
+    due_for_beat,
+    heartbeat_line,
+    is_wide_sweep,
+    parse_watch,
 )
 from tekken_coach.schemas import ActionState
 
@@ -280,3 +285,29 @@ def test_an_unannotated_skeleton_field_stays_neutral(tmp_path: Path) -> None:
     p1 = decode_frame(_source(unannotated, p1_state={"stun_type": 2}), unannotated).players[0]
     assert p1.action_state is ActionState.neutral
     assert p1.hit_stun is False
+
+
+# --- wide-sweep console output (brief #10 follow-up) ---------------------------------------------
+
+
+def test_is_wide_sweep_trips_past_the_column_budget() -> None:
+    # A whole-struct sweep prints ~20 chars per column per change: at 5376 offsets that is a ~100 KB
+    # console line ~20x/s, which renders slower than the game runs and wrecks the pass being
+    # recorded. Past the budget the probe must switch to a heartbeat.
+    assert not is_wide_sweep([f"@0x{i:x}" for i in range(WIDE_SWEEP_COLUMNS)])
+    assert is_wide_sweep([f"@0x{i:x}" for i in range(WIDE_SWEEP_COLUMNS + 1)])
+    # The sweep this exists for: the whole known player struct, byte by byte.
+    assert is_wide_sweep([p.name for p in parse_watch("0x100-0x1600:u8")])
+
+
+def test_due_for_beat_fires_first_then_rate_limits() -> None:
+    assert due_for_beat(None, 0.0)  # the first change always beats, so the user sees it is alive
+    assert not due_for_beat(4.0, 4.5, every=1.0)
+    assert due_for_beat(4.0, 5.0, every=1.0)
+
+
+def test_heartbeat_line_shows_the_clock_the_checklist_is_written_in() -> None:
+    line = heartbeat_line(12.5, changes=480, points=5376)
+    assert line.strip().startswith("12.50")  # the probe's t == the input-protocol checklist's t
+    assert "5376 offsets" in line
+    assert "480 changes" in line

@@ -484,9 +484,27 @@ back — except the unknown is *where* the field is, not what its values mean:
 ```
 python -m tekken_coach.reader.commands input-protocol          # the scripted pass to follow
 python -m tekken_coach.reader.commands probe-state \
-    --watch "0x0-0x100:u8" --record debug/input.jsonl          # record it (widen the range as needed)
+    --watch "0x100-0x1600:u8" --record debug/input.jsonl       # the whole known struct, byte by byte
 python -m tekken_coach.reader.commands analyze-input debug/input.jsonl
 ```
+
+**Result so far (5.02.01, 2026-07-16): `0x0-0x100` is clean — input is not there.** A full scripted
+pass found **zero** offsets in that range that move on the acting player but not on the standing
+dummy; the 54 that move at all move *identically on both*, in 4/9/16-byte runs (float vectors —
+transform/animation), and the other 202 bytes never changed once in 73 s. That range was only ever
+suggested by the stale fork offsets (`@0x37`/`@0x38`/`@0x40`), and it sits entirely **below**
+`char_id@0x168` — UObject-header territory. There was never positive evidence for it.
+
+Sweep **byte-granular (`u8`)**: watching every byte catches a change to any field of any width, so
+one `u8` pass subsumes the `u16`/`u32` passes for *discovery* (find the byte, then pin the width).
+A wider kind bundles a real field with noisy neighbours, which can destroy its rest value and make
+the ranking's gate reject it — a false negative, the one outcome worth spending compute to avoid.
+Sweeps past `WIDE_SWEEP_COLUMNS` points print a heartbeat instead of per-change rows (a whole-struct
+row is ~100 KB, and rendering it is slower than the game runs — the tool would wreck the pass it is
+recording). The JSONL still records every column.
+
+If the whole player struct comes back clean, that is the real finding: input lives elsewhere (an
+input-manager/global object), and the follow-up is `probe-state --global`.
 
 Nothing synchronizes the probe's clock with you reading the checklist, so **the start time is fitted,
 not assumed** — the script has to fit inside the recording, which bounds where it can begin. Take as
