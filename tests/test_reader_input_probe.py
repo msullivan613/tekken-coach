@@ -9,6 +9,9 @@ pick the planted field out of that lineup, it cannot be trusted against the live
 from __future__ import annotations
 
 import json
+import random
+
+import pytest
 
 from tekken_coach.reader.input_probe import (
     BASELINE,
@@ -17,12 +20,16 @@ from tekken_coach.reader.input_probe import (
     SETTLE,
     Observation,
     Step,
+    _segments,
     best_alignment,
     format_report,
     load_observation,
+    log_span,
+    observable_duration,
     rank_for_role,
     render_checklist,
     score_candidate,
+    script_duration,
     step_windows,
 )
 
@@ -83,6 +90,11 @@ def _planted(start: float = 0.0) -> Observation:
     return load_observation(json.dumps(row) for row in _planted_rows(start))
 
 
+def _report_for(obs: Observation) -> list[str]:
+    """The report exactly as `analyze-input` produces it: fit the script, then rank."""
+    return list(format_report(obs, start=best_alignment(obs), top=3))
+
+
 # --- protocol ------------------------------------------------------------------------------------
 
 
@@ -131,6 +143,30 @@ def test_observation_fields_sort_numerically_by_offset() -> None:
         [json.dumps({"t": 0.0, "player": 1, "fields": {"@0x100": 0, "@0x8": 0, "@0x40": 0}})]
     )
     assert obs.fields == ["@0x8", "@0x40", "@0x100"]
+
+
+def test_segments_seeking_matches_a_full_scan_of_the_series() -> None:
+    # _segments bisects to the window instead of walking the whole series (it is the innermost loop:
+    # per window, per candidate, per role, per alignment offset). The seek must be pure speed —
+    # identical output, including windows that start before / end after every recorded point.
+    def full_scan(points: list[tuple[float, int]], t0: float, t1: float) -> list[tuple[int, float]]:
+        if not points or t1 <= t0:
+            return []
+        out = []
+        for i, (at, value) in enumerate(points):
+            until = points[i + 1][0] if i + 1 < len(points) else float("inf")
+            lo, hi = max(at, t0), min(until, t1)
+            if hi > lo:
+                out.append((value, hi - lo))
+        return out
+
+    rng = random.Random(3)
+    for _ in range(2000):
+        times = sorted({round(rng.uniform(0, 20), 2) for _ in range(rng.randrange(0, 12))})
+        points = [(t, rng.randrange(4)) for t in times]
+        t0 = round(rng.uniform(-2, 22), 2)
+        t1 = t0 + round(rng.uniform(0, 5), 2)
+        assert _segments(points, t0, t1) == full_scan(points, t0, t1)
 
 
 # --- ranking -------------------------------------------------------------------------------------
@@ -188,6 +224,34 @@ def test_a_field_that_moves_on_the_static_dummy_is_flagged_and_demoted() -> None
     assert shared.score < score_candidate(obs, "@0x40", "dir").score
 
 
+def test_best_alignment_recovers_a_start_far_later_than_any_fixed_window_would_guess() -> None:
+    # Nothing synchronizes the probe's clock with the user reading a printed checklist: they start
+    # the sweep in one terminal, alt-tab, find the script, begin. 18 s is an ordinary alt-tab, and
+    # a search window guessed around t=0 would score every candidate against noise and report NO
+    # CANDIDATE for fields that are really there — a confident false negative. The feasible range
+    # comes from the recording instead, so the start is found wherever it actually is.
+    obs = _planted(start=18.0)
+    recovered = best_alignment(obs)
+    assert abs(recovered - 18.0) <= SETTLE
+    assert rank_for_role(obs, "dir", start=recovered)[0].name == "@0x40"
+    assert rank_for_role(obs, "button", start=recovered)[0].name == "@0x48"
+
+
+def test_analyzing_a_late_started_pass_still_names_the_planted_fields() -> None:
+    # The end-to-end of the above: the report must not turn a slow alt-tab into "not in the struct".
+    report = "\n".join(_report_for(_planted(start=18.0)))
+    assert "input_dir: best candidate @0x40" in report
+    assert "input_buttons: best candidate @0x48" in report
+
+
+def test_script_duration_and_log_span_bound_the_search() -> None:
+    assert script_duration((Step("1", "button", hold=2.0, rest=3.0),)) == BASELINE + 5.0
+    obs = _planted(start=2.6)
+    first, last = log_span(obs)
+    assert first == 2.6  # the recording opens at the baseline...
+    assert last == pytest.approx(2.6 + script_duration() - PROTOCOL[-1].rest + 0.1)  # ...to the end
+
+
 def test_best_alignment_recovers_a_late_start_and_the_ranking_survives_it() -> None:
     # The user alt-tabs: the script starts 2.6 s after the probe's t=0. Nothing should depend on
     # the two clocks matching. The SETTLE margin means a spread of nearby offsets all fit perfectly,
@@ -216,6 +280,28 @@ def test_format_report_names_the_winners_and_shows_their_evidence() -> None:
     assert "input_dir: best candidate @0x40" in report
     assert "input_buttons: best candidate @0x48" in report
     assert "observed:" in report
+
+
+def test_format_report_warns_when_the_recording_is_shorter_than_the_script() -> None:
+    # A cut-short pass scores against windows the log never covers and reads as NO CANDIDATE —
+    # which is indistinguishable from "the fields aren't here" unless the report says so.
+    rows = [
+        {"t": t / 10, "player": p, "fields": {"@0x8": t, "@0x10": 7}}
+        for t in range(100)  # 10s of recording for a ~65s script
+        for p in (1, 2)
+    ]
+    report = "\n".join(format_report(load_observation(json.dumps(row) for row in rows)))
+    assert "the recording ends at t=10s" in report
+    assert "the script's last action lands at t=63s" in report
+    assert "cut short" in report
+
+
+def test_format_report_does_not_cry_short_on_a_full_pass() -> None:
+    # The trailing rest records nothing (nobody moves after the last release), so a COMPLETE pass's
+    # log always stops before the script's nominal end. Measuring to that end would warn every run.
+    assert observable_duration() == script_duration() - PROTOCOL[-1].rest
+    for start in (0.0, 18.0):
+        assert not any("WARNING" in line for line in _report_for(_planted(start)))
 
 
 def test_format_report_refuses_to_name_a_candidate_when_the_sweep_is_clean() -> None:

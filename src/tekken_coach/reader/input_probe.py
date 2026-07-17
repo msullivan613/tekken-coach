@@ -26,6 +26,7 @@ observed value sets per candidate and lets the human read the encoding off them 
 from __future__ import annotations
 
 import json
+from bisect import bisect_right
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -192,11 +193,25 @@ def load_observation_file(path: Path) -> Observation:
 def _segments(
     points: Sequence[tuple[float, Value]], t0: float, t1: float
 ) -> list[tuple[Value, float]]:
-    """The ``(value, seconds_held)`` segments a field's step function spends inside ``[t0, t1)``."""
+    """The ``(value, seconds_held)`` segments a field's step function spends inside ``[t0, t1)``.
+
+    Seeks to the window instead of rescanning the series. This is the analyzer's innermost loop:
+    it runs per window, per candidate, per role, per alignment offset, so a full-series scan makes
+    the cost (alignments x roles x candidates x windows x points). On the brief's own
+    ``0x0-0x100:u8`` sweep — 256 candidates, a ~70 s pass at the default 0.05 s poll — that is ~10^9
+    steps and `best_alignment` takes minutes; seeking drops the `windows` factor, since the windows
+    partition the span rather than each re-walking it.
+    """
     if not points or t1 <= t0:
         return []
     out: list[tuple[Value, float]] = []
-    for index, (at, value) in enumerate(points):
+    # The last point at or before t0 — its segment is the one straddling the window's start. When
+    # every point is later than t0 bisect gives 0, and -1 clamps back to the first point below.
+    first = max(bisect_right(points, t0, key=lambda point: point[0]) - 1, 0)
+    for index in range(first, len(points)):
+        at, value = points[index]
+        if at >= t1:
+            break  # points are sorted, so nothing from here on can overlap the window
         until = points[index + 1][0] if index + 1 < len(points) else float("inf")
         lo, hi = max(at, t0), min(until, t1)
         if hi > lo:
@@ -391,41 +406,94 @@ def rank_for_role(
     return scores[:limit] if limit is not None else scores
 
 
+def script_duration(protocol: Sequence[Step] = PROTOCOL) -> float:
+    """How long the scripted pass takes, baseline included."""
+    return step_windows(protocol, 0.0)[-1].t1 - 0.0
+
+
+def observable_duration(protocol: Sequence[Step] = PROTOCOL) -> float:
+    """When the script's last *recordable* event happens — the final release, not the final rest.
+
+    The trailing rest cannot produce a change record: nothing moves after the user lets go. So a
+    complete recording legitimately stops before :func:`script_duration`, and anything checking
+    "did the pass finish?" has to measure to here or it flags every good run.
+    """
+    return script_duration(protocol) - (protocol[-1].rest if protocol else 0.0)
+
+
+def log_span(obs: Observation) -> tuple[float, float]:
+    """The first and last instant the recording covers (``(0, 0)`` for an empty log)."""
+    times = [at for by_field in obs.series.values() for pts in by_field.values() for at, _ in pts]
+    return (min(times), max(times)) if times else (0.0, 0.0)
+
+
+# How far outside the feasible range to still look: the user may have squeezed the rests, or stopped
+# the probe on the final release rather than after it, which shifts the true start a little past
+# what the recording's length alone implies.
+_ALIGN_SLACK = 3.0
+
+
+def _alignment_fit(
+    obs: Observation, start: float, protocol: Sequence[Step], acting_player: int
+) -> float:
+    """How well the script explains the log at ``start``: the best candidate score, summed per role.
+
+    Scored on the single best candidate per role because at most a couple of offsets are real
+    inputs; the other few hundred are noise that no alignment improves, so averaging would drown the
+    signal that is being aligned.
+    """
+    return sum(
+        max(
+            (
+                c.score
+                for c in rank_for_role(
+                    obs, role, protocol=protocol, start=start, acting_player=acting_player
+                )
+            ),
+            default=0.0,
+        )
+        for role in ("button", "dir")
+    )
+
+
 def best_alignment(
     obs: Observation,
     *,
     protocol: Sequence[Step] = PROTOCOL,
-    search: float = 4.0,
-    step: float = 0.2,
     acting_player: int = 1,
+    coarse: float = 1.0,
+    fine: float = 0.1,
 ) -> float:
     """Find when the user actually started the script, by fitting it to the log.
 
-    The probe's clock and the user's reading of the checklist are two clocks — expecting them to
-    start on the same instant would make the whole ranking hostage to a slow alt-tab. So the script
-    is slid across ``±search`` seconds and the offset that best explains the log wins. Scored on the
-    single best candidate per role, since at most a couple of offsets are real inputs and everything
-    else is noise that no alignment improves.
+    The probe's clock and the user's reading of the checklist are two clocks, and **nothing
+    synchronizes them**: the user starts the probe in one terminal, alt-tabs into the game, finds
+    the checklist and begins. A late start is normal, not an anomaly, so the search range is
+    **derived from the recording** — the script has to fit inside it, which bounds the start to
+    ``[log_start, log_end - script_duration]`` (plus slack) — rather than assumed to be near zero.
+    Guessing a narrow window around 0 would mean a user who took 15 s to alt-tab gets every
+    candidate scored against noise, and the report concludes NO CANDIDATE for fields that are
+    really there — a confident false negative, the one outcome worse than saying nothing.
+
+    Searched coarse-then-fine: the fit is smooth on the scale of the :data:`SETTLE` margin, so a
+    1 s sweep of a possibly-minutes-long feasible range finds the right neighbourhood cheaply and
+    the refinement only pays for a second's worth of offsets.
     """
-    best, best_start = -1.0, 0.0
-    ticks = int(search / step)
-    for tick in range(-ticks, ticks + 1):
-        start = tick * step
-        total = sum(
-            max(
-                (
-                    c.score
-                    for c in rank_for_role(
-                        obs, role, protocol=protocol, start=start, acting_player=acting_player
-                    )
-                ),
-                default=0.0,
-            )
-            for role in ("button", "dir")
-        )
-        if total > best:
-            best, best_start = total, start
-    return best_start
+    first, last = log_span(obs)
+    lo = first - _ALIGN_SLACK
+    hi = max(last - script_duration(protocol), first) + _ALIGN_SLACK
+
+    def sweep(lo: float, hi: float, step: float) -> float:
+        best_fit, best_start = -1.0, lo
+        for tick in range(int((hi - lo) / step) + 1):
+            start = lo + tick * step
+            fit = _alignment_fit(obs, start, protocol, acting_player)
+            if fit > best_fit:
+                best_fit, best_start = fit, start
+        return best_start
+
+    around = sweep(lo, hi, coarse)
+    return sweep(around - coarse, around + coarse, fine)
 
 
 # --- reporting ----------------------------------------------------------------------------------
@@ -465,6 +533,19 @@ def format_report(
         f"analyzed {len(obs.fields)} watched offsets x {len(obs.players)} players; "
         f"script aligned at t={start:.1f}s (acting player P{acting_player})"
     )
+    # A pass that was cut short scores every candidate against windows the recording never covers,
+    # which reads as NO CANDIDATE — indistinguishable from "the fields aren't here" unless we say
+    # so. Measured to the last *observable* action, not the script's nominal end: the final rest
+    # records nothing (nobody moves after the last release), so a complete pass's log always stops
+    # short of the full duration, and comparing against that would warn on every good run.
+    ends_at = log_span(obs)[1]
+    last_action = start + observable_duration(protocol)
+    if ends_at < last_action:
+        yield (
+            f"WARNING: the recording ends at t={ends_at:.0f}s but the script's last action lands "
+            f"at t={last_action:.0f}s — the pass was cut short, so any NO CANDIDATE below may just "
+            "be the missing tail."
+        )
     for role, field in (("dir", "input_dir"), ("button", "input_buttons")):
         ranked = rank_for_role(
             obs, role, protocol=protocol, start=start, acting_player=acting_player, limit=top

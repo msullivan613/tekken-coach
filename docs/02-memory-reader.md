@@ -488,6 +488,10 @@ python -m tekken_coach.reader.commands probe-state \
 python -m tekken_coach.reader.commands analyze-input debug/input.jsonl
 ```
 
+Nothing synchronizes the probe's clock with you reading the checklist, so **the start time is fitted,
+not assumed** — the script has to fit inside the recording, which bounds where it can begin. Take as
+long as you like to alt-tab; `analyze-input` prints the start it fitted (`--start` overrides it).
+
 The analyzer ranks every swept offset against the script. Three discriminators do the work:
 
 | a real input field… | …so a candidate is rejected when |
