@@ -11,3 +11,6 @@ dist/
 
 # Session logs written at runtime
 sessions/
+
+# Per-brief agent report (kept local, never committed)
+AGENT-REPORT.md
