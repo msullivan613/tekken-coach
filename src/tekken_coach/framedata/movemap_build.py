@@ -54,6 +54,22 @@ DEFAULT_BLOCK_TOL = 1
 # width plus one frame of poll jitter. Used only to break an on-block tie when startup is observed.
 DEFAULT_STARTUP_TOL = 2
 
+# Live startup-match tolerances, in frames (Stage B live path only, brief #14). The LIVE join
+# matches on *startup* — the contact-frame ``move_frame``, an observed event that is reliable — not
+# on live on-block, which is measured from fuzzy return-to-idle animation and reads too negative for
+# fast/plus moves (a +1 jab reads ≈−5). The tight band is ±1; ±2 is a fallback used only when ±1 is
+# empty, since startup can read one frame high on a late poll even at 120 Hz.
+DEFAULT_LIVE_STARTUP_TOL = 1
+DEFAULT_LIVE_STARTUP_TOL_FALLBACK = 2
+
+# Soft on-block preference tolerance for the LIVE join (brief #14). Live on-block reads too negative
+# (only the attacker side is animation-lagged, so the two sides do not cancel), which makes the
+# observed value a rough *lower bound* on the truth: a candidate whose Wavu on-block is
+# ``>= observed - this tol`` is consistent with that bound and is ranked ahead of one that
+# contradicts it. This NEVER filters — it only orders the startup-matched candidates, so the true
+# ``1`` (+1) survives an observed −5 (brief #14 §2).
+DEFAULT_LIVE_BLOCK_SOFT_TOL = 1
+
 
 # ---------------------------------------------------------------------------
 # Fingerprint + candidate + join result
@@ -192,6 +208,134 @@ def join_move(
             f"{len(ranked)} moves share on_block ≈{observed_block:+d} "
             f"(within ±{block_tol}); needs a startup read (live) to disambiguate"
         ),
+    )
+
+
+def _startup_within(
+    moves: list[FrameDataMove], target_startup: int, tol: int
+) -> list[FrameDataMove]:
+    """Moves whose Wavu startup is within ``tol`` frames of ``target_startup`` (brief #14 live).
+
+    Moves with no Wavu startup can't be startup-matched, so they are excluded here (they are offered
+    separately, ranked last). The ``is not None`` guard also narrows the type for the subtraction.
+    """
+    return [m for m in moves if m.startup is not None and abs(m.startup - target_startup) <= tol]
+
+
+def join_move_live(
+    fingerprint: MoveFingerprint,
+    char_framedata: CharFrameData,
+    *,
+    startup_tol: int = DEFAULT_LIVE_STARTUP_TOL,
+    startup_tol_fallback: int = DEFAULT_LIVE_STARTUP_TOL_FALLBACK,
+    block_soft_tol: int = DEFAULT_LIVE_BLOCK_SOFT_TOL,
+) -> JoinResult:
+    """Rank a character's Wavu moves against one *live* fingerprint by STARTUP (brief #14).
+
+    The live path measures startup at a crisp event — the contact-frame ``move_frame`` — so it is
+    reliable. Live on-block, by contrast, is measured from the attacker's fuzzy return-to-idle
+    animation and reads far too negative for fast/plus moves (a +1 jab reads ≈−5), which used to
+    *hide* the true move: :func:`join_move` hard-filters by on-block, so the +1 ``1`` fell outside a
+    −5 fingerprint's candidate set entirely (brief #14). This join routes around that:
+
+    * **Primary discriminator is startup**, within ±``startup_tol`` (falling back to
+      ±``startup_tol_fallback`` only when the tight band is empty). A move whose Wavu startup is
+      outside the band is ruled out — startup is the trustworthy signal.
+    * **On-block never filters.** The observed value is a rough *lower bound* on the truth, so it
+      only **soft-ranks**: a candidate whose Wavu on-block is ``>= observed − block_soft_tol`` is
+      preferred over one that contradicts the bound, but a startup-match is never dropped for
+      failing it. The true ``1`` (+1) therefore survives an observed −5.
+    * Moves with **no Wavu startup** (they can't be startup-matched — e.g. later hits of a string)
+      are still **offered, ranked last**, never dropped.
+
+    Unlike :func:`join_move` (the on_block-primary log path, left unchanged), this never
+    *auto-writes* a mapping in practice: the live harness always has the user confirm, so a
+    shared-startup band is presented as a ranked candidate list to disambiguate, never a guess.
+    """
+    observed_startup = fingerprint.startup
+    observed_block = fingerprint.on_block
+
+    moves = list(char_framedata.moves.values())
+    without_startup = [m for m in moves if m.startup is None]
+
+    used_tol = startup_tol
+    if observed_startup is None:
+        # No startup signal (should not happen live — a contact always yields one). We cannot
+        # discriminate on startup, so offer every move ranked by on-block plausibility alone.
+        startup_hits: list[FrameDataMove] = []
+        fallback = moves
+    else:
+        startup_hits = _startup_within(moves, observed_startup, startup_tol)
+        if not startup_hits and startup_tol_fallback > startup_tol:
+            used_tol = startup_tol_fallback
+            startup_hits = _startup_within(moves, observed_startup, startup_tol_fallback)
+        # Moves with a Wavu startup that missed the band are ruled out; only the no-startup moves
+        # are kept as a ranked-last fallback (brief #14 §2 "offer them, ranked last").
+        fallback = without_startup
+
+    def _implausible(move: FrameDataMove) -> int:
+        """0 when on-block is consistent with the observed lower bound (preferred), else 1."""
+        if observed_block is None or move.on_block is None:
+            return 0  # nothing to contradict — treat as plausible
+        return 0 if move.on_block >= observed_block - block_soft_tol else 1
+
+    def _startup_delta(move: FrameDataMove) -> int:
+        if move.startup is None or observed_startup is None:
+            return 1_000
+        return abs(move.startup - observed_startup)
+
+    # tier 0 = startup-matched (primary), tier 1 = offered-last (no Wavu startup). Within a tier:
+    # on-block plausibility, then startup proximity, then key — all deterministic.
+    tiered: list[tuple[int, FrameDataMove]] = [(0, m) for m in startup_hits] + [
+        (1, m) for m in fallback
+    ]
+    ordered = sorted(
+        tiered, key=lambda tm: (tm[0], _implausible(tm[1]), _startup_delta(tm[1]), tm[1].key)
+    )
+    candidates = [_candidate(move, fingerprint) for _, move in ordered]
+
+    startup_label = (
+        f"startup ≈{observed_startup} (±{used_tol})"
+        if observed_startup is not None
+        else "no startup signal"
+    )
+
+    if not candidates:
+        return JoinResult(
+            move_id=fingerprint.move_id,
+            status="no_candidate",
+            framedata_key=None,
+            candidates=[],
+            reason=(
+                f"no move in {char_framedata.char_slug} snapshot matches {startup_label} "
+                "(and none lack a Wavu startup to offer)"
+            ),
+        )
+    if len(candidates) == 1:
+        chosen = candidates[0]
+        return JoinResult(
+            move_id=fingerprint.move_id,
+            status="auto_mapped",
+            framedata_key=chosen.framedata_key,
+            candidates=[chosen],
+            reason=f"unique on {startup_label} → {chosen.framedata_key}",
+        )
+    if startup_hits:
+        reason = (
+            f"{len(startup_hits)} move(s) share {startup_label}; on-block is advisory only "
+            "(live reads low for fast moves) — disambiguate by eye"
+        )
+    else:
+        reason = (
+            f"nothing matched {startup_label}; offering moves with no Wavu startup "
+            "(e.g. later string hits) for you to pick"
+        )
+    return JoinResult(
+        move_id=fingerprint.move_id,
+        status="collision",
+        framedata_key=None,
+        candidates=candidates,
+        reason=reason,
     )
 
 

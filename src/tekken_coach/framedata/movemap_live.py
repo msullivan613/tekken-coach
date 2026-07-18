@@ -3,9 +3,9 @@
 Stage B watches the reader's per-frame ``(char_id, move_id, move_frame)`` for the target character
 and, when a **new** move-id is seen, captures its observed fingerprint from the exchange that
 follows — its **startup** (``move_frame`` at contact) and, when the defender blocked, its
-**on-block** advantage. It then shows the ranked Wavu candidates (the Stage-A :func:`join_move`
-core) and lets the user confirm the mapping with one keypress, merging incrementally so a Ctrl-C
-keeps progress (brief #6 §B).
+**on-block** advantage. It then shows the ranked Wavu candidates — matched by *startup*, the
+reliable signal (:func:`join_move_live`, brief #14), not by the fuzzy live on-block — and lets the
+user confirm the mapping with one keypress, merging incrementally so a Ctrl-C keeps progress (§B).
 
 The decision logic — contact/startup/on-block detection — lives in the pure, unit-tested
 :class:`LiveFingerprinter`; only the endless read loop and the keypress prompt are I/O and carry
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tekken_coach.framedata.loader import DEFAULT_FRAMEDATA_DIR, DEFAULT_MOVEMAP_DIR
-from tekken_coach.framedata.movemap_build import MoveFingerprint, join_move
+from tekken_coach.framedata.movemap_build import MoveFingerprint, join_move_live
 from tekken_coach.framedata.movemap_miner import merge_mappings
 from tekken_coach.schemas import ActionState, PlayerFrame
 
@@ -230,7 +230,8 @@ def reduce_observations(observations: list[LiveObservation]) -> MoveFingerprint:
     :class:`MoveFingerprint` whose ``startup`` is the min over contacted reps (one-sided-high noise)
     and whose ``on_block`` is the modal blocked advantage (two-sided noise). ``blocked_samples`` /
     ``total_samples`` carry the rep counts the join already understands. The reduced fingerprint is
-    what feeds the (unchanged) :func:`join_move`, so accurate input surfaces the true candidate.
+    what feeds :func:`join_move_live` (startup-primary, brief #14), so accurate input surfaces the
+    true candidate.
     """
     if not observations:
         raise ValueError("reduce_observations needs at least one observation")
@@ -520,17 +521,24 @@ def _prompt_confirm(
     from tekken_coach.framedata.models import CharFrameData
 
     assert isinstance(char_fd, CharFrameData)
-    result = join_move(fp, char_fd)
-    detail = f"startup≈{fp.startup}" + (
-        f" on_block≈{fp.on_block:+d}" if fp.on_block is not None else " (hit; no on_block)"
-    )
+    # Live matches on STARTUP (a crisp observed event), not on live on-block (fuzzy, reads low for
+    # fast moves) — brief #14. The observed on-block is shown only as an advisory hint, clearly
+    # labelled approximate, and the candidates' frame data is Wavu's (the values coaching uses).
+    result = join_move_live(fp, char_fd)
+    if fp.on_block is not None:
+        block_note = f" on-block≈{fp.on_block:+d} (approximate — reads low for fast moves)"
+    else:
+        block_note = " (hit; no on-block)"
+    detail = f"startup≈{fp.startup}{block_note}"
     print(f"move_id {fp.move_id} (from {reps} rep{'s' if reps != 1 else ''}): {detail}")
     if not result.candidates:
         print(f"  no candidate ({result.reason}); skipping.\n")
         return None
     for i, cand in enumerate(result.candidates[:9], start=1):
         tag = " <- top" if i == 1 else ""
-        print(f"  [{i}] {cand.framedata_key}  (i{cand.startup}, {cand.on_block:+d} on block){tag}")
+        startup = f"i{cand.startup}" if cand.startup is not None else "i?"
+        on_block = f"{cand.on_block:+d} on block" if cand.on_block is not None else "on-block ?"
+        print(f"  [{i}] {cand.framedata_key}  ({startup}, {on_block}){tag}")
     top = result.candidates[0].framedata_key
     answer = input(f"  confirm [{top}]? Enter=yes / 1-9=pick / s=skip: ").strip().lower()
     if answer in ("", "y", "1"):

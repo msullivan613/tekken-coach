@@ -14,6 +14,7 @@ from tekken_coach.framedata.movemap_build import (
     build_fingerprint,
     entry_for,
     join_move,
+    join_move_live,
 )
 from tekken_coach.schemas import (
     DefenderReaction,
@@ -216,3 +217,110 @@ def test_entry_without_name_has_no_alias() -> None:
     fd = _char_fd(_move("df+2", on_block=-13, startup=15))
     entry = entry_for(fd, "df+2")
     assert entry.aliases == []
+
+
+# --- live startup-primary join (brief #14) ------------------------------------
+#
+# The live tool reads startup accurately (a crisp contact-frame event) but on-block *too negative*
+# for fast/plus moves (the attacker's return-to-idle animation lags ~10 frames). The failure the
+# brief pins: Bryan standing jab `1` is i10 / +1, but live reads (startup=10, on_block=−5); the
+# on_block-primary log join hard-filters by on-block and so *excludes* the real +1 `1`.
+
+
+def _bryan_jab_fd() -> CharFrameData:
+    """A `1` at i10/+1 plus i10 decoys at −5 that legitimately share its startup (brief #14)."""
+    return _char_fd(
+        _move("1", on_block=1, startup=10),  # the truth: Bryan standing jab, i10 / +1
+        _move("1,2,4", on_block=-5, startup=10),  # i10 decoys at −5 (the observed on-block)
+        _move("1,4,2,4", on_block=-5, startup=10),
+        _move("2,4", on_block=-5, startup=10),
+        _move("3", on_block=-4, startup=16),  # a slow minus move — nowhere near i10
+        slug="bryan",
+    )
+
+
+def _live_fp(startup: int | None, on_block: int | None) -> MoveFingerprint:
+    return MoveFingerprint(
+        char_id=7,
+        move_id=1695,
+        on_block=on_block,
+        startup=startup,
+        blocked_samples=5,
+        total_samples=5,
+    )
+
+
+def test_old_join_excludes_the_true_plus_move_reproducing_the_bug() -> None:
+    """The on_block-primary log join drops the +1 `1` from a (startup=10, on_block=−5) read."""
+    fd = _bryan_jab_fd()
+    result = join_move(_live_fp(startup=10, on_block=-5), fd)
+    keys = {c.framedata_key for c in result.candidates}
+    assert "1" not in keys  # the bug: the real move is filtered out by on-block
+    assert {
+        "1,2,4",
+        "1,4,2,4",
+        "2,4",
+    } <= keys  # only −5-ish decoys survive the hard on-block filter
+
+
+def test_live_join_includes_the_true_plus_move() -> None:
+    """The startup-primary live join keeps the +1 `1` despite the observed −5, and ranks it well."""
+    fd = _bryan_jab_fd()
+    result = join_move_live(_live_fp(startup=10, on_block=-5), fd)
+    keys = [c.framedata_key for c in result.candidates]
+    assert "1" in keys  # the fix: the true move survives the misleadingly-negative on-block
+    assert result.candidates[0].framedata_key == "1"  # and ranks at the top
+    # The i10 decoys are legitimately still offered — they share startup; the user disambiguates.
+    assert set(keys) == {"1", "1,2,4", "1,4,2,4", "2,4"}
+    assert "3" not in keys  # the i16 minus move is ruled out by startup
+
+
+def test_live_join_soft_ranks_the_lower_bound_but_never_drops() -> None:
+    """A candidate contradicting the observed on-block lower bound is ranked last, not dropped."""
+    fd = _char_fd(
+        _move("a", on_block=2, startup=12),  # +2 ≥ observed −5 − 1 → plausible, preferred
+        _move("b", on_block=-20, startup=12),  # −20 < −6 → contradicts the lower bound, ranked last
+        slug="bryan",
+    )
+    result = join_move_live(_live_fp(startup=12, on_block=-5), fd)
+    keys = [c.framedata_key for c in result.candidates]
+    assert keys == ["a", "b"]  # both offered (never dropped), plausible one first
+
+
+def test_live_join_startup_tolerance_hits_at_one_frame() -> None:
+    """Startup ±1 admits an i11 move for an observed i10; a 2-frame-off move is ruled out."""
+    fd = _char_fd(
+        _move("near", on_block=-3, startup=11),  # 1 off → in
+        _move("far", on_block=-3, startup=13),  # 3 off → out
+        slug="bryan",
+    )
+    result = join_move_live(_live_fp(startup=10, on_block=-3), fd)
+    assert [c.framedata_key for c in result.candidates] == ["near"]
+
+
+def test_live_join_falls_back_to_two_frames_when_one_is_empty() -> None:
+    """When nothing sits within ±1, the ±2 fallback admits a 2-frame-off move (late poll)."""
+    fd = _char_fd(_move("two_off", on_block=-3, startup=12), slug="bryan")
+    tight = join_move_live(_live_fp(startup=10, on_block=-3), fd)
+    # 2 off is outside ±1, but the fallback widens to ±2 because ±1 found nothing.
+    assert [c.framedata_key for c in tight.candidates] == ["two_off"]
+
+
+def test_live_join_offers_no_startup_moves_ranked_last() -> None:
+    """A later-hit move with no Wavu startup can't be startup-matched — offered, ranked last."""
+    fd = _char_fd(
+        _move("df+1", on_block=-1, startup=13),  # startup match → tier 0
+        _move("df+1,2", on_block=-8, startup=None),  # no Wavu startup → offered last, not dropped
+        slug="bryan",
+    )
+    result = join_move_live(_live_fp(startup=13, on_block=-6), fd)
+    keys = [c.framedata_key for c in result.candidates]
+    assert keys == ["df+1", "df+1,2"]  # startup-matched first, no-startup move last (not dropped)
+
+
+def test_live_join_no_candidate_when_startup_far_and_nothing_to_offer() -> None:
+    """No move near the startup and none lacking a startup → an honest no_candidate."""
+    fd = _char_fd(_move("slow", on_block=-3, startup=20), slug="bryan")
+    result = join_move_live(_live_fp(startup=10, on_block=-3), fd)
+    assert result.status == "no_candidate"
+    assert result.candidates == []
