@@ -79,10 +79,14 @@ class PunisherProfiles(BaseModel):
     profiles: dict[str, PunisherProfile] = Field(default_factory=dict)
 
     def get(self, char_name: str | None) -> PunisherProfile | None:
-        """Return the profile for ``char_name``, or ``None`` on a miss (never raises)."""
+        """Return the profile for ``char_name``, or ``None`` on a miss (never raises).
+
+        Case-insensitive: profiles are keyed lowercase on load, so a capitalized ``"Paul"`` from a
+        move map matches a lowercase snapshot name and vice versa (brief #17 §B latent-trap guard).
+        """
         if char_name is None:
             return None
-        return self.profiles.get(char_name)
+        return self.profiles.get(char_name.lower())
 
 
 def load_punisher_profiles(punishers_dir: str | Path = DEFAULT_PUNISHERS_DIR) -> PunisherProfiles:
@@ -98,5 +102,7 @@ def load_punisher_profiles(punishers_dir: str | Path = DEFAULT_PUNISHERS_DIR) ->
         return PunisherProfiles(profiles=profiles)
     for path in sorted(root.glob("*.json")):
         profile = PunisherProfile.model_validate_json(path.read_text(encoding="utf-8"))
-        profiles[profile.char_name] = profile
+        # Normalize the key on load so lookup is case-insensitive (brief #17 §B); :meth:`get`
+        # lowercases the query to match.
+        profiles[profile.char_name.lower()] = profile
     return PunisherProfiles(profiles=profiles)

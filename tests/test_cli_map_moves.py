@@ -32,7 +32,10 @@ def test_from_log_runs_and_reports(tmp_path: Path, capsys: pytest.CaptureFixture
     assert rc == 0
     out = capsys.readouterr().out
     assert "map-moves:" in out
-    assert "needs framedata" in out  # Bryan groups surfaced, not crashed
+    assert "move-id groups" in out  # groups surfaced, not crashed
+    # Xiaoyu (char_id 5) is unnamed by the header, so its groups surface as unresolved (not a
+    # crash); Bryan's frame data now exists in the snapshot, so it no longer needs framedata.
+    assert "not named by the session header" in out
 
 
 def test_requires_exactly_one_mode(capsys: pytest.CaptureFixture[str]) -> None:

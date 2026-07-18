@@ -507,6 +507,28 @@ def _snapshot(char_fd: CharFrameData) -> FrameDataSnapshot:
     return FrameDataSnapshot(manifest=manifest, characters={char_fd.char_slug: char_fd})
 
 
+def test_char_name_join_is_case_insensitive() -> None:
+    """A lowercase-snapshot char_name still joins a capitalized move-map name (brief #17 §B).
+
+    Regression for the raw-scrape swap: the move map says ``"Paul"`` but the fresh snapshot's
+    ``char_name`` is lowercase ``"paul"``. The join must normalize case so the move resolves rather
+    than degrading to ``frame_data_matched=False``.
+    """
+    snap = _snapshot(
+        CharFrameData(
+            char_slug="paul",
+            char_name="paul",  # lowercase, as a fresh scrape produces
+            moves={"df+2": FrameDataMove(key="df+2", on_block=-9, hit_level=MoveProperty.mid)},
+        )
+    )
+    maps = {"Paul": _paul_map_for({"9": ("df+2", "df+2")})}  # capitalized move-map name
+    labeled = label_interaction(_paul_attacks(9), maps, snap, _punishers())
+
+    assert labeled.labels.frame_data_matched is True
+    assert labeled.attacker_move_name == "df+2"
+    assert labeled.labels.on_block == -9
+
+
 def test_profile_helpers_are_stance_aware() -> None:
     """PunisherProfile.fastest / by_stance select by stance (docs/05 §4.1)."""
     profile = PunisherProfile(
@@ -521,3 +543,17 @@ def test_profile_helpers_are_stance_aware() -> None:
     assert profile.fastest(PunisherStance.standing) is not None
     assert profile.fastest(PunisherStance.standing).startup == 10  # type: ignore[union-attr]
     assert len(profile.by_stance(PunisherStance.while_standing)) == 1
+
+
+def test_punisher_profiles_get_is_case_insensitive(tmp_path: Path) -> None:
+    """A profile keyed ``"Paul"`` is found by ``"paul"`` and vice versa (brief #17 §B)."""
+    (tmp_path / "paul.json").write_text(
+        PunisherProfile(
+            char_name="Paul", punishers=[Punisher(startup=10, notation="1,2")]
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    profiles = load_punisher_profiles(tmp_path)
+    assert profiles.get("Paul") is not None
+    assert profiles.get("paul") is not None
+    assert profiles.get("PAUL") is not None

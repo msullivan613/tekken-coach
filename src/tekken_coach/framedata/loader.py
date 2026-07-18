@@ -14,10 +14,12 @@ filesystems without symlinks, as a plain text file whose contents name the snaps
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 from tekken_coach.framedata.models import (
+    CharCuration,
     CharFrameData,
     CharMoveMap,
     FrameDataMove,
@@ -29,6 +31,7 @@ from tekken_coach.framedata.models import (
 DEFAULT_MOVEMAP_DIR = Path("assets/movemap")
 DEFAULT_FRAMEDATA_DIR = Path("assets/framedata")
 CURRENT_POINTER = "current"
+CURATION_DIRNAME = "curation"  # sibling of the snapshot dirs (brief #17 §A2)
 
 
 # ---------------------------------------------------------------------------
@@ -120,14 +123,57 @@ def load_snapshot_manifest(snapshot_dir: str | Path) -> SnapshotManifest:
     return SnapshotManifest.model_validate_json(path.read_text(encoding="utf-8"))
 
 
+def apply_curation(char: CharFrameData, overlay: CharCuration) -> CharFrameData:
+    """Merge a character's curation overlay onto its loaded frame data (brief #17 §A2). Pure.
+
+    The overlay is **authoritative**: each curated ``duck_punish`` / ``string_gap`` wins over
+    whatever the scrape had (normally ``None``, since those fields are "not from the CSV"). Returns
+    a new :class:`CharFrameData`; the input is not mutated. A curation key that isn't in the
+    snapshot is a soft warning (curation shouldn't silently vanish) but never a crash — a stale key
+    must not break loading.
+    """
+    moves = dict(char.moves)
+    for move_key, curated in overlay.moves.items():
+        move = moves.get(move_key)
+        if move is None:
+            warnings.warn(
+                f"curation for {char.char_slug!r} references unknown move key {move_key!r}; "
+                "skipping (stale curation, not fatal)",
+                stacklevel=2,
+            )
+            continue
+        update: dict[str, object] = {}
+        if curated.duck_punish is not None:
+            update["duck_punish"] = curated.duck_punish
+        if curated.string_gap is not None:
+            update["string_gap"] = curated.string_gap
+        moves[move_key] = move.model_copy(update=update) if update else move
+    return char.model_copy(update={"moves": moves})
+
+
+def load_char_curation(path: str | Path) -> CharCuration:
+    """Load a single character's curation overlay file (brief #17 §A1)."""
+    return CharCuration.model_validate_json(Path(path).read_text(encoding="utf-8"))
+
+
 def load_snapshot(snapshot_dir: str | Path) -> FrameDataSnapshot:
-    """Load a specific frame-data snapshot directory into a :class:`FrameDataSnapshot`."""
+    """Load a specific frame-data snapshot directory into a :class:`FrameDataSnapshot`.
+
+    Applies the durable curation overlay (brief #17 §A) from the sibling ``curation/`` dir when
+    present. The overlay lives beside the snapshot dirs (``assets/framedata/curation/``), not inside
+    a snapshot, so it survives ``fetch-framedata`` REPLACE semantics; a missing overlay file is a
+    no-op.
+    """
     directory = Path(snapshot_dir)
+    curation_dir = directory.parent / CURATION_DIRNAME
     manifest = load_snapshot_manifest(directory)
     characters: dict[str, CharFrameData] = {}
     for slug, entry in manifest.characters.items():
         char_path = directory / entry.file
         char = CharFrameData.model_validate_json(char_path.read_text(encoding="utf-8"))
+        overlay_path = curation_dir / f"{slug}.json"
+        if overlay_path.is_file():
+            char = apply_curation(char, load_char_curation(overlay_path))
         characters[slug] = char
     return FrameDataSnapshot(manifest=manifest, characters=characters)
 

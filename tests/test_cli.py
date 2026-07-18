@@ -507,9 +507,9 @@ def test_round_end_flushes_before_close(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_coach_command_skill_handoff(capsys: pytest.CaptureFixture[str]) -> None:
-    builder.write_sample(builder.SAMPLE_PATH)
-    rc = main(["coach", str(builder.SAMPLE_PATH)])
+def test_coach_command_skill_handoff(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    log = builder.write_sample(tmp_path / "sample-session.jsonl")  # hermetic: never write the repo
+    rc = main(["coach", str(log)])
     out = capsys.readouterr().out
     assert rc == 0
     assert "Session log:" in out
@@ -517,15 +517,15 @@ def test_coach_command_skill_handoff(capsys: pytest.CaptureFixture[str]) -> None
 
 
 def test_coach_command_api_path_mocked(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    builder.write_sample(builder.SAMPLE_PATH)
+    log = builder.write_sample(tmp_path / "sample-session.jsonl")  # hermetic: never write the repo
 
     def fake_coach(_path: Any) -> CoachResult:
         return CoachResult(BACKEND_API, "MOCKED COACHING REPORT", "ok")
 
     monkeypatch.setattr("tekken_coach.cli.coach_session", fake_coach)
-    rc = main(["coach", str(builder.SAMPLE_PATH), "--coach", "api"])
+    rc = main(["coach", str(log), "--coach", "api"])
     assert rc == 0
     assert "MOCKED COACHING REPORT" in capsys.readouterr().out
 
