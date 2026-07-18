@@ -33,6 +33,11 @@ from tekken_coach.schemas import ActionState, PlayerFrame
 # noise is two-sided), which needs a few reps to converge.
 DEFAULT_LIVE_REPS = 5
 
+# How many ranked candidates the confirm prompt lists. A character can carry a dozen-plus moves at
+# one startup (Bryan has many i15s), so the window is wider than the old 9: startup-primary matching
+# only helps if the true move is actually *reachable* in the list, not ranked out of sight (#14).
+MAX_CANDIDATES_SHOWN = 15
+
 
 @dataclass(frozen=True)
 class FrameObservation:
@@ -534,17 +539,22 @@ def _prompt_confirm(
     if not result.candidates:
         print(f"  no candidate ({result.reason}); skipping.\n")
         return None
-    for i, cand in enumerate(result.candidates[:9], start=1):
+    # A character can carry many moves at one startup, so show a generous window (not just 9) — the
+    # true move must be *reachable*, not just ranked. The user picks by number (multi-digit ok).
+    shown = result.candidates[:MAX_CANDIDATES_SHOWN]
+    for i, cand in enumerate(shown, start=1):
         tag = " <- top" if i == 1 else ""
         startup = f"i{cand.startup}" if cand.startup is not None else "i?"
         on_block = f"{cand.on_block:+d} on block" if cand.on_block is not None else "on-block ?"
         print(f"  [{i}] {cand.framedata_key}  ({startup}, {on_block}){tag}")
-    top = result.candidates[0].framedata_key
-    answer = input(f"  confirm [{top}]? Enter=yes / 1-9=pick / s=skip: ").strip().lower()
+    if len(result.candidates) > len(shown):
+        print(f"  … {len(result.candidates) - len(shown)} more (share this startup); 's' to skip.")
+    top = shown[0].framedata_key
+    answer = input(f"  confirm [{top}]? Enter=yes / 1-{len(shown)}=pick / s=skip: ").strip().lower()
     if answer in ("", "y", "1"):
         return top
     if answer == "s":
         return None
-    if answer.isdigit() and 1 <= int(answer) <= len(result.candidates[:9]):
-        return result.candidates[int(answer) - 1].framedata_key
+    if answer.isdigit() and 1 <= int(answer) <= len(shown):
+        return shown[int(answer) - 1].framedata_key
     return None

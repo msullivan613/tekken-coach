@@ -285,12 +285,29 @@ def join_move_live(
         return abs(move.startup - observed_startup)
 
     # tier 0 = startup-matched (primary), tier 1 = offered-last (no Wavu startup). Within a tier:
-    # on-block plausibility, then startup proximity, then key — all deterministic.
+    # on-block plausibility, then startup proximity, then notation depth, then a case-insensitive
+    # key — all deterministic. Notation depth (comma count) demotes deep string extensions
+    # (``DF+1,1,1,1``) below base moves (``d4``): a character can carry a dozen moves at one
+    # startup, and when the user probes an *isolated* move-id the base move is far likelier than a
+    # 4th string
+    # hit, so ranking the whole ``DF+1`` family above ``d4`` would push the real answer off the
+    # shown shortlist (brief #14 live: Bryan d4 vanished under DF+1's string tree). The
+    # case-insensitive key stops a lowercase notation (``d4``) sorting after every uppercase one.
+    # On-block is deliberately NOT a proximity tiebreak: it reads too negative, so the closest
+    # snapshot value is often a *decoy* (a −15 read matched DF+1,2's true −15, not d4's −11).
     tiered: list[tuple[int, FrameDataMove]] = [(0, m) for m in startup_hits] + [
         (1, m) for m in fallback
     ]
     ordered = sorted(
-        tiered, key=lambda tm: (tm[0], _implausible(tm[1]), _startup_delta(tm[1]), tm[1].key)
+        tiered,
+        key=lambda tm: (
+            tm[0],
+            _implausible(tm[1]),
+            _startup_delta(tm[1]),
+            tm[1].key.count(","),
+            tm[1].key.lower(),
+            tm[1].key,
+        ),
     )
     candidates = [_candidate(move, fingerprint) for _, move in ordered]
 

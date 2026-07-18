@@ -318,6 +318,39 @@ def test_live_join_offers_no_startup_moves_ranked_last() -> None:
     assert keys == ["df+1", "df+1,2"]  # startup-matched first, no-startup move last (not dropped)
 
 
+def test_live_join_surfaces_a_base_move_over_a_string_family_at_the_same_startup() -> None:
+    """Bryan d4 (i15) must rank above the DF+1 string tree, not vanish under it (brief #14 live).
+
+    The live run found d4 registering but absent from the shown shortlist: a dozen moves share i15,
+    one string's extensions (DF+1,1 / …,1,1 / …,1,1,1) hogged the top slots, and the case-sensitive
+    key sorted lowercase ``d4`` last. Notation depth (comma count) demotes deep string hits below
+    base moves, and a case-insensitive key stops ``d4`` losing to ``DF+1``. On-block must NOT be a
+    proximity tiebreak here: the observed −15 equals decoy DF+1,2's true −15 but not d4's real −11.
+    """
+    fd = _char_fd(
+        _move("d4", on_block=-11, startup=15),  # the truth
+        _move("DF+1", on_block=-5, startup=15),
+        _move("DF+1,1", on_block=-10, startup=15),
+        _move("DF+1,1,1", on_block=-10, startup=15),
+        _move("DF+1,1,1,1", on_block=-10, startup=15),
+        _move("DF+1,2", on_block=-15, startup=15),  # its true -15 == the (low-reading) observed -15
+        _move("FC.df+4", on_block=-10, startup=15),
+        _move("SLS.1+2", on_block=-9, startup=15),
+        _move("SLS.2", on_block=-6, startup=15),
+        _move("SLS.2,1", on_block=-11, startup=15),
+        slug="bryan",
+    )
+    keys = [
+        c.framedata_key for c in join_move_live(_live_fp(startup=15, on_block=-15), fd).candidates
+    ]
+    assert "d4" in keys  # was absent from the shown list before the ranking fix
+    # Every deep string extension ranks below the base move the user actually threw.
+    for string_ext in ("DF+1,1", "DF+1,1,1", "DF+1,1,1,1", "DF+1,2", "SLS.2,1"):
+        assert keys.index("d4") < keys.index(string_ext)
+    # Not pushed off a reasonable window — here it in fact ranks first among the i15 base moves.
+    assert keys[0] == "d4"
+
+
 def test_live_join_no_candidate_when_startup_far_and_nothing_to_offer() -> None:
     """No move near the startup and none lacking a startup → an honest no_candidate."""
     fd = _char_fd(_move("slow", on_block=-3, startup=20), slug="bryan")
