@@ -186,11 +186,14 @@
     },
     "encoded_state": {
       "calibrated": true,
-      "notes": "Calibrated on 5.02.01 by observation (docs/02 \u00a78). Offsets re-sourced from Irony after the fork's went stale. See _comment for the axes and the known gaps (sidestep/stagger/wakeup/counter/throw).",
+      "notes": "Calibrated on 5.02.01 by observation (docs/02 \u00a78). Offsets re-sourced from Irony after the fork's went stale. stun_type=1 is standing block-stun, =2 is low/crouch block-stun (both -> block_stun; observed via a crouch-blocked Bryan d4 with no damage, debug/d4-monitor.txt) -- without =2 a low blocked while crouching read as no-stun and the live movemap never saw the contact. See _comment for the axes and the known gaps (sidestep/stagger/wakeup/counter/throw).",
       "flags": {
         "stun_type": {
           "0": [],
           "1": [
+            "block_stun"
+          ],
+          "2": [
             "block_stun"
           ],
           "3": [

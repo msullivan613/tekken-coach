@@ -186,6 +186,31 @@ def test_blockstun_outranks_the_simple_posture(table: OffsetTable) -> None:
     assert p1.block_stun is True
 
 
+def test_5_02_01_low_block_stun_type_2_folds_to_block_stun(table: OffsetTable) -> None:
+    """5.02.01's stun_type=2 (low/crouch block-stun) must fold to block_stun (debug/d4-monitor.txt).
+
+    A low blocked while crouching encodes stun_type=2 (standing block is =1); the crouch posture is
+    carried orthogonally by simple_move_state=6. Before =2 was mapped, a crouch-blocked Bryan d4
+    read as no-stun, the crouch posture won, and the live movemap never saw the contact, so it
+    polled forever. This pins the *real* shipped map (not the synthetic fixture the other tests
+    decode through), so the calibration can't silently regress.
+    """
+    real = load_offset_table(Path("assets/offsets/5.02.01.json"))
+    real_map = real.state_codes.encoded_state
+    assert real_map is not None
+    # Data pin: both standing (=1) and low/crouch (=2) block reads must imply block_stun.
+    assert real_map.flags["stun_type"]["1"] == ["block_stun"]
+    assert real_map.flags["stun_type"]["2"] == ["block_stun"]
+    # And it decodes that way: crouch posture + a low block-stun resolves to blockstun, not crouch.
+    with_real_map = table.model_copy(
+        update={"state_codes": table.state_codes.model_copy(update={"encoded_state": real_map})}
+    )
+    source = _source(with_real_map, p1_state={"simple_move_state": 6, "stun_type": 2})
+    p1 = decode_frame(source, with_real_map).players[0]
+    assert p1.block_stun is True
+    assert p1.action_state is ActionState.blockstun  # stun outranks the crouch posture
+
+
 def test_raw_state_carries_the_unmapped_words_for_calibration(table: OffsetTable) -> None:
     # An unmapped value contributes no flags — and would be invisible without raw_state. This is the
     # debuggability contract that makes the docs/02 §8 protocol possible from a captured fixture.
