@@ -212,7 +212,7 @@ def test_live_run_1_slice_makes_no_wrong_auto_map(tmp_path: Path) -> None:
 
 
 def test_live_run_1_slice_reports_collisions_and_missing_framedata() -> None:
-    """The slice surfaces Paul collisions, and Bryan/Xiaoyu as needs-framedata / unresolved."""
+    """The slice surfaces Paul collisions, Bryan joining its snapshot, Xiaoyu unresolved."""
     session = load_session(SLICE)
     snapshot = load_current_framedata(ASSETS / "framedata")
     report = mine_session(session, snapshot)
@@ -227,9 +227,13 @@ def test_live_run_1_slice_reports_collisions_and_missing_framedata() -> None:
     # A move only ever seen on hit has no on-block signal.
     assert by_move[1465].status == "no_signal"
 
-    # Bryan (char_id 7): no snapshot -> needs_framedata; Xiaoyu (char_id 5): unnamed -> unresolved.
+    # Bryan (char_id 7): its frame data now EXISTS in the snapshot, so its groups resolve and join
+    # (collision / no_signal) rather than reporting needs_framedata (brief #17 §C).
     bryan = [g for g in report.groups if g.char_id == 7]
-    assert bryan and all(g.status == "needs_framedata" for g in bryan)
+    assert bryan and all(g.char_slug == "bryan" for g in bryan)
+    assert all(g.status != "needs_framedata" for g in bryan)
+    assert {g.status for g in bryan} == {"collision", "no_signal"}
+    # Xiaoyu (char_id 5): still unnamed in the header, so it stays unresolved (name → no slug).
     xiaoyu = [g for g in report.groups if g.char_id == 5]
     assert xiaoyu and all(g.status == "unresolved_char" for g in xiaoyu)
 

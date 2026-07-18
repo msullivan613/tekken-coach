@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from tekken_coach.framedata.loader import (
+    apply_curation,
     load_char_move_map,
     load_current_framedata,
     load_move_maps,
@@ -19,12 +20,16 @@ from tekken_coach.framedata.loader import (
     resolve_move,
 )
 from tekken_coach.framedata.models import (
+    CharCuration,
     CharFrameData,
     CharMoveMap,
+    DuckPunish,
     FrameDataMove,
+    MoveCuration,
     MoveMapEntry,
+    StringGapInfo,
 )
-from tekken_coach.schemas import MoveProperty
+from tekken_coach.schemas import MoveProperty, StringGap
 
 REPO_ROOT = Path(__file__).parent.parent
 ASSETS = REPO_ROOT / "assets"
@@ -38,7 +43,9 @@ def test_current_snapshot_loads_and_validates() -> None:
     assert snap.manifest.source_repo == "pbruvoll/tekkendocs"
     assert snap.manifest.source_commit  # a pinned SHA is recorded
     assert "tekkendocs.com" in snap.manifest.attribution
-    assert set(snap.characters) == {"paul", "kazuya"}
+    # The snapshot grows as characters are scraped; assert the scoped pair is present as a subset so
+    # adding characters later doesn't re-break this (brief #17 §C).
+    assert {"paul", "kazuya"} <= set(snap.characters)
     # per-char manifest checksums are recorded
     assert snap.manifest.characters["paul"].checksum.startswith("sha256:")
 
@@ -89,6 +96,68 @@ def test_committed_move_map_is_marked_partial() -> None:
     assert paul.moves == {}
     assert "df+1,1,2" in paul.framedata_keys
     assert paul.char_id is None  # not yet sourced (comes from the reader, C4)
+
+
+# --- durable curation overlay (brief #17 §A): restores lost hand-curated annotations ---
+
+
+def test_committed_snapshot_restores_all_three_paul_curated_moves() -> None:
+    """The overlay (outside the snapshot dir) restores the 3 lost Paul curated annotations."""
+    paul = load_current_framedata(ASSETS / "framedata").get_char("paul")
+    assert paul is not None
+
+    df112 = paul.get("df+1,1,2")
+    assert df112 is not None and df112.duck_punish is not None
+    assert (df112.duck_punish.after_hit, df112.duck_punish.answer) == (2, "df+1 (i13)")
+
+    one_two = paul.get("1,2")
+    assert one_two is not None and one_two.string_gap is not None
+    assert one_two.string_gap.gap is StringGap.true and one_two.string_gap.gap_size == 0
+
+    f31 = paul.get("f+3,1")
+    assert f31 is not None and f31.string_gap is not None
+    assert f31.string_gap.gap is StringGap.interruptible and f31.string_gap.gap_size == 1
+
+
+def test_apply_curation_is_authoritative_and_pure() -> None:
+    """apply_curation wins over the scrape, returns a new object, and never mutates the input."""
+    char = CharFrameData(
+        char_slug="paul",
+        char_name="paul",
+        moves={
+            "df+1,1,2": FrameDataMove(key="df+1,1,2", is_string=True, duck_punish=None),
+            "1,2": FrameDataMove(key="1,2", is_string=True),
+        },
+    )
+    overlay = CharCuration(
+        char_slug="paul",
+        moves={
+            "df+1,1,2": MoveCuration(duck_punish=DuckPunish(after_hit=2, answer="df+1 (i13)")),
+            "1,2": MoveCuration(
+                string_gap=StringGapInfo(after_hit=1, gap=StringGap.true, gap_size=0)
+            ),
+        },
+    )
+    merged = apply_curation(char, overlay)
+
+    assert merged is not char  # pure: new object
+    assert char.moves["df+1,1,2"].duck_punish is None  # input untouched
+    m = merged.get("df+1,1,2")
+    assert m is not None and m.duck_punish is not None and m.duck_punish.answer == "df+1 (i13)"
+    g = merged.get("1,2")
+    assert g is not None and g.string_gap is not None and g.string_gap.gap is StringGap.true
+
+
+def test_apply_curation_stale_key_warns_but_does_not_crash() -> None:
+    """A curation key absent from the snapshot is a soft warning, never a load failure."""
+    char = CharFrameData(char_slug="paul", char_name="paul", moves={})
+    overlay = CharCuration(
+        char_slug="paul",
+        moves={"ghost": MoveCuration(duck_punish=DuckPunish(after_hit=1, answer="x"))},
+    )
+    with pytest.warns(UserWarning, match="unknown move key 'ghost'"):
+        merged = apply_curation(char, overlay)
+    assert merged.moves == {}  # nothing invented from a stale key
 
 
 # --- miss-tolerance (docs/05 §2.3/§4.1): degrade, never raise ------------------

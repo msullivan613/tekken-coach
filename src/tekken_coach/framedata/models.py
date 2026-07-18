@@ -134,6 +134,31 @@ class StringGapInfo(BaseModel):
     gap_size: int | None = None  # frames of the gap, if known (docs/03 §3 labels.gap_size)
 
 
+class MoveCuration(BaseModel):
+    """One move's curated overlay entry (brief #17 §A): the hand-curated fields only.
+
+    A durable overlay that survives a raw re-scrape: :class:`DuckPunish`/:class:`StringGapInfo`
+    are curated project annotations "not from the CSV" (see :class:`FrameDataMove`), so a fresh
+    scrape drops them. The overlay lives outside the snapshot dirs and is merged back at load
+    time (:func:`~tekken_coach.framedata.loader.apply_curation`). Only the curated fields live
+    here; everything else on a move comes from the scrape.
+    """
+
+    duck_punish: DuckPunish | None = None  # curated height check (models.DuckPunish)
+    string_gap: StringGapInfo | None = None  # curated timing gap (models.StringGapInfo)
+
+
+class CharCuration(BaseModel):
+    """A single character's curation overlay, e.g. ``assets/framedata/curation/paul.json``.
+
+    Keyed by ``framedata_key`` (the same key as the snapshot's ``moves``). A character with no
+    curation simply has no overlay file — a missing file is a no-op, not an error (brief #17 §A).
+    """
+
+    char_slug: str  # CSV Character id, e.g. "paul" — matches the snapshot's char_slug
+    moves: dict[str, MoveCuration] = Field(default_factory=dict)  # framedata_key -> curated fields
+
+
 class HeatOverride(BaseModel):
     """Heat-state overrides where a move differs in Heat (docs/05 §3.2, §04 §4.6).
 

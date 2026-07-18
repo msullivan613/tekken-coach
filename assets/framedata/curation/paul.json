@@ -1,0 +1,8 @@
+{
+  "char_slug": "paul",
+  "moves": {
+    "df+1,1,2": { "duck_punish": { "after_hit": 2, "answer": "df+1 (i13)" } },
+    "1,2": { "string_gap": { "after_hit": 1, "gap": "true", "gap_size": 0 } },
+    "f+3,1": { "string_gap": { "after_hit": 1, "gap": "interruptible", "gap_size": 1 } }
+  }
+}

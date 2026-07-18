@@ -69,8 +69,13 @@ def label_interaction(
     attacker_char_name = _char_name(attacker_map, interaction.attacker_char_id)
     defender_char_name = _char_name(defender_map, interaction.defender_char_id)
 
-    fd_by_name = {cfd.char_name: cfd for cfd in framedata.characters.values()}
-    attacker_fd: CharFrameData | None = fd_by_name.get(attacker_char_name)
+    # Case-insensitive join: the move maps say "Paul"/"Kazuya" (capitalized) but a fresh scrape's
+    # char_name is lowercase "paul"/"kazuya"; normalize both sides so the lookup can't miss on case
+    # (brief #17 §B). Guard None (an unresolved attacker name).
+    fd_by_name = {cfd.char_name.lower(): cfd for cfd in framedata.characters.values()}
+    attacker_fd: CharFrameData | None = (
+        fd_by_name.get(attacker_char_name.lower()) if attacker_char_name is not None else None
+    )
 
     lookup = resolve_move(interaction.attacker_move_id, attacker_map, attacker_fd)
 
