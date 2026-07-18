@@ -1,0 +1,46 @@
+{
+  "source_repo": "pbruvoll/tekkendocs",
+  "source_commit": "221118e5f4e50c892b8abb999ab8ebd31589feca",
+  "source_path_template": "https://raw.githubusercontent.com/pbruvoll/tekkendocs/221118e5f4e50c892b8abb999ab8ebd31589feca/data/wavuConvertedCsv/<char>/<file>.csv",
+  "fetched_at": "2026-07-18T01:35:33Z",
+  "snapshot_date": "2026-07-18",
+  "game_version": null,
+  "attribution": [
+    "tekkendocs.com",
+    "rbnorway.org"
+  ],
+  "characters": {
+    "bryan": {
+      "file": "bryan.json",
+      "csv_files": [
+        "bryan-special.csv"
+      ],
+      "checksum": "sha256:601cd628b22a47ddadea63e9c1057267cb21e9f55755037752232678b4db1556",
+      "move_count": 168
+    },
+    "xiaoyu": {
+      "file": "xiaoyu.json",
+      "csv_files": [
+        "xiaoyu-special.csv"
+      ],
+      "checksum": "sha256:b5847fa54adb1dd5d5c476e860f28498e175825d51c0679ca675ccb267f752b9",
+      "move_count": 172
+    },
+    "kazuya": {
+      "file": "kazuya.json",
+      "csv_files": [
+        "kazuya-special.csv"
+      ],
+      "checksum": "sha256:7a9cefed5c05fd8ebaed452051eda85a86e73d9cc3f7adb799518be1a3fada64",
+      "move_count": 136
+    },
+    "paul": {
+      "file": "paul.json",
+      "csv_files": [
+        "paul-special.csv"
+      ],
+      "checksum": "sha256:aeffec40e536b391b94d3badb22fdf69e91d1cb0e8abc9be4dd099dd4ea9d378",
+      "move_count": 143
+    }
+  }
+}

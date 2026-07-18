@@ -1,0 +1,6612 @@
+{
+  "char_slug": "bryan",
+  "char_name": "bryan",
+  "moves": {
+    "H.2+3": {
+      "key": "H.2+3",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": 9,
+      "block_raw": "+9",
+      "on_hit": "-1d",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "hs",
+        "rbr",
+        "spk",
+        "js9~"
+      ],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Notorious Monster",
+      "wavu_id": "Bryan-H.2+3",
+      "notes": "* Heat Smash\n* Reversal Break\n* Spike\n* Transition to attack throw on hit\n* Low crush 9~",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 20
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 20
+        },
+        {
+          "hit_level": "throw",
+          "hit_level_raw": "t",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 35
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "R.df+1+2": {
+      "key": "R.df+1+2",
+      "is_string": true,
+      "startup": 20,
+      "startup_raw": "i20",
+      "on_block": -18,
+      "block_raw": "-18",
+      "on_hit": "+0d",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "ra",
+        "rbr",
+        "pc8~"
+      ],
+      "recovery": 39,
+      "recovery_raw": "r39",
+      "name": "Total Vandalization",
+      "wavu_id": "Bryan-R.df+1+2",
+      "notes": "* Rage Art\n* Removes Recoverable Health\n* Reversal Break\n* Damage increases with lower health, maximum 82\n* Freezes match timer on activation and on hit\n* Restores recoverable health on hit\n* Transition to attack throw on hit\n* Consumes Rage\n* Power crush 8~",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 20,
+          "startup_raw": "i20",
+          "damage": 55
+        },
+        {
+          "hit_level": "throw",
+          "hit_level_raw": "t",
+          "startup": null,
+          "startup_raw": null,
+          "damage": null
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1": {
+      "key": "1",
+      "is_string": false,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": 1,
+      "block_raw": "+1",
+      "on_hit": "+8",
+      "on_ch": null,
+      "damage": 5,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [],
+      "recovery": 19,
+      "recovery_raw": "r19",
+      "name": "Jab",
+      "wavu_id": "Bryan-1",
+      "notes": "Recovers 2f faster on hit or block (t27 r17)",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,2": {
+      "key": "1,2",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -3,
+      "block_raw": "-3",
+      "on_hit": "+8",
+      "on_ch": "+9",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 21,
+      "recovery_raw": "r21",
+      "name": "Left Right Combo",
+      "wavu_id": "Bryan-1,2",
+      "notes": "Jail from 1st attack",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 12,
+          "startup_raw": "i12",
+          "damage": 8
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,2,1": {
+      "key": "1,2,1",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+6",
+      "on_ch": "+65a",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": "One Two Body Blow",
+      "wavu_id": "Bryan-1,2,1",
+      "notes": "* Combo from 1st CH with no delay\n* Combo from 2nd CH with 10F delay\n* Move can be delayed by 10F",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 8
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 19,
+          "startup_raw": "i19",
+          "damage": 18
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,2,3": {
+      "key": "1,2,3",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "+2",
+      "on_ch": "+14a",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "One Two Low Kick",
+      "wavu_id": "Bryan-1,2,3",
+      "notes": "* Combo from 1st CH with no delay\n* Combo from 2nd CH with 3F delay\n* Move cannot be delayed\n* Input can be delayed by 3F",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 8
+        },
+        {
+          "hit_level": "low",
+          "hit_level_raw": "L",
+          "startup": 24,
+          "startup_raw": "i24",
+          "damage": 15
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,2,4": {
+      "key": "1,2,4",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -5,
+      "block_raw": "-5",
+      "on_hit": "+20a (+11)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "he",
+        "bbr"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "One Two Neck Breaker",
+      "wavu_id": "Bryan-1,2,4",
+      "notes": "* Heat Engager\n\n* Heat Dash +5, +43d (+35)\n\n* Balcony Break\n* Combo from 1st CH or 2nd CH with 3f delay\n* Move can be delayed 2F\n* Input can be delayed by 3F",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 8
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 20,
+          "startup_raw": "i20",
+          "damage": 24
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,4": {
+      "key": "1,4",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+4",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": null,
+      "wavu_id": "Bryan-1,4",
+      "notes": "Jail from 1st attack",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 14
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,4,2": {
+      "key": "1,4,2",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+4",
+      "on_ch": "+53a",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": null,
+      "wavu_id": "Bryan-1,4,2",
+      "notes": "* Combo from 2nd CH with 10f delay\n* Input can be delayed 18f\n* Move can be delayed 16f\n* Cancel into 1,4,2,1 with f+1\n* Cancel into 1,4,2,4 with f+4\n* Interrupt with i8 from 3rd block",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 24,
+          "startup_raw": "i24",
+          "damage": 18
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,4,2,1": {
+      "key": "1,4,2,1",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": 0,
+      "block_raw": "+0",
+      "on_hit": "+55a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": null,
+      "wavu_id": "Bryan-1,4,2,1",
+      "notes": "* Enter SLS +7 +62a r13 with f\n* Cancel to r9 SS with u_d\n* Input can be delayed 8f\n* Move can be delayed 6f",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 19,
+          "startup_raw": "i19",
+          "damage": 18
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 16
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,4,2,1,2": {
+      "key": "1,4,2,1,2",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+41d (-17)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Lair's Dance",
+      "wavu_id": "Bryan-1,4,2,1,2",
+      "notes": "* Balcony Break\n* Input can be delayed 1f",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 24,
+          "startup_raw": "i24",
+          "damage": 18
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 16
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 22
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,4,2,1,4": {
+      "key": "1,4,2,1,4",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+37a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "trn"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Cremation",
+      "wavu_id": "Bryan-1,4,2,1,4",
+      "notes": "* Tornado\n* Strong Aerial Tailspin\n* Can hit grounded while off-axis",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 25,
+          "startup_raw": "i25~26",
+          "damage": 18
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 16
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 21
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,4,2,4": {
+      "key": "1,4,2,4",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -5,
+      "block_raw": "-5",
+      "on_hit": "+40a (+14)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "js16~31",
+        "fs32~34"
+      ],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": "Whipping Fury",
+      "wavu_id": "Bryan-1,4,2,4",
+      "notes": "* Strong Aerial Tailspin\n* Balcony Break\n* Low crush 16~31\n* Floating state 32~34",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 30,
+          "startup_raw": "i30~31",
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 21
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,4,3": {
+      "key": "1,4,3",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+1",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": "Jab > Double Spin Kick",
+      "wavu_id": "Bryan-1,4,3",
+      "notes": "Combo from 2nd CH with 5f delay",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 21,
+          "startup_raw": "i21",
+          "damage": 15
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1,4,3,3": {
+      "key": "1,4,3,3",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+7",
+      "on_ch": "+14a",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": "Running Blind",
+      "wavu_id": "Bryan-1,4,3,3",
+      "notes": "Combo from 3rd CH",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 23,
+          "startup_raw": "i23",
+          "damage": 15
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1+3+4": {
+      "key": "1+3+4",
+      "is_string": false,
+      "startup": 28,
+      "startup_raw": "i28~31",
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": "+16",
+      "on_ch": null,
+      "damage": 0,
+      "hit_level": "mid",
+      "hit_level_raw": "m!",
+      "properties": [],
+      "recovery": 78,
+      "recovery_raw": "r78 SNE",
+      "name": "Taunt",
+      "wavu_id": "Bryan-1+3+4",
+      "notes": "* Cancellable with any input on frames 1~31\n* Gain SNE\n* -34 if not cancelled",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "2": {
+      "key": "2",
+      "is_string": false,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": 1,
+      "block_raw": "+1",
+      "on_hit": "+7",
+      "on_ch": null,
+      "damage": 10,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [],
+      "recovery": 18,
+      "recovery_raw": "r18",
+      "name": null,
+      "wavu_id": "Bryan-2",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "2,3": {
+      "key": "2,3",
+      "is_string": true,
+      "startup": 10,
+      "startup_raw": "i10",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+6",
+      "on_ch": "+16a (+7)",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": "PK Combination",
+      "wavu_id": "Bryan-2,3",
+      "notes": "Balcony Break (CH)\n* Combo from 1st hit with 1f delay\n* CH frames also apply to combo from 1st CH",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 14
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3": {
+      "key": "3",
+      "is_string": false,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -4,
+      "block_raw": "-4",
+      "on_hit": "+7",
+      "on_ch": null,
+      "damage": 14,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 23,
+      "recovery_raw": "r23",
+      "name": "Mid Kick",
+      "wavu_id": "Bryan-3",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3,2": {
+      "key": "3,2",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+1",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-3,2",
+      "notes": "Combo from 1st CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 14
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 22,
+          "startup_raw": "i22",
+          "damage": 11
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3,2,1": {
+      "key": "3,2,1",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+2",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 28,
+      "recovery_raw": "r28",
+      "name": null,
+      "wavu_id": "Bryan-3,2,1",
+      "notes": "* Combo from 2nd hit\n* Combo from 1st CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 14
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 11
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 20,
+          "startup_raw": "i20",
+          "damage": 10
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3,2,1,2": {
+      "key": "3,2,1,2",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+19a (+10)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Mid Kick > Rush",
+      "wavu_id": "Bryan-3,2,1,2",
+      "notes": "* Balcony Break\n* Combo from 3rd CH with 2f delay",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 14
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 11
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 19,
+          "startup_raw": "i19",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3,2,1,4": {
+      "key": "3,2,1,4",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -11,
+      "block_raw": "-11",
+      "on_hit": "+0",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Gatling Combination",
+      "wavu_id": "Bryan-3,2,1,4",
+      "notes": "Combo from 3rd CH with 3f delay",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 14
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 11
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 22,
+          "startup_raw": "i22",
+          "damage": 10
+        },
+        {
+          "hit_level": "low",
+          "hit_level_raw": "L",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3,3": {
+      "key": "3,3",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+6",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 24,
+      "recovery_raw": "r24",
+      "name": null,
+      "wavu_id": "Bryan-3,3",
+      "notes": "Combo from 1st CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 14
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 23,
+          "startup_raw": "i23",
+          "damage": 13
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3,3,2": {
+      "key": "3,3,2",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+43a (+33)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "trn"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Anaconda Bite",
+      "wavu_id": "Bryan-3,3,2",
+      "notes": "* Tornado\n* Combo from 2nd CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 14
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 13
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 22,
+          "startup_raw": "i22~23",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3,3,4": {
+      "key": "3,3,4",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "+37d (-21)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 37,
+      "recovery_raw": "r37",
+      "name": "Anaconda Rage",
+      "wavu_id": "Bryan-3,3,4",
+      "notes": "* Balcony Break\n* Combo from 2nd CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 14
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 13
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 28,
+          "startup_raw": "i28",
+          "damage": 25
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "4": {
+      "key": "4",
+      "is_string": false,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+6",
+      "on_ch": null,
+      "damage": 15,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": null,
+      "wavu_id": "Bryan-4",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "4,1": {
+      "key": "4,1",
+      "is_string": true,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -1,
+      "block_raw": "-1",
+      "on_hit": "+7",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 22,
+      "recovery_raw": "r22",
+      "name": "Viper Bite",
+      "wavu_id": "Bryan-4,1",
+      "notes": "* Combo from 1st hit\n* Transition to +8 +0  r15 SWA with B",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 12,
+          "startup_raw": "i12",
+          "damage": 15
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 23,
+          "startup_raw": "i23~24",
+          "damage": 15
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "4,3": {
+      "key": "4,3",
+      "is_string": true,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+2",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 27,
+      "recovery_raw": "r27",
+      "name": null,
+      "wavu_id": "Bryan-4,3",
+      "notes": "Combo from 1st hit",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 12,
+          "startup_raw": "i12",
+          "damage": 15
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 24,
+          "startup_raw": "i24~25",
+          "damage": 12
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "4,3,4": {
+      "key": "4,3,4",
+      "is_string": true,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "+14a (+5)",
+      "on_ch": "+33d (+25)",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Double Spin Tomahawk",
+      "wavu_id": "Bryan-4,3,4",
+      "notes": "* Balcony Break\n* Hold to power up and deal more chip damage on block",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 12,
+          "startup_raw": "i12",
+          "damage": 15
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 24,
+          "startup_raw": "i24~25",
+          "damage": 16
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "4,3,4*": {
+      "key": "4,3,4*",
+      "is_string": true,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+35a (+9)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "chp"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Double Spin Tomahawk (Hold)",
+      "wavu_id": "Bryan-4,3,4*",
+      "notes": "* Balcony Break\n* Chip damage on block",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 12,
+          "startup_raw": "i12",
+          "damage": 15
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 40,
+          "startup_raw": "i40~41",
+          "damage": 25
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "4,3,f+4": {
+      "key": "4,3,f+4",
+      "is_string": true,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -5,
+      "block_raw": "-5",
+      "on_hit": "+6",
+      "on_ch": "+31a (+21)",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Triple Spin Kick",
+      "wavu_id": "Bryan-4,3,f+4",
+      "notes": "Combo from 2nd CH",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 12,
+          "startup_raw": "i12",
+          "damage": 15
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 24,
+          "startup_raw": "i24~25",
+          "damage": 18
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1+2": {
+      "key": "1+2",
+      "is_string": false,
+      "startup": 17,
+      "startup_raw": "i17~18",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+6",
+      "on_ch": null,
+      "damage": 15,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "hom"
+      ],
+      "recovery": 27,
+      "recovery_raw": "r27",
+      "name": null,
+      "wavu_id": "Bryan-1+2",
+      "notes": "Homing",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1+2,1": {
+      "key": "1+2,1",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17~18",
+      "on_block": -1,
+      "block_raw": "-1",
+      "on_hit": "+6",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 22,
+      "recovery_raw": "r22",
+      "name": "Snake Bite",
+      "wavu_id": "Bryan-1+2,1",
+      "notes": "* Combo from 1st hit\n* Enter SWA +0 +7 r15 with b",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 17,
+          "startup_raw": "i17~18",
+          "damage": 15
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 23,
+          "startup_raw": "i23~24",
+          "damage": 15
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1+2,2": {
+      "key": "1+2,2",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17~18",
+      "on_block": -14,
+      "block_raw": "-14",
+      "on_hit": "+51d (+20)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Snake Pit",
+      "wavu_id": "Bryan-1+2,2",
+      "notes": "* Combo from 1st hit with delay",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 17,
+          "startup_raw": "i17~18",
+          "damage": 15
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 26,
+          "startup_raw": "i26~27",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "3+4": {
+      "key": "3+4",
+      "is_string": false,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+8",
+      "on_ch": "+59a",
+      "damage": 20,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 32,
+      "recovery_raw": "r32",
+      "name": "Middle Side Kick",
+      "wavu_id": "Bryan-3+4",
+      "notes": "Balcony Break (airborne)",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.3+4,2": {
+      "key": "SNE.3+4,2",
+      "is_string": true,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+25a (+20)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "chp"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Neo Soul Eraser",
+      "wavu_id": "Bryan-3+4,SNE.2",
+      "notes": "* Balcony Break\n* Combo from 1st hit\n* Consumes SNE\n* Chip damage on block (8)\n* Interrupt with i5 from 1st block\n* Unparryable by traditional parries, Asuka, Nina, etc",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 18,
+          "startup_raw": "i18",
+          "damage": 20
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 14,
+          "startup_raw": "i14~15",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.3+4,2*": {
+      "key": "SNE.3+4,2*",
+      "is_string": true,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": 9,
+      "block_raw": "+9g~+10g",
+      "on_hit": "+66a (+50)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "trn",
+        "rbr",
+        "bbr",
+        "chp"
+      ],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Neo Soul Eraser Exceed",
+      "wavu_id": "Bryan-3+4,SNE.2*",
+      "notes": "* Tornado\n* Reversal Break\n* Balcony Break\n* Consumes SNE\n* Chip damage on block (12)\n* Wall splat on block",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 18,
+          "startup_raw": "i18",
+          "damage": 20
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "M",
+          "startup": 55,
+          "startup_raw": "i55~56",
+          "damage": 30
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f+2": {
+      "key": "f+2",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+1",
+      "on_ch": null,
+      "damage": 10,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-f+2",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f+2,1": {
+      "key": "f+2,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+1",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-f+2,1",
+      "notes": "Jail from 1st attack",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 12
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f+2,1,4": {
+      "key": "f+2,1,4",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+3a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 36,
+      "recovery_raw": "r36",
+      "name": "Right Left > Spin Kick > Snake Eyes",
+      "wavu_id": "Bryan-f+2,1,4",
+      "notes": "* Balcony Break (airborne)\n* Combo from 1st or 2nd hit\n* Gain SNE on hit with 1+2\n* SNE gain is r25",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 18,
+          "startup_raw": "i18~19",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.f+2,1,2": {
+      "key": "SNE.f+2,1,2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+9c",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "fbr",
+        "elb",
+        "chp"
+      ],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-f+2,1,SNE.2",
+      "notes": "* Floor Break\n* Elbow\n* Combo from 1st hit\n* Consumes SNE\n* Consumes 240f of Heat Time\n* Chip damage on block (1)",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 14,
+          "startup_raw": "i14~15",
+          "damage": 5
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.f+2,1,2,3": {
+      "key": "SNE.f+2,1,2,3",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+18a (+11)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "kne",
+        "chp"
+      ],
+      "recovery": 32,
+      "recovery_raw": "r32",
+      "name": null,
+      "wavu_id": "Bryan-f+2,1,SNE.2,3",
+      "notes": "* Knee\n* Combo from 1st hit\n* Chip damage on block (2)",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 22,
+          "startup_raw": "i22",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.f+2,1,2,3,2": {
+      "key": "SNE.f+2,1,2,3,2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+25a (-1)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "chp"
+      ],
+      "recovery": 39,
+      "recovery_raw": "r39",
+      "name": "Neo Incinerator",
+      "wavu_id": "Bryan-f+2,1,SNE.2,3,2",
+      "notes": "* Balcony Break\n* Combo from 1st hit\n* Chip damage on block (8)\n* Unparryable by traditional parries, Asuka, Nina, etc\n* Consumes 210f of Heat",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 35,
+          "startup_raw": "i35~36",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f+3": {
+      "key": "f+3",
+      "is_string": false,
+      "startup": 16,
+      "startup_raw": "i16~18",
+      "on_block": 0,
+      "block_raw": "+0~+2",
+      "on_hit": "+4~+6",
+      "on_ch": "+50a",
+      "damage": 18,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "kne"
+      ],
+      "recovery": 27,
+      "recovery_raw": "r27",
+      "name": "Knee Strike",
+      "wavu_id": "Bryan-f+3",
+      "notes": "Knee",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f+4": {
+      "key": "f+4",
+      "is_string": false,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+1",
+      "on_ch": null,
+      "damage": 10,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": null,
+      "wavu_id": "Bryan-f+4",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f+4,1": {
+      "key": "f+4,1",
+      "is_string": true,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": -13,
+      "block_raw": "-13c",
+      "on_hit": "+40a (+32)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "spk"
+      ],
+      "recovery": 40,
+      "recovery_raw": "r40",
+      "name": "Boa Crusher",
+      "wavu_id": "Bryan-f+4,1",
+      "notes": "* Spike\n* Combo from 1st hit with 5f delay\n* Move can be delayed 4f",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 18,
+          "startup_raw": "i18",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 25,
+          "startup_raw": "i25~26",
+          "damage": 10
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f+1+2": {
+      "key": "f+1+2",
+      "is_string": false,
+      "startup": 20,
+      "startup_raw": "i20~21",
+      "on_block": 1,
+      "block_raw": "+1",
+      "on_hit": "+19d",
+      "on_ch": null,
+      "damage": 22,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [
+        "bbr",
+        "elb"
+      ],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": "Sidestep Elbow",
+      "wavu_id": "Bryan-f+1+2",
+      "notes": "* Balcony Break\n* Elbow\n* 6 chip damage on block",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "DF+1": {
+      "key": "DF+1",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -5,
+      "block_raw": "-5",
+      "on_hit": "+1",
+      "on_ch": null,
+      "damage": 8,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 24,
+      "recovery_raw": "r24",
+      "name": null,
+      "wavu_id": "Bryan-DF+1",
+      "notes": "* DF must be held for the extensions",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "DF+1,1": {
+      "key": "DF+1,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "-4",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-DF+1,1",
+      "notes": "* Jail from 1st block with 8F delay\n* Combo from 1st hit with 14F delay\n* Move can be delayed 16F",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 8
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "DF+1,1,1": {
+      "key": "DF+1,1,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "-4",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-DF+1,1,1",
+      "notes": "* Jail from 1st block with 8?F delay\n* Combo from 1st hit with 14F delay\n* Move can be delayed by 25F",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 8
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "DF+1,1,1,1": {
+      "key": "DF+1,1,1,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "-4",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": "Vulcan Cannon",
+      "wavu_id": "Bryan-DF+1,1,1,1",
+      "notes": "* Jail from 1st block with 8?F delay\n* Combo from 1st hit with 14F delay\n* Move can be delayed by 25F",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 8
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "DF+1,2": {
+      "key": "DF+1,2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -15,
+      "block_raw": "-15",
+      "on_hit": "+1",
+      "on_ch": "+14a (+5)",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 36,
+      "recovery_raw": "r36",
+      "name": "Double Body Blow",
+      "wavu_id": "Bryan-DF+1,2",
+      "notes": "* Balcony Break (airborne)\n* Combo from 1st hit\n* Alternate inputs:\n** DF+1,1,2\n** DF+1,1,1,2\n** DF+1,1,1,1,2\n* Interrupt with i3 from 1st block",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15",
+          "damage": 8
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 23,
+          "startup_raw": "i23",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "df+2": {
+      "key": "df+2",
+      "is_string": false,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+5",
+      "on_ch": null,
+      "damage": 12,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "elb"
+      ],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": null,
+      "wavu_id": "Bryan-df+2",
+      "notes": "Elbow",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "df+2,1": {
+      "key": "df+2,1",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -4,
+      "block_raw": "-4",
+      "on_hit": "+5",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 22,
+      "recovery_raw": "r22",
+      "name": "Blackout Combo",
+      "wavu_id": "Bryan-df+2,1",
+      "notes": "* Combo from 1st hit\n* Enter SWA -1 +8 r15 with b",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 12
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 11
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "df+2,3": {
+      "key": "df+2,3",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+8",
+      "on_ch": "+59a",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 32,
+      "recovery_raw": "r32",
+      "name": "Blackout Trap",
+      "wavu_id": "Bryan-df+2,3",
+      "notes": "Combo from 1st CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 23,
+          "startup_raw": "i23",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "df+3": {
+      "key": "df+3",
+      "is_string": false,
+      "startup": 29,
+      "startup_raw": "i29~30",
+      "on_block": -26,
+      "block_raw": "-26",
+      "on_hit": "+70a (+54)",
+      "on_ch": null,
+      "damage": 20,
+      "hit_level": "low",
+      "hit_level_raw": "L",
+      "properties": [
+        "hom",
+        "cs6~"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Snake Edge",
+      "wavu_id": "Bryan-df+3",
+      "notes": "* Homing\n* High crush 6~",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "df+4": {
+      "key": "df+4",
+      "is_string": false,
+      "startup": 22,
+      "startup_raw": "i22~24",
+      "on_block": -6,
+      "block_raw": "-6~-4",
+      "on_hit": "+19a",
+      "on_ch": null,
+      "damage": 23,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "hom"
+      ],
+      "recovery": 32,
+      "recovery_raw": "r32",
+      "name": "Wolf's Tail",
+      "wavu_id": "Bryan-df+4",
+      "notes": "* Homing\n* Balcony Break (airborne)",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+2": {
+      "key": "d+2",
+      "is_string": false,
+      "startup": 14,
+      "startup_raw": "i14~15",
+      "on_block": -2,
+      "block_raw": "-2",
+      "on_hit": "+8c",
+      "on_ch": null,
+      "damage": 17,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "spk",
+        "elb"
+      ],
+      "recovery": 28,
+      "recovery_raw": "r28",
+      "name": null,
+      "wavu_id": "Bryan-d+2",
+      "notes": "* Spike\n* Elbow\n* Transition to FC with D",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+2,3": {
+      "key": "d+2,3",
+      "is_string": true,
+      "startup": 14,
+      "startup_raw": "i14~15",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+16a (-1)",
+      "on_ch": "+32a (+18)",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "kne"
+      ],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Python Crush",
+      "wavu_id": "Bryan-d+2,3",
+      "notes": "* Balcony Break\n* Knee\n* Combo from 1st CH with 10f delay\n* Move can be delayed 9f",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 14,
+          "startup_raw": "i14~15",
+          "damage": 17
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 22,
+          "startup_raw": "i22",
+          "damage": 21
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+3": {
+      "key": "d+3",
+      "is_string": false,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -11,
+      "block_raw": "-11",
+      "on_hit": "+0",
+      "on_ch": null,
+      "damage": 10,
+      "hit_level": "low",
+      "hit_level_raw": "l",
+      "properties": [],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": null,
+      "wavu_id": "Bryan-d+3",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+3,2": {
+      "key": "d+3,2",
+      "is_string": true,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+35a (+9)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Quick Low Screw Punch > Snake Eyes",
+      "wavu_id": "Bryan-d+3,2",
+      "notes": "* Balcony Break\n* Combo from 1st CH\n* Gain SNE on hit with 1+2",
+      "hits": [
+        {
+          "hit_level": "low",
+          "hit_level_raw": "l",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 10
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 21,
+          "startup_raw": "i21",
+          "damage": 22
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+4": {
+      "key": "d+4",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15",
+      "on_block": -11,
+      "block_raw": "-11",
+      "on_hit": "+0",
+      "on_ch": null,
+      "damage": 13,
+      "hit_level": "low",
+      "hit_level_raw": "L",
+      "properties": [],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Low Kick",
+      "wavu_id": "Bryan-d+4",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+1+2": {
+      "key": "d+1+2",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+3",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-d+1+2",
+      "notes": "* Combo from 1st hit\n* Can be canceled into stances after 24 frames\n* Enter SLS -3 +10g r13 with f\n* Enter SWA -5 +8 r15 with b\n* Opponent is further away on CH\n* Can be done from Crouch Level 1",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 17,
+          "startup_raw": "i17",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 15
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+1+2,3": {
+      "key": "d+1+2,3",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+5",
+      "on_ch": "+25a",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Hammer Driver Hatchet",
+      "wavu_id": "Bryan-d+1+2,3",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 17,
+          "startup_raw": "i17",
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 27,
+          "startup_raw": "i27~28",
+          "damage": 15
+        },
+        {
+          "hit_level": "low",
+          "hit_level_raw": "l",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+1+2~2": {
+      "key": "d+1+2~2",
+      "is_string": false,
+      "startup": 30,
+      "startup_raw": "i30",
+      "on_block": 7,
+      "block_raw": "+7",
+      "on_hit": "+53a",
+      "on_ch": null,
+      "damage": 24,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "spk",
+        "chp"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Snake Bomb",
+      "wavu_id": "Bryan-d+1+2~2",
+      "notes": "* Spike\n* Chip damage on block",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+3+4": {
+      "key": "d+3+4",
+      "is_string": false,
+      "startup": 19,
+      "startup_raw": "i19",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "-1",
+      "on_ch": "+4",
+      "damage": 16,
+      "hit_level": "low",
+      "hit_level_raw": "l",
+      "properties": [],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": null,
+      "wavu_id": "Bryan-d+3+4",
+      "notes": "Can hit grounded on certain ranges",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d+3+4,2": {
+      "key": "d+3+4,2",
+      "is_string": true,
+      "startup": 19,
+      "startup_raw": "i19",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "+14a (-3)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "trn",
+        "bbr"
+      ],
+      "recovery": 36,
+      "recovery_raw": "r36",
+      "name": "Side Low Knuckle Whip",
+      "wavu_id": "Bryan-d+3+4,2",
+      "notes": "* Tornado\n* Balcony Break\n* Combo from 1st CH\n* Cancel to -23 -12 -7 FC with DB",
+      "hits": [
+        {
+          "hit_level": "low",
+          "hit_level_raw": "l",
+          "startup": 19,
+          "startup_raw": "i19",
+          "damage": 16
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 19,
+          "startup_raw": "i19",
+          "damage": 25
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "db+2": {
+      "key": "db+2",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15~17",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+8",
+      "on_ch": null,
+      "damage": 13,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": "Stomach Blow",
+      "wavu_id": "Bryan-db+2",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "db+3": {
+      "key": "db+3",
+      "is_string": false,
+      "startup": 16,
+      "startup_raw": "i16~17",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "-1",
+      "on_ch": "+4",
+      "damage": 11,
+      "hit_level": "low",
+      "hit_level_raw": "L",
+      "properties": [
+        "cs6~"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30 FC",
+      "name": "Sweeper kick",
+      "wavu_id": "Bryan-db+3",
+      "notes": "* High crush 6~",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "db+1+2": {
+      "key": "db+1+2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+4",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "he"
+      ],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Crash Impact",
+      "wavu_id": "Bryan-db+1+2",
+      "notes": "* Heat Engager\n\n* Heat Dash +5, +43a (+35)\n\n* Balcony Break (airborne)\n* Jail from 1st attack",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 8
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 16
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+1": {
+      "key": "b+1",
+      "is_string": false,
+      "startup": 20,
+      "startup_raw": "i20~21",
+      "on_block": 4,
+      "block_raw": "+4",
+      "on_hit": "+7c",
+      "on_ch": "+78a (+58)",
+      "damage": 21,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "spk",
+        "elb"
+      ],
+      "recovery": 35,
+      "recovery_raw": "r35",
+      "name": "Chopping Elbow",
+      "wavu_id": "Bryan-b+1",
+      "notes": "* Spike\n* Elbow",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+1+3": {
+      "key": "b+1+3",
+      "is_string": false,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": "+31",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "ps5~12"
+      ],
+      "recovery": 35,
+      "recovery_raw": "r35",
+      "name": "Parry",
+      "wavu_id": "Bryan-b+1+3",
+      "notes": "* Parries high or mid punches\n* Parry state 5~12",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+1+3,P.2": {
+      "key": "b+1+3,P.2",
+      "is_string": false,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+20d (-38)",
+      "on_ch": null,
+      "damage": 30,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [
+        "bbr",
+        "chp"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Parry > Mach Breaker > Snake Eyes",
+      "wavu_id": "Bryan-b+1+3,P.2",
+      "notes": "* Balcony Break\n* Gain SNE on hit\n* SNE gain is r25\n* +40d (-18) if Bryan has SNE already\n* Chip damage on block",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+2": {
+      "key": "b+2",
+      "is_string": false,
+      "startup": 17,
+      "startup_raw": "i17",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+4",
+      "on_ch": "+53a",
+      "damage": 18,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": null,
+      "wavu_id": "Bryan-b+2",
+      "notes": "* Cancel into b+2,1 with f+1\n* Cancel into b+2,4 with f+4",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+2,1": {
+      "key": "b+2,1",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17",
+      "on_block": 0,
+      "block_raw": "+0",
+      "on_hit": "+55",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": null,
+      "wavu_id": "Bryan-b+2,1",
+      "notes": "* Enter SLS +7 +62a r13 with f\n* Cancel to r9 SS with u_d\n* Inpput can be delayed 17f\n* Move can be delayed 16f",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 17,
+          "startup_raw": "i17",
+          "damage": 18
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 19,
+          "startup_raw": "i19",
+          "damage": 16
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+2,1,2": {
+      "key": "b+2,1,2",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+41d (-17)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Hands of Doom",
+      "wavu_id": "Bryan-b+2,1,2",
+      "notes": "* Balcony Break",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 17,
+          "startup_raw": "i17",
+          "damage": 18
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 16
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 24,
+          "startup_raw": "i24",
+          "damage": 22
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+2,1,4": {
+      "key": "b+2,1,4",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+37a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "trn"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Kickass Combo",
+      "wavu_id": "Bryan-b+2,1,4",
+      "notes": "* Tornado\n* Can hit grounded when off-axis",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 17,
+          "startup_raw": "i17",
+          "damage": 18
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 16
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 25,
+          "startup_raw": "i25-26",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+2,4": {
+      "key": "b+2,4",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17",
+      "on_block": -5,
+      "block_raw": "-5",
+      "on_hit": "+40a (+14)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "js16~31",
+        "fs32~34"
+      ],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": "Wolf Call",
+      "wavu_id": "Bryan-b+2,4",
+      "notes": "* Strong Aerial Tailspin\n* Balcony Break\n* Low crush 16~31\n* Floating state 32~34",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 17,
+          "startup_raw": "i17",
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 30,
+          "startup_raw": "i30-31",
+          "damage": 21
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3": {
+      "key": "b+3",
+      "is_string": false,
+      "startup": 19,
+      "startup_raw": "i19",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+4",
+      "on_ch": null,
+      "damage": 12,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": null,
+      "wavu_id": "Bryan-b+3",
+      "notes": "Enter SLS +1 +12g +12 r18 with f",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,2": {
+      "key": "b+3,2",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": -4,
+      "block_raw": "-4",
+      "on_hit": "+7",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 23,
+      "recovery_raw": "r23",
+      "name": null,
+      "wavu_id": "Bryan-b+3,2",
+      "notes": "Combo from 1st CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 12
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,2,1": {
+      "key": "b+3,2,1",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+2",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 28,
+      "recovery_raw": "r28",
+      "name": null,
+      "wavu_id": "Bryan-b+3,2,1",
+      "notes": "* Combo from 2nd hit\n* Combo from 1st CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 20,
+          "startup_raw": "i20",
+          "damage": 10
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,2,1,2": {
+      "key": "b+3,2,1,2",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+19a (+10)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Front Kick > Rush",
+      "wavu_id": "Bryan-b+3,2,1,2",
+      "notes": "* Balcony Break\n* Combo from 2nd CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 10
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 19,
+          "startup_raw": "i19",
+          "damage": 14
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,2,1,4": {
+      "key": "b+3,2,1,4",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": -11,
+      "block_raw": "-11",
+      "on_hit": "+0",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Run for Cover",
+      "wavu_id": "Bryan-b+3,2,1,4",
+      "notes": "* Combo from 2nd CH",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 16,
+          "startup_raw": "i16",
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 10
+        },
+        {
+          "hit_level": "low",
+          "hit_level_raw": "L",
+          "startup": 22,
+          "startup_raw": "i22",
+          "damage": 12
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4": {
+      "key": "b+3,4",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "2nd Hit",
+      "wavu_id": "Bryan-b+3,4",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4,1": {
+      "key": "b+3,4,1",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "3rd Hit",
+      "wavu_id": "Bryan-b+3,4,1",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4,1,2": {
+      "key": "b+3,4,1,2",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "4th Hit",
+      "wavu_id": "Bryan-b+3,4,1,2",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4,1,2,1": {
+      "key": "b+3,4,1,2,1",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "5th Hit",
+      "wavu_id": "Bryan-b+3,4,1,2,1",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 3
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4,1,2,1,4": {
+      "key": "b+3,4,1,2,1,4",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "6th Hit",
+      "wavu_id": "Bryan-b+3,4,1,2,1,4",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 3
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 8
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4,1,2,1,4,2": {
+      "key": "b+3,4,1,2,1,4,2",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "7th Hit",
+      "wavu_id": "Bryan-b+3,4,1,2,1,4,2",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 3
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 8
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4,1,2,1,4,2,1": {
+      "key": "b+3,4,1,2,1,4,2,1",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "8th Hit",
+      "wavu_id": "Bryan-b+3,4,1,2,1,4,2,1",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 3
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 8
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4,1,2,1,4,2,1,4": {
+      "key": "b+3,4,1,2,1,4,2,1,4",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "9th Hit",
+      "wavu_id": "Bryan-b+3,4,1,2,1,4,2,1,4",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 3
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 8
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 10
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,4,1,2,1,4,2,1,4,2": {
+      "key": "b+3,4,1,2,1,4,2,1,4,2",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": "r",
+      "name": "10 Hit Combo",
+      "wavu_id": "Bryan-b+3,4,1,2,1,4,2,1,4,2",
+      "notes": null,
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 18
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 7
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 3
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 8
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 10
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+3,1+2": {
+      "key": "b+3,1+2",
+      "is_string": true,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+4c",
+      "on_ch": "+26d",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "fbr"
+      ],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Front Kick > Double Hammer",
+      "wavu_id": "Bryan-b+3,1+2",
+      "notes": "* Floor Break\n* Combo from 1st CH with 8f delay\n* Interrupt with i4 from 1st block\n* Transition to FC with d\n* Input can be delayed 12f\n* Move can be delayed 10f",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 12
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 22,
+          "startup_raw": "i22",
+          "damage": 25
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+4": {
+      "key": "b+4",
+      "is_string": false,
+      "startup": 16,
+      "startup_raw": "i16",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+15",
+      "on_ch": null,
+      "damage": 18,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "kne"
+      ],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": "Knee Break",
+      "wavu_id": "Bryan-b+4",
+      "notes": "* Knee\n* Hit vs BT +9a",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+1+4": {
+      "key": "b+1+4",
+      "is_string": false,
+      "startup": 28,
+      "startup_raw": "i28",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+7c",
+      "on_ch": null,
+      "damage": 26,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "spk"
+      ],
+      "recovery": 36,
+      "recovery_raw": "r36",
+      "name": "Gravity Blow",
+      "wavu_id": "Bryan-b+1+4",
+      "notes": "Spike",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b+1+4*": {
+      "key": "b+1+4*",
+      "is_string": false,
+      "startup": 53,
+      "startup_raw": "i53",
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": "+7a",
+      "on_ch": null,
+      "damage": 45,
+      "hit_level": "mid",
+      "hit_level_raw": "m!",
+      "properties": [
+        "spk"
+      ],
+      "recovery": 42,
+      "recovery_raw": "r42",
+      "name": "Meteor Smash",
+      "wavu_id": "Bryan-b+1+4*",
+      "notes": "Spike",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2": {
+      "key": "ub+1+2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -16,
+      "block_raw": "-16",
+      "on_hit": "-6",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 35,
+      "recovery_raw": "r35",
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2",
+      "notes": "* Combo from 1st hit",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1": {
+      "key": "ub+1+2,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "-3",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1",
+      "notes": "* Combo from 1st hit 8f delay\n* Input can be delayed 18f",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 12,
+          "startup_raw": "i12",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2": {
+      "key": "ub+1+2,1,2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -16,
+      "block_raw": "-16",
+      "on_hit": "-6",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1,2",
+      "notes": "* Combo from 1st hit\n* 11f input window-",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 11,
+          "startup_raw": "i11",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2,1": {
+      "key": "ub+1+2,1,2,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "-3",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1,2,1",
+      "notes": "* Combo from 1st hit\n* 9f input window",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2,1,2": {
+      "key": "ub+1+2,1,2,1,2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -16,
+      "block_raw": "-16",
+      "on_hit": "-6",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1,2,1,2",
+      "notes": "* Combo from 1st hit\n* 8f input window",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 9,
+          "startup_raw": "i9",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2,1,2,1": {
+      "key": "ub+1+2,1,2,1,2,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "-3",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1,2,1,2,1",
+      "notes": "* Combo from 1st hit\n* 7f input window",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 8,
+          "startup_raw": "i8",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2,1,2,1,2": {
+      "key": "ub+1+2,1,2,1,2,1,2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -16,
+      "block_raw": "-16",
+      "on_hit": "-6",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1,2,1,2,1,2",
+      "notes": "* Combo from 1st hit\n* 6f input window",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 7,
+          "startup_raw": "i7",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2,1,2,1,2,1": {
+      "key": "ub+1+2,1,2,1,2,1,2,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "-3",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1,2,1,2,1,2,1",
+      "notes": "* Combo from 1st hit\n* 5f input window",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 6,
+          "startup_raw": "i6",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2,1,2,1,2,1,2": {
+      "key": "ub+1+2,1,2,1,2,1,2,1,2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -16,
+      "block_raw": "-16",
+      "on_hit": "-6",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1,2,1,2,1,2,1,2",
+      "notes": "* Combo from 1st hit\n* 4f input window",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 5,
+          "startup_raw": "i5",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2,1,2,1,2,1,2,1": {
+      "key": "ub+1+2,1,2,1,2,1,2,1,2,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -26,
+      "block_raw": "-26",
+      "on_hit": "-15",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": null,
+      "wavu_id": "Bryan-ub+1+2,1,2,1,2,1,2,1,2,1",
+      "notes": "* Combo from 1st hit\n* 4f input window",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 5,
+          "startup_raw": "i5",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ub+1+2,1,2,1,2,1,2,1,2,1,4": {
+      "key": "ub+1+2,1,2,1,2,1,2,1,2,1,4",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15 i12",
+      "on_block": -35,
+      "block_raw": "-35",
+      "on_hit": "-15a (-24)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "kne",
+        "bbr"
+      ],
+      "recovery": 60,
+      "recovery_raw": "r60",
+      "name": "Gatling Rush",
+      "wavu_id": "Bryan-ub+1+2,1,2,1,2,1,2,1,2,1,4",
+      "notes": "* Knee\n* Balcony Break\n* Combo from 1st hit",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15 i12",
+          "damage": 5
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 2
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 14
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+1": {
+      "key": "uf+1",
+      "is_string": false,
+      "startup": 20,
+      "startup_raw": "i20~21",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+15a",
+      "on_ch": null,
+      "damage": 22,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "bbr",
+        "fbr",
+        "pc7~19"
+      ],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Berserker Volley",
+      "wavu_id": "Bryan-uf+1",
+      "notes": "* Balcony Break\n* Floor Break\n* Gain SNE on hit (+3a on hit)\n* -9 frame advantage and 8 chip damage on block after absorbing an attack in power crush state\n* Power crush 7~19",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+2": {
+      "key": "uf+2",
+      "is_string": false,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+1",
+      "on_ch": null,
+      "damage": 6,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-uf+2",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+2,2": {
+      "key": "uf+2,2",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+1",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-uf+2,2",
+      "notes": "* Combo from 1st hit with 7f delay\n* Move can be delayed 5f",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 6
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 4
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+2,2,2": {
+      "key": "uf+2,2,2",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+1s",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-uf+2,2,2",
+      "notes": "Combo from 1st hit with 5f delay",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 6
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 4
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+2,2,2,3": {
+      "key": "uf+2,2,2,3",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -15,
+      "block_raw": "-15",
+      "on_hit": "+30a (+12)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "kne"
+      ],
+      "recovery": 36,
+      "recovery_raw": "r36",
+      "name": "Bloody War",
+      "wavu_id": "Bryan-uf+2,2,2,3",
+      "notes": "* Knee\n* Combo from 3rd hit with 5f delay",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 6
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 22,
+          "startup_raw": "i22~23",
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.uf+2,2,2,2": {
+      "key": "SNE.uf+2,2,2,2",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "-1s",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "chp"
+      ],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": null,
+      "wavu_id": "Bryan-uf+2,2,2,SNE.2",
+      "notes": "* Combo from 1st hit\n* Consumes SNE\n* Chip damage on block (2)",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 6
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 9
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.uf+2,2,2,2,2": {
+      "key": "SNE.uf+2,2,2,2,2",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "-2s",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "chp"
+      ],
+      "recovery": 32,
+      "recovery_raw": "r32",
+      "name": null,
+      "wavu_id": "Bryan-uf+2,2,2,SNE.2,2",
+      "notes": "* Combo from 1st hit\n* Chip damage 2 (22%) on block",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 6
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 10,
+          "startup_raw": "i10",
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 9
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 9
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.uf+2,2,2,2,2,3": {
+      "key": "SNE.uf+2,2,2,2,2,3",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -15,
+      "block_raw": "-15",
+      "on_hit": "+3a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "kne"
+      ],
+      "recovery": 36,
+      "recovery_raw": "r36",
+      "name": "Neo Bloody War",
+      "wavu_id": "Bryan-uf+2,2,2,SNE.2,2,3",
+      "notes": "* Knee\n* Combo from 3rd or 4th or 5th hit\n** +35a (+17) from 3rd hit\n** +31a (+13) from 4th hit\n** +30a (+12) from 5th hit\n* 9 chip damage (39%) on block",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 6
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 22,
+          "startup_raw": "i22~23",
+          "damage": 4
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 9
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 9
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 23
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+3": {
+      "key": "uf+3",
+      "is_string": false,
+      "startup": 27,
+      "startup_raw": "i27~28",
+      "on_block": -2,
+      "block_raw": "-2",
+      "on_hit": "+15",
+      "on_ch": null,
+      "damage": 15,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "js9~28",
+        "fs29~31"
+      ],
+      "recovery": 20,
+      "recovery_raw": "r20",
+      "name": "Rolling Driver",
+      "wavu_id": "Bryan-uf+3",
+      "notes": "* Low crush 9~28\n* Floating state 29~31",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+4": {
+      "key": "uf+4",
+      "is_string": false,
+      "startup": 24,
+      "startup_raw": "i24~26",
+      "on_block": -5,
+      "block_raw": "-5",
+      "on_hit": "+26a",
+      "on_ch": null,
+      "damage": 20,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "spk",
+        "js9~32",
+        "fs33~35"
+      ],
+      "recovery": 22,
+      "recovery_raw": "r22",
+      "name": "Orbital Heel Kick",
+      "wavu_id": "Bryan-uf+4",
+      "notes": "Spike\n* Low crush 9~32\n* Floating state 33~35",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+3+4": {
+      "key": "uf+3+4",
+      "is_string": false,
+      "startup": 16,
+      "startup_raw": "i16~17",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+8a",
+      "on_ch": null,
+      "damage": 22,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "trn",
+        "kne",
+        "js9~26",
+        "fs27~29"
+      ],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Bullet Knee > Snake Eyes",
+      "wavu_id": "Bryan-uf+3+4",
+      "notes": "* Tornado\n* Knee\n* Gain SNE on hit\n* Low crush 9~26\n* Floating state 27~29",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1+2+3+4": {
+      "key": "1+2+3+4",
+      "is_string": false,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 55,
+      "recovery_raw": "r55",
+      "name": "Ki Charge",
+      "wavu_id": "Bryan-1+2+3+4",
+      "notes": "* Can't block for 5 seconds\n* CH state on your next attack for 5 seconds ''(Tekken 7 and prior games)''\n* 10% damage increase on the next attack for 5 seconds ''(Tekken 8 season 2 patch onward)''\n* Attacks taken will be CH for 5 seconds",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b,B+4": {
+      "key": "b,B+4",
+      "is_string": false,
+      "startup": 21,
+      "startup_raw": "i21~33",
+      "on_block": -19,
+      "block_raw": "-19~-7",
+      "on_hit": "-7a~+5a",
+      "on_ch": null,
+      "damage": 24,
+      "hit_level": "mid",
+      "hit_level_raw": "M",
+      "properties": [
+        "spk",
+        "js18~32",
+        "fs33~"
+      ],
+      "recovery": 35,
+      "recovery_raw": "r35 FUFT",
+      "name": "Flying Knee Kick",
+      "wavu_id": "Bryan-b,B+4",
+      "notes": "Spike\n* Low crush 18~32\n* Floating state 33~",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "b,df+4": {
+      "key": "b,df+4",
+      "is_string": false,
+      "startup": 29,
+      "startup_raw": "i29",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+14g",
+      "on_ch": "+29a",
+      "damage": 25,
+      "hit_level": "low",
+      "hit_level_raw": "l",
+      "properties": [],
+      "recovery": 41,
+      "recovery_raw": "r41",
+      "name": "Wedge Driver",
+      "wavu_id": "Bryan-b,df+4",
+      "notes": "* Cancel to r26 with B",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "d,db,b": {
+      "key": "d,db,b",
+      "is_string": false,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "cs1~10"
+      ],
+      "recovery": null,
+      "recovery_raw": "SWA",
+      "name": "Sway",
+      "wavu_id": "Bryan-d,db,b",
+      "notes": "* Cancel to SS on any frame with u\n* Minimum 3f needed to enter (one for each directional)\n* High crush 1~10",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f,F+2": {
+      "key": "f,F+2",
+      "is_string": false,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+41d (-17)",
+      "on_ch": null,
+      "damage": 29,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [
+        "he",
+        "bbr",
+        "chp"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Mach Breaker",
+      "wavu_id": "Bryan-f,F+2",
+      "notes": "* Heat Engager\n\n* Heat Dash +5, +43d (+35)\n\n* Balcony Break\n* Chip damage on block (8)",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f,F+3": {
+      "key": "f,F+3",
+      "is_string": false,
+      "startup": 24,
+      "startup_raw": "i24~25",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+28a (-8)",
+      "on_ch": "+39a (-8)",
+      "damage": 25,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "bbr",
+        "chp"
+      ],
+      "recovery": 37,
+      "recovery_raw": "r37",
+      "name": "Slash Kick > Snake Eyes",
+      "wavu_id": "Bryan-f,F+3",
+      "notes": "* Balcony Break\n* Gain SNE on hit with 1+2\n* SNE gain is r25\n* Chip damage on block (7)\n* Hitstop 20f on hit",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f,F+3*": {
+      "key": "f,F+3*",
+      "is_string": false,
+      "startup": 34,
+      "startup_raw": "i34~35",
+      "on_block": 8,
+      "block_raw": "+8",
+      "on_hit": "+71a",
+      "on_ch": null,
+      "damage": 33,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "bbr",
+        "chp"
+      ],
+      "recovery": 37,
+      "recovery_raw": "r37",
+      "name": null,
+      "wavu_id": "Bryan-f,F+3*",
+      "notes": "* Balcony Break\n* Gain SNE on hit with 1+2\n* Chip damage on block (9)\n* Hitstop 20f on hit",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f,F+4": {
+      "key": "f,F+4",
+      "is_string": false,
+      "startup": 16,
+      "startup_raw": "i16~19",
+      "on_block": -9,
+      "block_raw": "-9c~-6c",
+      "on_hit": "+15a",
+      "on_ch": null,
+      "damage": 32,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [
+        "hom",
+        "chp"
+      ],
+      "recovery": 32,
+      "recovery_raw": "r32",
+      "name": "Mach Kick",
+      "wavu_id": "Bryan-f,F+4",
+      "notes": "* Homing\n* Balcony Break (airborne)\n* Chip damage on block (9)\n* Initial side step can evade some attacks",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f,n,b+2": {
+      "key": "f,n,b+2",
+      "is_string": false,
+      "startup": 14,
+      "startup_raw": "i14~15",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+43a (+33)",
+      "on_ch": null,
+      "damage": 20,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [
+        "trn"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Jet Uppercut",
+      "wavu_id": "Bryan-f,n,b+2",
+      "notes": "* Tornado\n* Can be buffered",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "qcf": {
+      "key": "qcf",
+      "is_string": false,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": null,
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "cs1~25"
+      ],
+      "recovery": 1,
+      "recovery_raw": "r1 SLS",
+      "name": "Slither Step (SLS)",
+      "wavu_id": "Bryan-qcf",
+      "notes": "* Enter FC r25 with no input\n* Cancel to SS on any frame with u\n* Cancel to block on frames 1~9 with b\n* Actionable on frame 1~\n* High crush 1~25",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf,n,4": {
+      "key": "uf,n,4",
+      "is_string": false,
+      "startup": 23,
+      "startup_raw": "i23~25",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+32a (+22)",
+      "on_ch": null,
+      "damage": 20,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "js9~30",
+        "fs31~33"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Delayed Rising Toe Kick",
+      "wavu_id": "Bryan-uf,n,4",
+      "notes": "Jump takes 9 frames\n* Low crush 9~30\n* Floating state 31~33",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "f,f,F+3": {
+      "key": "f,f,F+3",
+      "is_string": false,
+      "startup": 22,
+      "startup_raw": "i22~25",
+      "on_block": 6,
+      "block_raw": "+6~+9",
+      "on_hit": "+13a (+3)",
+      "on_ch": null,
+      "damage": 30,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "bbr",
+        "chp",
+        "js3~25",
+        "fs26~28"
+      ],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Snake Slash",
+      "wavu_id": "Bryan-f,f,F+3",
+      "notes": "* Balcony Break\n* Chip damage on block (9)\n* Low crush 3~25\n* Floating state 26~28",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ws1": {
+      "key": "ws1",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -14,
+      "block_raw": "-14",
+      "on_hit": "+35a (+25)",
+      "on_ch": null,
+      "damage": 20,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Left Upper",
+      "wavu_id": "Bryan-ws1",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ws2": {
+      "key": "ws2",
+      "is_string": true,
+      "startup": 19,
+      "startup_raw": "i19",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+50a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": "Fisherman's Slam",
+      "wavu_id": "Bryan-ws2",
+      "notes": "* Transition to r90 attack throw on front/side standing hit\n* +31a (+21) on BT hit\n* Power up with f+2 or b+2 on frames 18~19, additional 5 damage",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 19,
+          "startup_raw": "i19",
+          "damage": 10
+        },
+        {
+          "hit_level": "throw",
+          "hit_level_raw": "t",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ws3": {
+      "key": "ws3",
+      "is_string": false,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+4",
+      "on_ch": "+33a (+27)",
+      "damage": 17,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "kne"
+      ],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": "High Knee Kick",
+      "wavu_id": "Bryan-ws3",
+      "notes": "* Knee",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ws3,4": {
+      "key": "ws3,4",
+      "is_string": true,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+4",
+      "on_ch": "+29g",
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "kne"
+      ],
+      "recovery": 26,
+      "recovery_raw": "r26",
+      "name": "Double High Knee Kick",
+      "wavu_id": "Bryan-ws3,4",
+      "notes": "* Knee\n* Input can be delayed 10f\n* Interrupt with i8 from 1st block",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 12,
+          "startup_raw": "i12",
+          "damage": 17
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 28,
+          "startup_raw": "i28",
+          "damage": 21
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "ws4": {
+      "key": "ws4",
+      "is_string": false,
+      "startup": 11,
+      "startup_raw": "i11~12",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+5",
+      "on_ch": null,
+      "damage": 16,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 24,
+      "recovery_raw": "r24",
+      "name": "Toe Smash",
+      "wavu_id": "Bryan-ws4",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SS.1": {
+      "key": "SS.1",
+      "is_string": false,
+      "startup": 17,
+      "startup_raw": "i17~18",
+      "on_block": -5,
+      "block_raw": "-5",
+      "on_hit": "+15c",
+      "on_ch": null,
+      "damage": 23,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": "Hellraiser",
+      "wavu_id": "Bryan-SS.1",
+      "notes": "Balcony Break (airborne)",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SS.2": {
+      "key": "SS.2",
+      "is_string": false,
+      "startup": 17,
+      "startup_raw": "i17~18",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+5",
+      "on_ch": null,
+      "damage": 15,
+      "hit_level": "mid",
+      "hit_level_raw": "M",
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-SS.2",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SS.2,1": {
+      "key": "SS.2,1",
+      "is_string": true,
+      "startup": 17,
+      "startup_raw": "i17~18",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+43d (-15)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "he",
+        "bbr",
+        "elb"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Snake Fang",
+      "wavu_id": "Bryan-SS.2,1",
+      "notes": "* Heat Engager\n\n* Heat Dash +5, +62a (+42)\n\n* Balcony Break\n* Elbow\n* Combo from 1st hit with 8f delay\n* Input can be delayed 11f\n* Move can be delayed 10f\n* Cancel to r35 with B (-15/-1)",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "M",
+          "startup": 17,
+          "startup_raw": "i17~18",
+          "damage": 15
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 21,
+          "startup_raw": "i21~22",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "FC.df+2": {
+      "key": "FC.df+2",
+      "is_string": false,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+4",
+      "on_ch": null,
+      "damage": 12,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "elb"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": null,
+      "wavu_id": "Bryan-FC.df+2",
+      "notes": "Elbow",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "FC.df+2,1": {
+      "key": "FC.df+2,1",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -8,
+      "block_raw": "-8",
+      "on_hit": "+34a (+8)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Snake Rampage",
+      "wavu_id": "Bryan-FC.df+2,1",
+      "notes": "* Balcony Break\n* Combo from 1st hit with 7f delay\n* Input can be delayed 11f\n* Move can be delayed 10f",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 12
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 22,
+          "startup_raw": "i22~23",
+          "damage": 25
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "FC.df+4": {
+      "key": "FC.df+4",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+13g",
+      "on_ch": "+25d",
+      "damage": 21,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "bbr",
+        "cs1~14"
+      ],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": "Northern Cross",
+      "wavu_id": "Bryan-FC.df+4",
+      "notes": "Balcony Break\n* High crush 1~14",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "(Back to wall).b,b,UB": {
+      "key": "(Back to wall).b,b,UB",
+      "is_string": false,
+      "startup": 29,
+      "startup_raw": "i29~30",
+      "on_block": -1,
+      "block_raw": "-1",
+      "on_hit": "+45d (-13)",
+      "on_ch": null,
+      "damage": 25,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "bbr",
+        "fs5~13",
+        "js14~33",
+        "fs34~36"
+      ],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": "[[Wall Jump Attack]]",
+      "wavu_id": "Bryan-(Back to wall).b,b,UB",
+      "notes": "Balcony Break\n* Floating state 5~13\n* Low crush 14~33\n* Floating state 34~36",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.2": {
+      "key": "SLS.2",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+2",
+      "on_ch": null,
+      "damage": 16,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [],
+      "recovery": 27,
+      "recovery_raw": "r27",
+      "name": null,
+      "wavu_id": "Bryan-SLS.2",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.2,1": {
+      "key": "SLS.2,1",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -11,
+      "block_raw": "-11",
+      "on_hit": "+33a (+18)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Cross Bazooka",
+      "wavu_id": "Bryan-SLS.2,1",
+      "notes": "Combo from 1st hit with 4f delay",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 15,
+          "startup_raw": "i15~16",
+          "damage": 16
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15~16",
+          "damage": 23
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.2,2": {
+      "key": "SLS.2,2",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -7,
+      "block_raw": "-7",
+      "on_hit": "+14a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "spk"
+      ],
+      "recovery": 35,
+      "recovery_raw": "r35",
+      "name": "Cross Grenade",
+      "wavu_id": "Bryan-SLS.2,2",
+      "notes": "* Balcony Break\n* Spike\n* Combo from 1st hit with 4f delay\n* +9a on BT hit",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 15,
+          "startup_raw": "i15~16",
+          "damage": 16
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 25,
+          "startup_raw": "i25",
+          "damage": 25
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.2,4": {
+      "key": "SLS.2,4",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+5a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "trn",
+        "kne",
+        "js9~26",
+        "fs27~29"
+      ],
+      "recovery": 34,
+      "recovery_raw": "r34",
+      "name": "Cross Bullet > Snake Eyes",
+      "wavu_id": "Bryan-SLS.2,4",
+      "notes": "* Tornado\n* Knee\n* Combo from 1st hit with 4f delay\n* Gain SNE on hit, -12a\n* Low crush 9~26\n* Floating state 27~29",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 15,
+          "startup_raw": "i15~16",
+          "damage": 16
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 16,
+          "startup_raw": "i16~17",
+          "damage": 22
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.4": {
+      "key": "SLS.4",
+      "is_string": false,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": -5,
+      "block_raw": "-5",
+      "on_hit": "+1",
+      "on_ch": "+3",
+      "damage": 13,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 29,
+      "recovery_raw": "r29",
+      "name": null,
+      "wavu_id": "Bryan-SLS.4",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.4,1": {
+      "key": "SLS.4,1",
+      "is_string": true,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": 0,
+      "block_raw": "+0",
+      "on_hit": "+55a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 25,
+      "recovery_raw": "r25",
+      "name": null,
+      "wavu_id": "Bryan-SLS.4,1",
+      "notes": "* Combo from 1st CH\n* Cancel to SS -12 -5 -3 r9 with u_d",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 18,
+          "startup_raw": "i18",
+          "damage": 13
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 27,
+          "startup_raw": "i27",
+          "damage": 13
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.4,1,2": {
+      "key": "SLS.4,1,2",
+      "is_string": true,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+41d (-17)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Snake Spin Mach Breaker",
+      "wavu_id": "Bryan-SLS.4,1,2",
+      "notes": "* Balcony Break\n* Combo from 2nd hit",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 18,
+          "startup_raw": "i18",
+          "damage": 13
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 13
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 24,
+          "startup_raw": "i24",
+          "damage": 22
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.4,1,4": {
+      "key": "SLS.4,1,4",
+      "is_string": true,
+      "startup": 18,
+      "startup_raw": "i18",
+      "on_block": -10,
+      "block_raw": "-10",
+      "on_hit": "+37a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "trn"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Snake Spin Kickass",
+      "wavu_id": "Bryan-SLS.4,1,4",
+      "notes": "* Tornado\n* Combo from 2nd hit\n* Opponent recovers FUFA on hit",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 18,
+          "startup_raw": "i18",
+          "damage": 13
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 13
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "M",
+          "startup": 25,
+          "startup_raw": "i25",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SLS.1+2": {
+      "key": "SLS.1+2",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+23a (+13)",
+      "on_ch": null,
+      "damage": 23,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [
+        "he",
+        "bbr",
+        "elb"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Requiem",
+      "wavu_id": "Bryan-SLS.1+2",
+      "notes": "* Heat Engager\n\n* Heat Dash +5, +36a (+26)\n\n* Balcony Break\n* Elbow",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.FC.df+3": {
+      "key": "SNE.FC.df+3",
+      "is_string": false,
+      "startup": 20,
+      "startup_raw": "i20",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+7",
+      "on_ch": "+25a",
+      "damage": 24,
+      "hit_level": "low",
+      "hit_level_raw": "l",
+      "properties": [
+        "bbr"
+      ],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": "Neo Grim Reaper",
+      "wavu_id": "Bryan-SNE.FC.df+3",
+      "notes": "* Balcony Break\n* Consumes SNE\n* Unparryable",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.b+1+2": {
+      "key": "SNE.b+1+2",
+      "is_string": true,
+      "startup": 20,
+      "startup_raw": "i20 i14",
+      "on_block": 4,
+      "block_raw": "+4",
+      "on_hit": "+33d (+25)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "elb",
+        "chp"
+      ],
+      "recovery": null,
+      "recovery_raw": "FC",
+      "name": "Neo Murderous Strikes",
+      "wavu_id": "Bryan-SNE.b+1+2",
+      "notes": "* Balcony Break\n* Elbow\n* Consumes SNE\n* Chip damage on block (6)",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 20,
+          "startup_raw": "i20 i14",
+          "damage": 9
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": null,
+          "startup_raw": null,
+          "damage": 15
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.f,F+1+2": {
+      "key": "SNE.f,F+1+2",
+      "is_string": false,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+23a (+18)",
+      "on_ch": null,
+      "damage": 30,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [
+        "bbr",
+        "chp",
+        "ps2~10"
+      ],
+      "recovery": 33,
+      "recovery_raw": "r33",
+      "name": "Neo Mach Breaker",
+      "wavu_id": "Bryan-SNE.f,F+1+2",
+      "notes": "* Balcony Break\n* Consumes SNE\n* Can not be buffered\n* Chip damage 10 (30%) on block\n* Strong parry, parries all mid or high attacks except charge moves, throws and unlockables \n* On a successful parry, the attack is canceled and Bryan automatically retaliates\n* Unparryable with traditional parries, Asuka, Nina, etc\n* Consumes 300f of Heat\n* Parry state 2~10",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "SNE.f,F+1+2,P": {
+      "key": "SNE.f,F+1+2,P",
+      "is_string": true,
+      "startup": 13,
+      "startup_raw": "i13",
+      "on_block": 0,
+      "block_raw": "0",
+      "on_hit": "+25a (+20)",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [
+        "bbr",
+        "chp",
+        "pc1~14"
+      ],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Immortal Payback",
+      "wavu_id": "Bryan-SNE.f,F+1+2,P",
+      "notes": "* Balcony Break\n* Chip damage on block (8)\n* Consumes SNE\n* Initial attack absorbing animating takes 9 frames (pc1~9), effective startup is i22~23\n* Power crush 1~14",
+      "hits": [
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 13,
+          "startup_raw": "i13",
+          "damage": 30
+        },
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 13,
+          "startup_raw": "i13~14",
+          "damage": 20
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "qcb+1": {
+      "key": "qcb+1",
+      "is_string": false,
+      "startup": 13,
+      "startup_raw": "i13~14",
+      "on_block": 5,
+      "block_raw": "+5",
+      "on_hit": "+19cg",
+      "on_ch": "+72a (+56)",
+      "damage": 22,
+      "hit_level": "high",
+      "hit_level_raw": "h",
+      "properties": [
+        "trn",
+        "bbr"
+      ],
+      "recovery": 28,
+      "recovery_raw": "r28",
+      "name": "Cannonball Straight",
+      "wavu_id": "Bryan-SWA.1",
+      "notes": "* Tornado\n* Balcony Break\n* 6 chip damage on block\n* Forces tech back roll on hit",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "qcb+2": {
+      "key": "qcb+2",
+      "is_string": false,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -9,
+      "block_raw": "-9",
+      "on_hit": "+6",
+      "on_ch": null,
+      "damage": 16,
+      "hit_level": "mid",
+      "hit_level_raw": "m",
+      "properties": [],
+      "recovery": 30,
+      "recovery_raw": "r30",
+      "name": "Smash",
+      "wavu_id": "Bryan-SWA.2",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "qcb+2,4": {
+      "key": "qcb+2,4",
+      "is_string": true,
+      "startup": 15,
+      "startup_raw": "i15~16",
+      "on_block": -9,
+      "block_raw": "-9c",
+      "on_hit": "+15a",
+      "on_ch": null,
+      "damage": null,
+      "hit_level": null,
+      "hit_level_raw": null,
+      "properties": [],
+      "recovery": 32,
+      "recovery_raw": "r32",
+      "name": "Smash and Mach Kick",
+      "wavu_id": "Bryan-SWA.2,4",
+      "notes": "* Balcony Break (airborne)\n* Combo from 1st hit with 10f delay\n* Move can be delayed 7f\n* 7 chip damage on block",
+      "hits": [
+        {
+          "hit_level": "mid",
+          "hit_level_raw": "m",
+          "startup": 15,
+          "startup_raw": "i15~16",
+          "damage": 16
+        },
+        {
+          "hit_level": "high",
+          "hit_level_raw": "h",
+          "startup": 22,
+          "startup_raw": "i22~25",
+          "damage": 25
+        }
+      ],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "qcb+3": {
+      "key": "qcb+3",
+      "is_string": false,
+      "startup": 19,
+      "startup_raw": "i19~20",
+      "on_block": -13,
+      "block_raw": "-13",
+      "on_hit": "+5",
+      "on_ch": "+26a",
+      "damage": 23,
+      "hit_level": "low",
+      "hit_level_raw": "l",
+      "properties": [],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Hatchet Kick",
+      "wavu_id": "Bryan-SWA.3",
+      "notes": "Balcony Break (airborne)",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "qcb+4": {
+      "key": "qcb+4",
+      "is_string": false,
+      "startup": 17,
+      "startup_raw": "i17~18",
+      "on_block": -12,
+      "block_raw": "-12",
+      "on_hit": "+31a (+21)",
+      "on_ch": null,
+      "damage": 23,
+      "hit_level": "mid",
+      "hit_level_raw": "M",
+      "properties": [],
+      "recovery": 32,
+      "recovery_raw": "r32",
+      "name": "<div class=\"dotlist\">\n\n* Soccer Kick\n* Kickoff\n</div>",
+      "wavu_id": "Bryan-SWA.4",
+      "notes": null,
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "1+3": {
+      "key": "1+3",
+      "is_string": false,
+      "startup": 12,
+      "startup_raw": "i12~14",
+      "on_block": -3,
+      "block_raw": "-3",
+      "on_hit": "-2d",
+      "on_ch": null,
+      "damage": 35,
+      "hit_level": "throw",
+      "hit_level_raw": "t",
+      "properties": [
+        "fbr",
+        "hom"
+      ],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Gravity Brain Buster",
+      "wavu_id": "Bryan-1+3",
+      "notes": "* Floor Break\n* Homing\n* Throw break 1 or 2",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "2+4": {
+      "key": "2+4",
+      "is_string": false,
+      "startup": 12,
+      "startup_raw": "i12~14",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+0d",
+      "on_ch": null,
+      "damage": 35,
+      "hit_level": "throw",
+      "hit_level_raw": "t",
+      "properties": [
+        "fbr",
+        "hom"
+      ],
+      "recovery": 31,
+      "recovery_raw": "r31",
+      "name": "Guillotine",
+      "wavu_id": "Bryan-2+4",
+      "notes": "* Floor Break\n* Homing\n* Throw break 1 or 2\n* Side switch on hit",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "Back throw": {
+      "key": "Back throw",
+      "is_string": false,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": null,
+      "block_raw": null,
+      "on_hit": "-1d",
+      "on_ch": null,
+      "damage": 60,
+      "hit_level": "throw",
+      "hit_level_raw": "t",
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": "Neck throw",
+      "wavu_id": "Bryan-Back throw",
+      "notes": "Unbreakable",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "FC.db+1+2": {
+      "key": "FC.db+1+2",
+      "is_string": false,
+      "startup": 11,
+      "startup_raw": "i11",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "+1d",
+      "on_ch": null,
+      "damage": 45,
+      "hit_level": "throw",
+      "hit_level_raw": "t",
+      "properties": [],
+      "recovery": 28,
+      "recovery_raw": "r28",
+      "name": "Chains of Misery",
+      "wavu_id": "Bryan-FC.db+1+2",
+      "notes": "* Throw break 1+2",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "Left throw": {
+      "key": "Left throw",
+      "is_string": false,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": -3,
+      "block_raw": "-3",
+      "on_hit": "+1d",
+      "on_ch": null,
+      "damage": 40,
+      "hit_level": "throw",
+      "hit_level_raw": "t",
+      "properties": [
+        "fbr"
+      ],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": "Gravity Throw",
+      "wavu_id": "Bryan-Left throw",
+      "notes": "* Floor Break\n* Throw break 1\n* Side switch on hit",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "Right throw": {
+      "key": "Right throw",
+      "is_string": false,
+      "startup": null,
+      "startup_raw": null,
+      "on_block": -3,
+      "block_raw": "-3",
+      "on_hit": "+6d",
+      "on_ch": null,
+      "damage": 40,
+      "hit_level": "throw",
+      "hit_level_raw": "t",
+      "properties": [],
+      "recovery": null,
+      "recovery_raw": null,
+      "name": "Knee Blast",
+      "wavu_id": "Bryan-Right throw",
+      "notes": "* Throw break 2",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    },
+    "uf+1+2": {
+      "key": "uf+1+2",
+      "is_string": false,
+      "startup": 12,
+      "startup_raw": "i12",
+      "on_block": -6,
+      "block_raw": "-6",
+      "on_hit": "-5d",
+      "on_ch": null,
+      "damage": 40,
+      "hit_level": "throw",
+      "hit_level_raw": "t",
+      "properties": [
+        "fbr"
+      ],
+      "recovery": 27,
+      "recovery_raw": "r27",
+      "name": "Anaconda Assassin",
+      "wavu_id": "Bryan-uf+1+2",
+      "notes": "* Floor Break\n* Throw break 1+2",
+      "hits": [],
+      "duck_punish": null,
+      "string_gap": null,
+      "heat": null
+    }
+  }
+}
