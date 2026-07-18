@@ -27,6 +27,7 @@ def _obs(
     block: bool = False,
     hit: bool = False,
     char_id: int = 12,
+    frame_clock: int | None = None,
 ) -> FrameObservation:
     return FrameObservation(
         attacker_char_id=char_id,
@@ -35,6 +36,7 @@ def _obs(
         attacker_recovering=attacker_recovering,
         defender_block_stun=block,
         defender_hit_stun=hit,
+        frame_clock=frame_clock,
     )
 
 
@@ -69,6 +71,58 @@ def test_blocked_exchange_yields_startup_and_on_block() -> None:
     assert result.fingerprint.startup == 15
     assert result.fingerprint.on_block == -3
     assert result.fingerprint.blocked_samples == 1
+
+
+def test_on_block_is_measured_in_game_frames_when_frame_clock_is_present() -> None:
+    """With ``frame_clock`` set, on-block is the game-frame delta, not the poll count (#12 §4).
+
+    The real live loop polls at ~20 Hz over a 60 fps game, so a poll-count advantage is ~3x
+    under-resolved. When the shared per-round counter (``frames_since_round_start``) rides along,
+    recovery is timed on it directly. Here the clock jumps by **3 game frames per poll**: contact at
+    clock 100, the attacker becomes actionable at clock 130, the defender leaves blockstun at clock
+    135 — so ``on_block = 135 - 130 = +5`` frames, a value the ~5 intervening polls could never
+    resolve. (Poll-count fallback is covered by the other tests, which leave ``frame_clock`` None.)
+    """
+    fp = LiveFingerprinter(12)
+    frames: list[FrameObservation] = []
+    # Idle (neutral/actionable), clock 90..99.
+    frames += [
+        _obs(move_id=32769, move_frame=5, attacker_recovering=False, frame_clock=c)
+        for c in range(90, 100)
+    ]
+    # Startup ramp: in an attack, no contact yet, move_frame 0..15, clock 100..115.
+    frames += [
+        _obs(move_id=2145, move_frame=f, attacker_recovering=True, frame_clock=100 + f)
+        for f in range(16)
+    ]
+    # Contact at move_frame 16 (clock 116): defender enters blockstun.
+    frames.append(
+        _obs(move_id=2145, move_frame=16, attacker_recovering=True, block=True, frame_clock=116)
+    )
+    # Attacker recovering + defender blocking, clock 117..129.
+    frames += [
+        _obs(
+            move_id=2145,
+            move_frame=16 + i,
+            attacker_recovering=True,
+            block=True,
+            frame_clock=116 + i,
+        )
+        for i in range(1, 14)
+    ]
+    # Attacker becomes actionable at clock 130 (defender still blocking).
+    frames.append(
+        _obs(move_id=32769, move_frame=5, attacker_recovering=False, block=True, frame_clock=130)
+    )
+    # Defender leaves blockstun at clock 135.
+    frames.append(
+        _obs(move_id=32769, move_frame=5, attacker_recovering=False, block=False, frame_clock=135)
+    )
+
+    out = _feed(fp, frames)
+    assert len(out) == 1
+    assert out[0].fingerprint.startup == 16
+    assert out[0].fingerprint.on_block == 5  # 135 (defender recovered) - 130 (attacker recovered)
 
 
 def test_hit_gives_startup_but_no_on_block() -> None:
