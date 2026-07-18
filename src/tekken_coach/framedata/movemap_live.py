@@ -42,6 +42,11 @@ class FrameObservation:
     attacker_recovering: bool  # attacker still in its move (attack/recovery), not yet actionable
     defender_block_stun: bool
     defender_hit_stun: bool
+    # Shared per-round game-frame clock (``frames_since_round_start``, mirrored on both players and
+    # ticking at 60 fps). When present, on-block advantage is measured in game frames — the precise
+    # unit — instead of ~20 Hz poll counts, which are ~3x under-resolved (brief #12 §4). ``None`` if
+    # the frame counter is unavailable, in which case the fingerprinter falls back to poll counts.
+    frame_clock: int | None = None
 
 
 @dataclass(frozen=True)
@@ -65,70 +70,103 @@ def _actionable(state: ActionState) -> bool:
 
 
 class LiveFingerprinter:
-    """Detect one move's startup + on-block from a live frame stream (brief #6 §B, pure).
+    """Detect one move's startup + on-block from a live frame stream (brief #6 §B, #12, pure).
 
     Fed :class:`FrameObservation`s in order via :meth:`feed`, it tracks the target attacker's
-    current move and returns a :class:`LiveObservation` on the frame the exchange resolves:
+    current *attack* and returns a :class:`LiveObservation` on the frame the exchange resolves.
 
-    * **contact** — the first frame the defender enters block- or hit-stun while the move is active;
-      ``startup`` is the attacker ``move_frame`` at that instant.
-    * **on_block** — only when the contact was a block: the advantage is
-      ``(defender-actionable frame) - (attacker-actionable frame)`` measured from contact, i.e.
-      positive when the attacker recovers first. Emitted once both have recovered.
+    A move is the span where the **attacker is in an attack** — bounded by neutral, not by raw
+    ``move_id`` changes (brief #12). The attacker being **actionable** (``attacker_recovering`` is
+    ``False``) *is* neutral, and a defender still in block-stun while the attacker is actionable is
+    the *previous* move's lingering block-stun, never a new contact. Concretely:
 
-    A whiff (the move changes away before any contact) resets silently — no observation. The pure
-    logic is unit-tested; the live loop that produces the observations is ``# pragma: no cover``.
+    * **no tracking on neutral** — a move is "active" only once the attacker is in an attack; an
+      actionable attacker never starts a move nor registers a contact (brief #12 §1).
+    * **contact** — the first frame the defender enters block-/hit-stun while a move is active;
+      ``startup`` is the attacker ``move_frame`` and the move identity is the ``move_id`` *at that
+      instant* (a move may carry a 1-frame sub-id on the way in — the contact-frame id is the one
+      that matters, brief #12 §3).
+    * **on_block** — only when the contact was a block: ``(defender-actionable clock) -
+      (attacker-actionable clock)``, positive when the attacker recovers first. The attacker
+      returning to neutral is the "attacker recovered" signal — it *finalizes*, never discards, a
+      pending measurement (brief #12 §2); the observation is emitted once the defender also leaves
+      block-stun. When :attr:`FrameObservation.frame_clock` is present the two clocks are game
+      frames (60 fps); otherwise they fall back to poll counts (brief #12 §4).
+
+    A whiff (the attacker returns to neutral before any contact) resets silently — no observation.
+    The pure logic is unit-tested; the live loop that produces the observations is
+    ``# pragma: no cover``.
     """
 
     def __init__(self, attacker_char_id: int) -> None:
         self._char_id = attacker_char_id
+        self._poll = 0
         self._reset()
 
     def _reset(self) -> None:
-        self._move_id: int | None = None
-        self._contact_frame: int | None = None  # attacker move_frame at contact
+        self._active = False  # is a move currently being tracked (attacker in an attack)?
+        self._contact_frame: int | None = None  # attacker move_frame at contact (= startup)
+        self._contact_move_id: int | None = None  # move identity sampled at the contact frame
         self._blocked = False
-        self._attacker_recovered_at: int | None = None  # frames since contact
-        self._defender_recovered_at: int | None = None
-        self._since_contact = 0
+        self._attacker_recovered_clock: int | None = None
+        self._defender_recovered_clock: int | None = None
 
     def feed(self, obs: FrameObservation) -> LiveObservation | None:
         """Advance the tracker one frame; return a completed observation on the resolving frame."""
+        self._poll += 1
         if obs.attacker_char_id != self._char_id:
             self._reset()
             return None
 
-        if obs.attacker_move_id != self._move_id:
-            # A new move started (or the first one). Emit nothing; begin tracking it.
-            self._reset()
-            self._move_id = obs.attacker_move_id
+        clock = obs.frame_clock if obs.frame_clock is not None else self._poll
+        # The attacker is still in a move (attack/recovery), i.e. not neutral/actionable.
+        in_attack = obs.attacker_recovering
+
+        if not self._active:
+            # Idle: never track or contact on a neutral/actionable attacker (brief #12 §1). Begin
+            # tracking only when the attacker is actually in an attack.
+            if in_attack:
+                self._active = True
+            else:
+                return None
 
         if self._contact_frame is None:
+            # Pre-contact. If the attacker returns to neutral first, the move whiffed — reset.
+            if not in_attack:
+                self._reset()
+                return None
             if obs.defender_block_stun or obs.defender_hit_stun:
+                # Contact: sample startup AND identity here — the id live at contact is the move
+                # (any earlier 1-frame sub-id is discarded), brief #12 §3.
                 self._contact_frame = obs.attacker_move_frame
+                self._contact_move_id = obs.attacker_move_id
                 self._blocked = obs.defender_block_stun
-                self._since_contact = 0
                 if not self._blocked:
                     # A hit gives startup but not a meaningful on-block reading.
-                    return self._emit(obs.attacker_move_id, on_block=None)
+                    return self._emit(on_block=None)
             return None
 
-        # Post-contact (blocked): measure when each side becomes actionable again.
-        self._since_contact += 1
-        if self._attacker_recovered_at is None and not obs.attacker_recovering:
-            self._attacker_recovered_at = self._since_contact
-        if self._defender_recovered_at is None and not obs.defender_block_stun:
-            self._defender_recovered_at = self._since_contact
-        if self._attacker_recovered_at is not None and self._defender_recovered_at is not None:
-            on_block = self._defender_recovered_at - self._attacker_recovered_at
-            return self._emit(obs.attacker_move_id, on_block=on_block)
+        # Post-contact (blocked): record when each side becomes actionable again, in clock units.
+        # The attacker going neutral finalizes (never discards) the pending measurement (brief #12).
+        if self._attacker_recovered_clock is None and not in_attack:
+            self._attacker_recovered_clock = clock
+        if self._defender_recovered_clock is None and not obs.defender_block_stun:
+            self._defender_recovered_clock = clock
+        if (
+            self._attacker_recovered_clock is not None
+            and self._defender_recovered_clock is not None
+        ):
+            on_block = self._defender_recovered_clock - self._attacker_recovered_clock
+            return self._emit(on_block=on_block)
         return None
 
-    def _emit(self, move_id: int, *, on_block: int | None) -> LiveObservation:
+    def _emit(self, *, on_block: int | None) -> LiveObservation:
         """Build the observation for the resolved move and reset for the next one."""
         startup = self._contact_frame
+        move_id = self._contact_move_id
         blocked = self._blocked
         contacted = startup is not None
+        assert move_id is not None  # _emit is only reached after a contact set _contact_move_id
         fingerprint = MoveFingerprint(
             char_id=self._char_id,
             move_id=move_id,
@@ -150,6 +188,8 @@ def observation_from_frames(attacker: PlayerFrame, defender: PlayerFrame) -> Fra
         attacker_recovering=not _actionable(attacker.action_state),
         defender_block_stun=defender.block_stun or defender.action_state is ActionState.blockstun,
         defender_hit_stun=defender.hit_stun or defender.action_state is ActionState.hitstun,
+        # Shared per-round game-frame clock (mirrored on both structs); measures on-block precisely.
+        frame_clock=attacker.frames_since_round_start,
     )
 
 
