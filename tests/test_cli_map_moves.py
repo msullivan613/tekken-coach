@@ -60,3 +60,44 @@ def test_parser_registers_map_moves() -> None:
     assert args.from_log == "x.jsonl"
     assert args.char == "paul"
     assert args.live is False
+
+
+def test_live_poll_rate_flags_default() -> None:
+    """--hz defaults to 120 (Part A oversample) and --reps to 5 (Part B accumulation), brief #13."""
+    parser = build_parser()
+    args = parser.parse_args(["map-moves", "--live", "--char", "bryan"])
+    assert args.hz == 120.0
+    assert args.reps == 5
+
+
+def test_live_hz_and_reps_translate_to_run_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--hz N reaches run_live as interval=1/N, and --reps N passes straight through (brief #13)."""
+    import tekken_coach.framedata.movemap_live as live
+
+    captured: dict[str, object] = {}
+
+    def fake_run_live(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(live, "run_live", fake_run_live)
+    rc = main(
+        ["map-moves", "--live", "--char", "bryan", "--user", "p1", "--hz", "200", "--reps", "8"]
+    )
+    assert rc == 0
+    assert captured["interval"] == pytest.approx(1.0 / 200)
+    assert captured["reps"] == 8
+    assert captured["char"] == "bryan"
+    assert captured["user_player"] == 0
+
+
+def test_live_rejects_non_positive_hz(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["map-moves", "--live", "--char", "bryan", "--hz", "0"])
+    assert rc == 2
+    assert "--hz must be positive" in capsys.readouterr().err
+
+
+def test_live_rejects_reps_below_one(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["map-moves", "--live", "--char", "bryan", "--reps", "0"])
+    assert rc == 2
+    assert "--reps must be at least 1" in capsys.readouterr().err

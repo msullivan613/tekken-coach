@@ -149,6 +149,12 @@ def _map_moves_command(args: argparse.Namespace) -> int:
         if user not in ("p1", "p2"):
             print(f"error: --user must be p1 or p2, got {args.user!r}", file=sys.stderr)
             return 2
+        if args.hz <= 0:
+            print(f"error: --hz must be positive, got {args.hz!r}", file=sys.stderr)
+            return 2
+        if args.reps < 1:
+            print(f"error: --reps must be at least 1, got {args.reps!r}", file=sys.stderr)
+            return 2
         from tekken_coach.framedata.movemap_live import run_live
 
         return run_live(
@@ -160,6 +166,9 @@ def _map_moves_command(args: argparse.Namespace) -> int:
             framedata_dir=args.framedata,
             version_override=args.version,
             overwrite=args.overwrite,
+            interval=1.0
+            / args.hz,  # Part A: poll fast enough to catch every game frame (brief #13)
+            reps=args.reps,  # Part B: gather N reps and reduce before prompting
         )
 
     # --from-log: passive miner
@@ -367,6 +376,7 @@ def _add_map_moves_flags(parser: argparse.ArgumentParser) -> None:
     from tekken_coach.framedata.anchors import DEFAULT_ANCHORS_PATH
     from tekken_coach.framedata.loader import DEFAULT_FRAMEDATA_DIR
     from tekken_coach.framedata.loader import DEFAULT_MOVEMAP_DIR as FD_MOVEMAP_DIR
+    from tekken_coach.framedata.movemap_live import DEFAULT_LIVE_REPS
 
     parser.add_argument(
         "--from-log", default=None, help="mine an existing session .jsonl (Stage A)"
@@ -399,6 +409,18 @@ def _add_map_moves_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--process", default=GAME_PROCESS_NAME, help="(--live) target process name")
     parser.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR, help="(--live) offset-table dir")
     parser.add_argument("--version", default=None, help="(--live) override detected game version")
+    parser.add_argument(
+        "--hz",
+        type=float,
+        default=120.0,
+        help="(--live) target poll rate in Hz (default 120, ~2x oversample of 60 fps; brief #13)",
+    )
+    parser.add_argument(
+        "--reps",
+        type=int,
+        default=DEFAULT_LIVE_REPS,
+        help="(--live) blocked reps to gather per move before prompting (default 5; brief #13)",
+    )
 
 
 def _add_fetch_framedata_flags(parser: argparse.ArgumentParser) -> None:

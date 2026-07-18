@@ -10,11 +10,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from tekken_coach.framedata.movemap_build import MoveFingerprint
 from tekken_coach.framedata.movemap_live import (
     FrameObservation,
     LiveFingerprinter,
     LiveObservation,
+    MoveReducer,
+    PollMeter,
+    _reduced_on_block,
     observation_from_frames,
+    reduce_observations,
 )
 from tekken_coach.schemas import ActionState, CounterState, HeatState, PlayerFrame
 
@@ -270,3 +277,127 @@ def test_f3_live_trace_maps_to_f3_not_neutral() -> None:
 
     # The i16 truth surfaces on the phase-aligned repetition.
     assert any(e.fingerprint.startup == 16 for e in emissions)
+
+
+# ---------------------------------------------------------------------------
+# Multi-rep reduction (brief #13 §B): min startup, modal on-block, over N reps
+# ---------------------------------------------------------------------------
+
+
+def _blocked_obs(
+    *, move_id: int, startup: int, on_block: int, char_id: int = 12
+) -> LiveObservation:
+    """One blocked-contact observation, as the live loop would emit per rep."""
+    return LiveObservation(
+        fingerprint=MoveFingerprint(
+            char_id=char_id,
+            move_id=move_id,
+            on_block=on_block,
+            startup=startup,
+            blocked_samples=1,
+            total_samples=1,
+        ),
+        contacted=True,
+        blocked=True,
+    )
+
+
+def test_reduce_recovers_min_startup_and_modal_on_block() -> None:
+    """Truth i16/−4; per-rep startup is one-sided high and on-block is symmetric → recover (16, −4).
+
+    Startup detection is always late (sampled the poll *after* contact), so no rep reads below 16
+    and the MIN lands on the truth. On-block is a difference of two late-sampled instants, so it
+    scatters both ways around −4, and its MODE converges. This is exactly why standing-3 (i16, −4)
+    surfaces once the input is accurate — the value it was missing before.
+    """
+    reps = [
+        _blocked_obs(move_id=1573, startup=16, on_block=-4),  # phase-aligned
+        _blocked_obs(move_id=1573, startup=17, on_block=-6),
+        _blocked_obs(move_id=1573, startup=18, on_block=-4),
+        _blocked_obs(move_id=1573, startup=17, on_block=-2),
+        _blocked_obs(move_id=1573, startup=19, on_block=-4),
+    ]
+    fp = reduce_observations(reps)
+    assert fp.startup == 16  # MIN, never the biased-high mean/median
+    assert fp.on_block == -4  # MODAL over the symmetric scatter
+    assert fp.blocked_samples == 5
+    assert fp.total_samples == 5
+    assert fp.move_id == 1573
+    assert fp.char_id == 12
+
+
+def test_reduce_startup_min_ignores_hit_only_reps_for_on_block() -> None:
+    """A hit rep contributes startup but no on-block; on-block reduces over blocked reps only."""
+    hit = LiveObservation(
+        fingerprint=MoveFingerprint(
+            char_id=12, move_id=800, on_block=None, startup=14, blocked_samples=0, total_samples=1
+        ),
+        contacted=True,
+        blocked=False,
+    )
+    reps = [
+        hit,
+        _blocked_obs(move_id=800, startup=15, on_block=-2),
+        _blocked_obs(move_id=800, startup=16, on_block=-2),
+    ]
+    fp = reduce_observations(reps)
+    assert fp.startup == 14  # min over all contacted reps (hit included)
+    assert fp.on_block == -2  # only the two blocked reps feed on-block
+    assert fp.blocked_samples == 2
+    assert fp.total_samples == 3
+
+
+def test_reduce_needs_at_least_one_observation() -> None:
+    with pytest.raises(ValueError):
+        reduce_observations([])
+
+
+def test_reduced_on_block_breaks_a_modal_tie_by_median() -> None:
+    """A unique mode wins; an even tie is broken by the (lower) median of the tied modes."""
+    assert _reduced_on_block([-6, -4, -4, -2]) == -4  # unique mode
+    assert _reduced_on_block([-5, -4, -4, -3, -3]) == -4  # tie {-4,-3} → lower-median −4
+    assert _reduced_on_block([]) is None
+
+
+def test_move_reducer_accumulates_until_ready_then_reduces() -> None:
+    """The accumulator holds reps per move-id and is ready once the target count is reached."""
+    reducer = MoveReducer(reps=3)
+    for startup, on_block in ((16, -4), (18, -6), (17, -4)):
+        assert reducer.is_ready(1573) is False
+        reducer.add(_blocked_obs(move_id=1573, startup=startup, on_block=on_block))
+    assert reducer.count(1573) == 3
+    assert reducer.is_ready(1573) is True
+    fp = reducer.reduce(1573)
+    assert (fp.startup, fp.on_block) == (16, -4)
+
+
+def test_move_reducer_pending_flush_set_respects_min_reps_and_order() -> None:
+    """`pending` is the Ctrl-C flush set: move-ids with ≥ min_reps samples, in first-seen order."""
+    reducer = MoveReducer(reps=5)
+    reducer.add(_blocked_obs(move_id=100, startup=12, on_block=-1))
+    reducer.add(_blocked_obs(move_id=100, startup=13, on_block=-1))
+    reducer.add(_blocked_obs(move_id=200, startup=20, on_block=-5))  # only one rep
+    assert reducer.pending(min_reps=2) == [100]  # 200 is a rep short
+    assert reducer.pending(min_reps=1) == [100, 200]  # first-seen order preserved
+
+
+def test_move_reducer_reps_floor_is_one() -> None:
+    """A nonsensical reps<1 is floored to 1 so a single observation is immediately ready."""
+    reducer = MoveReducer(reps=0)
+    reducer.add(_blocked_obs(move_id=1, startup=10, on_block=0))
+    assert reducer.is_ready(1) is True
+
+
+def test_poll_meter_reports_achieved_hz() -> None:
+    """The meter averages recorded poll-to-poll intervals into a rate; non-positive gaps ignored."""
+    meter = PollMeter()
+    assert meter.hz == 0.0  # nothing recorded yet
+    for _ in range(4):
+        meter.record(0.01)  # 10 ms between polls → 100 Hz
+    meter.record(0.0)  # a stalled/duplicate frame contributes nothing
+    meter.record(-0.5)  # a clock hiccup is ignored, never negative-weighting the rate
+    assert meter.polls == 4
+    assert meter.hz == pytest.approx(100.0)
+    assert "100 Hz" in meter.summary(target_hz=120.0)
+    assert "target 120 Hz" in meter.summary(target_hz=120.0)
+    assert "no cap" in meter.summary(target_hz=0.0)

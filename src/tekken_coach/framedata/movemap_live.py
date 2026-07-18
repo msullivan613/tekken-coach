@@ -18,6 +18,7 @@ and startup breaks the on-block ties that collide the passive path.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,12 @@ from tekken_coach.framedata.loader import DEFAULT_FRAMEDATA_DIR, DEFAULT_MOVEMAP
 from tekken_coach.framedata.movemap_build import MoveFingerprint, join_move
 from tekken_coach.framedata.movemap_miner import merge_mappings
 from tekken_coach.schemas import ActionState, PlayerFrame
+
+# How many observations of one move-id the live loop gathers before it reduces and prompts. The user
+# is told to do each move ~5x on block (brief #13 §B), so a single poll-jitter rep never decides the
+# reading: startup is reduced by MIN (its noise is one-sided high) and on-block by the mode (its
+# noise is two-sided), which needs a few reps to converge.
+DEFAULT_LIVE_REPS = 5
 
 
 @dataclass(frozen=True)
@@ -179,6 +186,145 @@ class LiveFingerprinter:
         return LiveObservation(fingerprint=fingerprint, contacted=contacted, blocked=blocked)
 
 
+# ---------------------------------------------------------------------------
+# Multi-rep reduction (pure; unit-tested) — brief #13 §B
+# ---------------------------------------------------------------------------
+#
+# A single live rep is ±~1 frame even at 120 Hz, and its two components carry *different-shaped*
+# noise, so they must be reduced differently:
+#
+# * **startup** is detected on the first poll *after* the defender enters block-stun, so an observed
+#   startup never lands below the true value — the noise is **one-sided high**. The MIN across reps
+#   therefore approaches the truth and never undershoots; a mean/median would sit biased high.
+# * **on_block** is the difference of two *independently* late-sampled recovery instants, so its
+#   noise is **two-sided** (±). The MODAL value across reps converges on the truth.
+#
+# The reducer below is pure, so it is unit-tested; the live loop only decides *when* to reduce.
+
+
+def _reduced_startup(startups: list[int]) -> int | None:
+    """MIN startup across reps — detection is always late, so the min approaches truth (#13)."""
+    return min(startups) if startups else None
+
+
+def _reduced_on_block(values: list[int]) -> int | None:
+    """MODAL on-block across reps, median-tiebroken (brief #13 §B).
+
+    On-block noise is two-sided, so the mode converges on the true value. A tie between
+    equally-frequent values is broken by the (lower) median of those tied modes — the centre of the
+    symmetric jitter — rather than discarded as "no consensus": the user has already performed the
+    move several times and expects a reading, unlike the log path where a tie is truly ambiguous.
+    """
+    if not values:
+        return None
+    counts = Counter(values)
+    top = max(counts.values())
+    modes = sorted(v for v, c in counts.items() if c == top)
+    return modes[(len(modes) - 1) // 2]
+
+
+def reduce_observations(observations: list[LiveObservation]) -> MoveFingerprint:
+    """Reduce repeated observations of one move-id to a consensus fingerprint (brief #13 §B).
+
+    Pure: given per-rep :class:`LiveObservation`s of the *same* move-id, combine them into one
+    :class:`MoveFingerprint` whose ``startup`` is the min over contacted reps (one-sided-high noise)
+    and whose ``on_block`` is the modal blocked advantage (two-sided noise). ``blocked_samples`` /
+    ``total_samples`` carry the rep counts the join already understands. The reduced fingerprint is
+    what feeds the (unchanged) :func:`join_move`, so accurate input surfaces the true candidate.
+    """
+    if not observations:
+        raise ValueError("reduce_observations needs at least one observation")
+    first = observations[0].fingerprint
+    startups = [
+        o.fingerprint.startup
+        for o in observations
+        if o.contacted and o.fingerprint.startup is not None
+    ]
+    blocked_advs = [
+        o.fingerprint.on_block
+        for o in observations
+        if o.blocked and o.fingerprint.on_block is not None
+    ]
+    return MoveFingerprint(
+        char_id=first.char_id,
+        move_id=first.move_id,
+        on_block=_reduced_on_block(blocked_advs),
+        startup=_reduced_startup(startups),
+        blocked_samples=len(blocked_advs),
+        total_samples=len(observations),
+    )
+
+
+class MoveReducer:
+    """Accumulate live observations per move-id and reduce them on demand (brief #13 §B, pure).
+
+    The live loop feeds every contacted observation via :meth:`add`; once a move-id reaches ``reps``
+    samples it :meth:`is_ready` and the loop reduces (:meth:`reduce`) and prompts. On Ctrl-C the
+    loop flushes whatever partial accumulations remain (:meth:`pending`) so the reps are not lost.
+    Pure (no I/O) and unit-tested; the loop only decides *when* to prompt (``# pragma: no cover``).
+    """
+
+    def __init__(self, reps: int = DEFAULT_LIVE_REPS) -> None:
+        self._reps = max(1, reps)
+        self._obs: dict[int, list[LiveObservation]] = {}
+
+    def add(self, observation: LiveObservation) -> None:
+        """Record one contacted observation under its move-id (first-seen order preserved)."""
+        self._obs.setdefault(observation.fingerprint.move_id, []).append(observation)
+
+    def count(self, move_id: int) -> int:
+        """How many observations have been gathered for ``move_id`` so far."""
+        return len(self._obs.get(move_id, []))
+
+    def is_ready(self, move_id: int) -> bool:
+        """True once ``reps`` observations of ``move_id`` are gathered — time to reduce + prompt."""
+        return self.count(move_id) >= self._reps
+
+    def reduce(self, move_id: int) -> MoveFingerprint:
+        """The consensus fingerprint over every observation gathered for ``move_id``."""
+        return reduce_observations(self._obs[move_id])
+
+    def pending(self, *, min_reps: int = 1) -> list[int]:
+        """Move-ids with at least ``min_reps`` samples, first-seen order (the Ctrl-C flush set)."""
+        return [mid for mid, obs in self._obs.items() if len(obs) >= min_reps]
+
+
+class PollMeter:
+    """Measure the achieved live poll rate — a correctness property, not a vanity metric (#13).
+
+    ``map-moves --live`` must sample every game frame (~60 fps) or startup/on-block re-acquire the
+    ~3-frame jitter this brief set out to remove. The loop targets ~120 Hz, but a target it cannot
+    sustain silently re-introduces that jitter, so the run measures the real poll-to-poll cadence
+    and prints it (like brief #11's ``PollRate`` heartbeat). Pure arithmetic (fed poll-to-poll
+    deltas) so it is unit-tested; the loop that feeds it is ``# pragma: no cover``.
+    """
+
+    def __init__(self) -> None:
+        self._intervals = 0
+        self._elapsed = 0.0
+
+    def record(self, dt: float) -> None:
+        """Record one poll-to-poll interval in seconds; non-positive gaps are ignored."""
+        if dt > 0:
+            self._intervals += 1
+            self._elapsed += dt
+
+    @property
+    def polls(self) -> int:
+        """Number of measured poll-to-poll intervals (≈ polls − 1)."""
+        return self._intervals
+
+    @property
+    def hz(self) -> float:
+        """Observed polls per second (0.0 before the first interval is recorded)."""
+        return self._intervals / self._elapsed if self._elapsed > 0 else 0.0
+
+    def summary(self, target_hz: float) -> str:
+        """The heartbeat / end-of-run line: achieved rate against the requested target."""
+        target = f"target {target_hz:.0f} Hz" if target_hz > 0 else "no cap"
+        return f"poll rate: {self.hz:.0f} Hz ({target}) over {self._intervals} polls"
+
+
 def observation_from_frames(attacker: PlayerFrame, defender: PlayerFrame) -> FrameObservation:
     """Project the two player frames into the fingerprinter's per-frame input (brief #6 §B)."""
     return FrameObservation(
@@ -198,6 +344,9 @@ def observation_from_frames(attacker: PlayerFrame, defender: PlayerFrame) -> Fra
 # ---------------------------------------------------------------------------
 
 
+HEARTBEAT_SECONDS = 3.0  # how often the live loop prints its achieved poll rate while watching
+
+
 def run_live(
     *,
     char: str,
@@ -208,14 +357,22 @@ def run_live(
     framedata_dir: str | Path = DEFAULT_FRAMEDATA_DIR,
     version_override: str | None = None,
     overwrite: bool = False,
-    interval: float = 0.05,
-) -> int:  # pragma: no cover - endless live loop + keypress prompt; LiveFingerprinter is tested
+    interval: float = 1.0 / 120,
+    reps: int = DEFAULT_LIVE_REPS,
+) -> int:  # pragma: no cover - endless live loop + keypress prompt; the decision core is tested
     """Watch the user's character live, prompt to confirm each new move-id's mapping (brief #6 §B).
 
     Attaches read-only, decodes both players each poll, feeds the target attacker's frames to a
-    :class:`LiveFingerprinter`, and on each newly-observed move-id shows the ranked Wavu candidates
-    and asks for a one-key confirm. Each confirm merges immediately (:func:`merge_mappings`), so a
-    Ctrl-C keeps every mapping made so far.
+    :class:`LiveFingerprinter`, and gathers ``reps`` observations of each new move-id before showing
+    the ranked Wavu candidates and asking for a one-key confirm. Each confirm merges immediately
+    (:func:`merge_mappings`), so a Ctrl-C keeps every mapping made so far.
+
+    Two levers keep the fed numbers frame-accurate (#13). **Part A** paces the loop to a target
+    *period* (``interval`` seconds, ~120 Hz default) — subtracting the work already done each iter,
+    not sleeping a flat extra ``interval`` — so ``move_frame`` advances ≤1 per poll, and it measures
+    and prints the *achieved* Hz (a rate it can't sustain silently re-introduces the jitter). **Part
+    B** reduces the ``reps`` observations per move to (min startup, modal on-block) before the join,
+    so a single poll's ±1 jitter never decides the reading.
     """
     import sys
     import time
@@ -247,57 +404,127 @@ def run_live(
 
         return _report_fault(exc)
 
+    target_hz = (1.0 / interval) if interval > 0 else 0.0
     print(f"map-moves --live: mapping {char} (P{user_player + 1}) on {version} — Ctrl-C to stop")
-    print("perform each move on block; confirm the matched notation with Enter, or 's' to skip.\n")
+    print(f"perform each move on block ~{reps}x; confirm the matched notation with Enter, or 's'.")
+    if target_hz > 0:
+        print(
+            f"polling at ~{target_hz:.0f} Hz (--hz to tune) — the achieved rate is printed live.\n"
+        )
+    else:
+        print("polling as fast as reads allow — the achieved rate is printed live.\n")
 
     fingerprinter: LiveFingerprinter | None = None
-    seen: set[int] = set()
+    reducer = MoveReducer(reps)
+    meter = PollMeter()
+    prompted: set[int] = set()
     mapped: dict[int, str] = {}
+
+    def _confirm_and_merge(fingerprint: MoveFingerprint, char_id: int) -> None:
+        """Prompt for the reduced fingerprint and merge on confirm (merge-on-confirm contract)."""
+        chosen = _prompt_confirm(fingerprint, char_fd, reps=reducer.count(fingerprint.move_id))
+        if chosen is not None:
+            mapped[fingerprint.move_id] = chosen
+            merge_mappings(
+                slug,
+                char_fd,
+                game_version,
+                [(fingerprint.move_id, chosen)],
+                char_id=char_id,
+                movemap_dir=movemap_dir,
+                overwrite=overwrite,
+            )
+            print(f"  ✓ wrote {fingerprint.move_id} -> {chosen}\n")
+
+    last_poll: float | None = (
+        None  # start of the previous successful poll (None resets the cadence)
+    )
+    last_beat = time.monotonic()
+    next_poll = time.monotonic()  # the target start time of the next poll (period-paced, Part A)
 
     try:
         while True:
+            iter_start = time.monotonic()
             try:
                 frame = decode_frame(source, table)
             except MemoryReadError:
-                time.sleep(interval)
+                # Can't read yet (menu/load) — pace and retry; this is not a real poll, so it must
+                # not enter the rate (and it breaks the poll-to-poll cadence).
+                last_poll = None
+                if interval > 0:
+                    time.sleep(interval)
+                next_poll = time.monotonic()
                 continue
+            if last_poll is not None:
+                meter.record(iter_start - last_poll)
+            last_poll = iter_start
+
             attacker = frame.players[user_player]
             defender = frame.players[1 - user_player]
             if fingerprinter is None or fingerprinter._char_id != attacker.char_id:
                 fingerprinter = LiveFingerprinter(attacker.char_id)
             obs = fingerprinter.feed(observation_from_frames(attacker, defender))
-            if obs is not None and obs.contacted and obs.fingerprint.move_id not in seen:
-                seen.add(obs.fingerprint.move_id)
-                chosen = _prompt_confirm(obs, char_fd)
-                if chosen is not None:
-                    mapped[obs.fingerprint.move_id] = chosen
-                    merge_mappings(
-                        slug,
-                        char_fd,
-                        game_version,
-                        [(obs.fingerprint.move_id, chosen)],
-                        char_id=attacker.char_id,
-                        movemap_dir=movemap_dir,
-                        overwrite=overwrite,
-                    )
-                    print(f"  ✓ wrote {obs.fingerprint.move_id} -> {chosen}\n")
-            time.sleep(interval)
+
+            prompted_now = False
+            if obs is not None and obs.contacted and obs.fingerprint.move_id not in prompted:
+                move_id = obs.fingerprint.move_id
+                reducer.add(obs)
+                if reducer.is_ready(move_id):
+                    prompted.add(move_id)
+                    _confirm_and_merge(reducer.reduce(move_id), attacker.char_id)
+                    prompted_now = True
+
+            now = time.monotonic()
+            if now - last_beat >= HEARTBEAT_SECONDS:
+                print(f"  … {meter.summary(target_hz)}")
+                last_beat = now
+
+            if prompted_now:
+                # The prompt blocked for arbitrary human time; don't count that gap as a poll
+                # interval, and restart the cadence and heartbeat from here.
+                last_poll = None
+                next_poll = time.monotonic()
+                last_beat = time.monotonic()
+                continue
+            if interval > 0:
+                # Pace to the target *period*: sleep only the remainder after this iter's work, so
+                # the poll rate is 1/interval (not 1/(interval + decode-time)), brief #13 Part A.
+                next_poll += interval
+                remaining = next_poll - time.monotonic()
+                if remaining > 0:
+                    time.sleep(remaining)
+                else:
+                    next_poll = time.monotonic()  # fell behind; don't burst to catch up
     except KeyboardInterrupt:
+        # Flush partial accumulations (≥2 reps) so the user's work isn't lost — jitter/whiffs can
+        # leave a move a rep short of the target, and it would otherwise never prompt.
+        leftover = [mid for mid in reducer.pending(min_reps=2) if mid not in prompted]
+        if leftover and fingerprinter is not None:
+            print(f"\ngathered {len(leftover)} partial move(s) — confirm them now:")
+            for move_id in leftover:
+                prompted.add(move_id)
+                _confirm_and_merge(reducer.reduce(move_id), fingerprinter._char_id)
         print(f"\nstopped — {len(mapped)} move-id(s) mapped this session.")
+        print(f"  {meter.summary(target_hz)}")
     return 0
 
 
-def _prompt_confirm(obs: LiveObservation, char_fd: object) -> str | None:  # pragma: no cover - I/O
-    """Show ranked candidates for an observed move and read a one-key confirm (brief #6 §B)."""
+def _prompt_confirm(
+    fp: MoveFingerprint, char_fd: object, *, reps: int
+) -> str | None:  # pragma: no cover - I/O
+    """Show ranked candidates for a reduced move fingerprint and read a one-key confirm (#6 §B).
+
+    ``fp`` is the multi-rep consensus (min startup, modal on-block; brief #13 §B), and ``reps`` is
+    how many observations backed it — surfaced so the user can weigh a thin reading.
+    """
     from tekken_coach.framedata.models import CharFrameData
 
     assert isinstance(char_fd, CharFrameData)
-    fp = obs.fingerprint
     result = join_move(fp, char_fd)
     detail = f"startup≈{fp.startup}" + (
         f" on_block≈{fp.on_block:+d}" if fp.on_block is not None else " (hit; no on_block)"
     )
-    print(f"move_id {fp.move_id}: {detail}")
+    print(f"move_id {fp.move_id} (from {reps} rep{'s' if reps != 1 else ''}): {detail}")
     if not result.candidates:
         print(f"  no candidate ({result.reason}); skipping.\n")
         return None
