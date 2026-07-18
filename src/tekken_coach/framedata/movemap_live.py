@@ -22,7 +22,11 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from tekken_coach.framedata.loader import DEFAULT_FRAMEDATA_DIR, DEFAULT_MOVEMAP_DIR
+from tekken_coach.framedata.loader import (
+    DEFAULT_FRAMEDATA_DIR,
+    DEFAULT_MOVEMAP_DIR,
+    load_char_move_map,
+)
 from tekken_coach.framedata.movemap_build import MoveFingerprint, join_move_live
 from tekken_coach.framedata.movemap_miner import merge_mappings
 from tekken_coach.schemas import ActionState, PlayerFrame
@@ -353,6 +357,26 @@ def observation_from_frames(attacker: PlayerFrame, defender: PlayerFrame) -> Fra
 HEARTBEAT_SECONDS = 3.0  # how often the live loop prints its achieved poll rate while watching
 
 
+def already_mapped_ids(movemap_dir: str | Path, slug: str, *, overwrite: bool) -> set[int]:
+    """Move_ids to skip at the start of a live session: the ones already on disk (brief #16).
+
+    A grind spans many sessions, so a fresh run must not re-prompt moves already committed to
+    ``<movemap_dir>/<slug>.json`` — the skip-set is pre-seeded with them. Empty when the character
+    has no movemap yet (first-ever session — a missing file is not an error), or when ``overwrite``
+    is set (the user explicitly wants every detected move re-mapped, so nothing is pre-skipped).
+
+    The on-disk keys are the game ``move_id`` as JSON **strings** (:class:`CharMoveMap`); they are
+    converted to ``int`` to match the live fingerprinter's ids. Pure and unit-tested; the live loop
+    that consumes the set is ``# pragma: no cover``.
+    """
+    if overwrite:
+        return set()
+    path = Path(movemap_dir) / f"{slug}.json"
+    if not path.exists():
+        return set()
+    return {int(move_id) for move_id in load_char_move_map(path).moves}
+
+
 def run_live(
     *,
     char: str,
@@ -423,7 +447,17 @@ def run_live(
     fingerprinter: LiveFingerprinter | None = None
     reducer = MoveReducer(reps)
     meter = PollMeter()
-    prompted: set[int] = set()
+    # Pre-seed the skip-set from what's already committed so a multi-session grind never re-prompts
+    # a mapped move (brief #16). --overwrite clears the seed: the user wants every detected move
+    # back on the table.
+    prompted = already_mapped_ids(movemap_dir, slug, overwrite=overwrite)
+    if overwrite:
+        print(f"{slug}: --overwrite set — re-mapping all detected moves")
+    else:
+        print(
+            f"resuming {slug}: {len(prompted)} already mapped — "
+            f"skipping (use --overwrite to re-map)"
+        )
     mapped: dict[int, str] = {}
 
     def _confirm_and_merge(fingerprint: MoveFingerprint, char_id: int) -> None:

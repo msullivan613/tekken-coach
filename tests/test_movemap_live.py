@@ -20,6 +20,7 @@ from tekken_coach.framedata.movemap_live import (
     MoveReducer,
     PollMeter,
     _reduced_on_block,
+    already_mapped_ids,
     observation_from_frames,
     reduce_observations,
 )
@@ -401,3 +402,43 @@ def test_poll_meter_reports_achieved_hz() -> None:
     assert "100 Hz" in meter.summary(target_hz=120.0)
     assert "target 120 Hz" in meter.summary(target_hz=120.0)
     assert "no cap" in meter.summary(target_hz=0.0)
+
+
+# ---------------------------------------------------------------------------
+# Skip-set pre-seeding (brief #16) — already_mapped_ids
+# ---------------------------------------------------------------------------
+
+
+def _write_movemap(path: Path, move_ids: list[int]) -> None:
+    """Write a minimal but valid CharMoveMap JSON with the given (int) move_ids as string keys."""
+    moves = {str(mid): {"notation": f"m{mid}", "framedata_key": f"k{mid}"} for mid in move_ids}
+    path.write_text(
+        json.dumps(
+            {"char_name": "bryan", "game_version": "2.01.01", "moves": moves},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_already_mapped_ids_seeds_from_existing_movemap(tmp_path: Path) -> None:
+    """The skip-set is the on-disk move_ids, converted from JSON string keys to int (brief #16)."""
+    _write_movemap(tmp_path / "bryan.json", [1695, 2048])
+    assert already_mapped_ids(tmp_path, "bryan", overwrite=False) == {1695, 2048}
+
+
+def test_already_mapped_ids_missing_file_is_empty(tmp_path: Path) -> None:
+    """A first-ever session (no movemap file) returns an empty set, never raising (brief #16)."""
+    assert already_mapped_ids(tmp_path, "nobody", overwrite=False) == set()
+
+
+def test_already_mapped_ids_overwrite_bypasses_seed(tmp_path: Path) -> None:
+    """--overwrite re-maps everything, so nothing is pre-skipped even with a populated map (#16)."""
+    _write_movemap(tmp_path / "bryan.json", [1695, 2048])
+    assert already_mapped_ids(tmp_path, "bryan", overwrite=True) == set()
+
+
+def test_already_mapped_ids_empty_moves_is_empty(tmp_path: Path) -> None:
+    """A movemap with no bound moves yet yields an empty skip-set (brief #16)."""
+    _write_movemap(tmp_path / "bryan.json", [])
+    assert already_mapped_ids(tmp_path, "bryan", overwrite=False) == set()
