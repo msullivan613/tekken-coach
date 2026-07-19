@@ -851,21 +851,18 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
         REAL_MOVE_ID_MAX,
         MoveSample,
         MovesArray,
+        describe_slots,
         dump_move,
         find_cancels_ptr_offset,
+        format_slot_key,
         locate_moves_base_holder,
+        sample_player_slots,
         solve_moves_array,
     )
     from tekken_coach.reader.discovery.moveset_scan import _find_value_locations  # noqa: PLC0415
     from tekken_coach.reader.moveset import gate_pairs_for  # noqa: PLC0415
     from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
-    from tekken_coach.reader.slots import (  # noqa: PLC0415
-        DEFAULT_SLOT_END,
-        DEFAULT_SLOT_START,
-        RegionIndex,
-        is_plausible_pointer,
-        pointer_candidates,
-    )
+    from tekken_coach.reader.slots import RegionIndex  # noqa: PLC0415
     from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
     from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
 
@@ -884,10 +881,9 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
 
     # Phase 1: solve moves_base + move_stride, unless the user supplied them to re-run the dumps.
     if args.moves_base is not None and args.move_stride is not None:
-        moves = MovesArray(slot_offset=-1, moves_base=args.moves_base, move_stride=args.move_stride)
+        moves = MovesArray(slot_key=(), moves_base=args.moves_base, move_stride=args.move_stride)
         print(f"using given moves_base=0x{moves.moves_base:x} stride=0x{moves.move_stride:x}\n")
     else:
-        start, end = DEFAULT_SLOT_START, DEFAULT_SLOT_END
         regions = RegionIndex(source.regions())
         print(
             f"grounding {args.char}'s moves array on the live move_id (P{args.player}) on {version}"
@@ -898,6 +894,7 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
         )
         samples: list[MoveSample] = []
         seen: set[int] = set()
+        prev_id: int | None = None  # brief #22: require a move_id steady across 2 polls before use
         try:
             for _ in range(args.polls):
                 try:
@@ -905,18 +902,23 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
                     move_id = int(
                         read_scalar(source, base + move_id_spec.offset, move_id_spec.kind)
                     )
-                    if move_id < REAL_MOVE_ID_MAX and move_id not in seen:
-                        block = source.read(base + start, end - start)
-                        slots = {
-                            off: val
-                            for off, val in pointer_candidates(block, start=start)
-                            if is_plausible_pointer(val, regions)
-                        }
+                    # Only sample a real id once it has held for two consecutive polls, so the
+                    # sampled pointers are read from a poll where move_id had settled (drops the
+                    # brief movement-animation flashes and first-frame move_id/pointer desync).
+                    if move_id < REAL_MOVE_ID_MAX and move_id not in seen and move_id == prev_id:
+                        slots = sample_player_slots(
+                            source,
+                            base,
+                            regions,
+                            direct_end=args.window,
+                            hop_end=args.hop_window,
+                        )
                         samples.append(MoveSample(move_id, slots))
                         seen.add(move_id)
                         print(f"  captured move_id {move_id} ({len(seen)} distinct)")
+                    prev_id = move_id
                 except MemoryReadError:
-                    pass  # menu / between-round transient — skip this poll, keep sampling
+                    prev_id = None  # menu / transient — reset the steadiness gate, keep sampling
                 time.sleep(args.interval)
         except KeyboardInterrupt:
             print("\nstopped sampling.")
@@ -929,10 +931,28 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
                 "move so a clean move_id is caught.",
                 file=sys.stderr,
             )
+            # Brief #22 diagnostic: report what DID move, so a failed run is signal not a dead end.
+            descriptions = describe_slots(samples)
+            varying = [d for d in descriptions if d.kind != "constant"]
+            if not varying:
+                print(
+                    "\nDIAGNOSTIC: no sampled slot (direct or one hop out) varied with move_id — "
+                    "nothing reachable this way caches a moves_base + id*stride pointer. Pivot to "
+                    "a different anchor rather than searching deeper.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"\nDIAGNOSTIC: {len(varying)} slot(s) varied with move_id but none solved; "
+                    "the closest-to-linear (chase these next):",
+                    file=sys.stderr,
+                )
+                for description in varying[:8]:
+                    print(f"  {description.describe()}", file=sys.stderr)
             return 1
         moves = solved
         print(
-            f"\nMOVES ARRAY SOLVED: current-move pointer at player +0x{moves.slot_offset:x}\n"
+            f"\nMOVES ARRAY SOLVED: current-move pointer at {format_slot_key(moves.slot_key)}\n"
             f"  moves_base = 0x{moves.moves_base:x}\n"
             f"  move_stride = 0x{moves.move_stride:x} ({moves.move_stride})\n"
         )
@@ -1365,6 +1385,20 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.02,
         help="seconds between samples (default 0.02, ~50 Hz).",
+    )
+    p_msanchor.add_argument(
+        "--window",
+        type=lambda s: int(s, 0),
+        default=0x4000,
+        help="how far past the player base to sweep for direct pointer slots (hex, default 0x4000; "
+        "widened past 0x1600 since #21 found no direct slot there).",
+    )
+    p_msanchor.add_argument(
+        "--hop-window",
+        type=lambda s: int(s, 0),
+        default=0x800,
+        help="the bounded sub-window swept inside each dereferenced pointer, one hop out (hex, "
+        "default 0x800).",
     )
     p_msanchor.add_argument(
         "--moves-base",
