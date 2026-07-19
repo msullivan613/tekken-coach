@@ -576,6 +576,217 @@ def probe_state_main(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_live_move_id(source: MemorySource, table: OffsetTable, index: int) -> int:
+    """Read one player's current ``move_id`` — the "strong check" input for moveset validation."""
+    from tekken_coach.reader.decode import read_scalar  # noqa: PLC0415
+
+    base = resolve_player_base(source, table, index)
+    spec = table.players.fields["move_id"]
+    return int(read_scalar(source, base + spec.offset, spec.kind))
+
+
+def moveset_probe_main(args: argparse.Namespace) -> int:  # pragma: no cover - live discovery shell
+    """``moveset-probe``: discover the player -> ``tk_moveset`` pointer slot (brief #18 Phase 1).
+
+    Reuses the #11 pointer-slot enumerator to list the player struct's plausible pointer slots, then
+    validates each candidate as a ``tk_moveset`` header by shape (bounded move/cancel counts,
+    readable arrays), the strong check (the live ``move_id`` is a valid move index), and the
+    decoder gate (the from-neutral cancels reproduce the character's known ``move_id -> notation``
+    anchors under the confirmed T8 command encoding). Read-only; prints the winning slot offset to
+    record in ``players.moveset_slot``. Degrades gracefully at the menu / a null slot like the other
+    live commands.
+    """
+    import time  # noqa: PLC0415
+
+    from tekken_coach.reader.moveset import BRYAN_GATE_PAIRS, validate_slot  # noqa: PLC0415
+    from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
+    from tekken_coach.reader.slots import (  # noqa: PLC0415
+        DEFAULT_SLOT_END,
+        DEFAULT_SLOT_START,
+        RegionIndex,
+        classify_slots,
+    )
+    from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
+    from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
+
+    try:
+        source = WinMemorySource(args.process)
+        version = args.version or detect_running_version(args.process)
+        table = select_offset_table(version, args.offsets)
+    except ReaderError as exc:
+        return _report_fault(exc)
+
+    start, end = DEFAULT_SLOT_START, DEFAULT_SLOT_END
+    size = end - start
+    index = args.player - 1
+    print(f"discovering the player -> tk_moveset pointer for P{args.player} on {version}")
+    print("stand in a Practice match as the target character; no presses needed.")
+
+    try:
+        regions = RegionIndex(source.regions())
+        samples: list[list[bytes]] = []
+        for _ in range(args.polls):
+            base = resolve_player_base(source, table, index)
+            samples.append([source.read(base + start, size)])
+            time.sleep(args.interval)
+        live_move_id = _read_live_move_id(source, table, index)
+    except ReaderError as exc:
+        return _report_fault(exc)
+    except KeyboardInterrupt:
+        print("\nstopped.")
+        return 1
+
+    findings = classify_slots(samples, regions, start=start)
+    plausible = [f for f in findings if f.plausible[0]]
+    print(
+        f"\nlive move_id = {live_move_id}; validating {len(plausible)} plausible pointer slot(s)\n"
+    )
+
+    winners: list[int] = []
+    print(f"{'slot':>8}  {'target':>18}  {'counts':>7}  {'ptrs':>5}  {'range':>6}  {'gate':>5}")
+    for finding in plausible:
+        target = finding.values[0]
+        verdict = validate_slot(source, target, live_move_id=live_move_id, pairs=BRYAN_GATE_PAIRS)
+        gate = "-"
+        if verdict.gate:
+            gate = f"{sum(r.found for r in verdict.gate)}/{len(verdict.gate)}"
+        print(
+            f"0x{finding.offset:<6x}  0x{target:>16x}  "
+            f"{'ok' if verdict.counts_plausible else 'xx':>7}  "
+            f"{'ok' if verdict.pointers_readable else 'xx':>5}  "
+            f"{'ok' if verdict.move_id_in_range else 'xx':>6}  {gate:>5}"
+        )
+        if verdict.is_moveset:
+            winners.append(finding.offset)
+
+    print()
+    if winners:
+        best = winners[0]
+        print(f"MOVESET SLOT FOUND: 0x{best:x} — record it in players.moveset_slot:")
+        print(f'  "moveset_slot": {{ "slot_offset": {best}, "pointer_path": [], "fields": {{}} }}')
+        if len(winners) > 1:
+            others = ", ".join(f"0x{w:x}" for w in winners[1:])
+            print(f"(also passed: {others} — confirm which is stable across character changes)")
+    else:
+        print("no slot validated as a tk_moveset. Confirm you are in a match on the target")
+        print("character, then re-run; if it persists the gate anchors may need this char's ids.")
+    return 0
+
+
+def moveset_build_main(args: argparse.Namespace) -> int:  # pragma: no cover - live build shell
+    """``moveset-build``: read the live moveset -> decode -> join -> write the movemap (Phase 2).
+
+    Depends on the Phase-1 discovery: with ``players.moveset_slot`` still ``null`` it reports
+    "moveset offset not yet discovered" and exits cleanly (brief #18). Owner attribution also needs
+    the ``tk_move`` cancel-range layout (undocumented in our tables — see
+    :class:`~tekken_coach.reader.moveset.MoveLayout`); supply it with ``--move-size`` /
+    ``--cancel-ptr-offset`` / ``--cancel-count-offset`` / ``--neutral-move-id`` once the live run
+    confirms them; otherwise the build reports the gap and exits. When both are present it rebuilds
+    ``move_id -> notation``, merges the notations that resolve to a real ``framedata_key`` into
+    ``assets/movemap/<char>.json``, and prints a hit/miss self-check against the committed ids.
+    """
+    from tekken_coach.framedata.loader import load_current_framedata  # noqa: PLC0415
+    from tekken_coach.framedata.movemap_miner import merge_mappings  # noqa: PLC0415
+    from tekken_coach.reader.decode import resolve_component  # noqa: PLC0415
+    from tekken_coach.reader.moveset import (  # noqa: PLC0415
+        MoveLayout,
+        build_notation_map,
+        self_check,
+    )
+    from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
+    from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
+    from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
+
+    try:
+        source = WinMemorySource(args.process)
+        version = args.version or detect_running_version(args.process)
+        table = select_offset_table(version, args.offsets)
+    except ReaderError as exc:
+        return _report_fault(exc)
+
+    slot = table.players.moveset_slot
+    if slot is None:
+        print(
+            "moveset offset not yet discovered — players.moveset_slot is null. Run "
+            "`moveset-probe` live first to find it (brief #18 Phase 1).",
+            file=sys.stderr,
+        )
+        return 0
+
+    layout_args = (args.move_size, args.cancel_ptr_offset, args.cancel_count_offset)
+    if any(a is None for a in layout_args) or args.neutral_move_id is None:
+        print(
+            "tk_move cancel-range layout not confirmed. Owner attribution needs --move-size, "
+            "--cancel-ptr-offset, --cancel-count-offset and --neutral-move-id (confirmed by the "
+            "live self-check). Without them a string-only move would be mis-mapped, so the build "
+            "declines rather than write a wrong notation (docs/05 §2.3).",
+            file=sys.stderr,
+        )
+        return 0
+
+    layout = MoveLayout(
+        size=args.move_size,
+        cancel_ptr_offset=args.cancel_ptr_offset,
+        cancel_count_offset=args.cancel_count_offset,
+    )
+    index = args.player - 1
+    try:
+        base = resolve_player_base(source, table, index)
+        moveset_ptr = resolve_component(source, base, slot)
+        result = build_notation_map(
+            source, moveset_ptr, layout, neutral_move_id=args.neutral_move_id
+        )
+    except ReaderError as exc:
+        return _report_fault(exc)
+
+    print(
+        f"rebuilt {len(result.notation)} move_id -> notation "
+        f"({len(result.collisions)} collisions, {len(result.unresolved)} unresolved)"
+    )
+
+    snapshot = load_current_framedata()
+    char_fd = snapshot.get_char(args.char.lower())
+    if char_fd is None:
+        print(
+            f"no frame-data snapshot for {args.char!r} — run `fetch-framedata {args.char}` first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Only write notations that resolve to a real framedata_key; the rest are honest needs-manual.
+    mappable = [(mid, note) for mid, note in result.notation.items() if note in char_fd.moves]
+    unknown_key = sorted(mid for mid, note in result.notation.items() if note not in char_fd.moves)
+    merge = merge_mappings(
+        args.char.lower(),
+        char_fd,
+        snapshot.manifest.game_version or version,
+        mappable,
+        movemap_dir=args.movemap,
+        overwrite=args.overwrite,
+    )
+    verb = "created" if merge.created else "updated"
+    print(
+        f"{verb} {merge.path}: +{len(merge.written)} new, "
+        f"{len(merge.overwritten)} overwritten, {len(merge.preserved)} preserved"
+    )
+    if unknown_key:
+        print(f"{len(unknown_key)} rebuilt notation(s) match no framedata_key (needs-manual)")
+
+    # Self-check against the committed ids already in the movemap (Bryan's ground truth).
+    from tekken_coach.framedata.loader import load_char_move_map  # noqa: PLC0415
+
+    map_path = Path(args.movemap) / f"{args.char.lower()}.json"
+    if map_path.exists():
+        committed = {int(k): e.notation for k, e in load_char_move_map(map_path).moves.items()}
+        rows = self_check(result.notation, committed)
+        hits = sum(1 for r in rows if r.status == "HIT")
+        misses = [r for r in rows if r.status == "MISS"]
+        print(f"\nself-check vs {map_path}: {hits}/{len(rows)} hit")
+        for r in misses:
+            print(f"  MISS {r.move_id}: expected {r.expected!r}, rebuilt {r.got!r}")
+    return 0
+
+
 def _live_monitor_stream(
     source: MemorySource, table: OffsetTable, interval: float
 ) -> Iterator[
@@ -881,6 +1092,69 @@ def build_parser() -> argparse.ArgumentParser:
         "match_phase / game_mode across menu/round/results transitions. Requires --watch.",
     )
     p_probe.set_defaults(func=probe_state_main)
+
+    p_msprobe = sub.add_parser(
+        "moveset-probe",
+        help="discover the player -> tk_moveset pointer slot (brief #18 Phase 1; read-only)",
+    )
+    p_msprobe.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR)
+    p_msprobe.add_argument("--version", default=None, help="override detected version")
+    p_msprobe.add_argument("--interval", type=float, default=0.05, help="poll interval, seconds")
+    p_msprobe.add_argument(
+        "--polls",
+        type=int,
+        default=20,
+        help="polls to sample before classifying the pointer slots (default 20).",
+    )
+    p_msprobe.add_argument(
+        "--player", type=int, default=1, help="which player to probe (1 or 2; default 1)"
+    )
+    p_msprobe.set_defaults(func=moveset_probe_main)
+
+    p_msbuild = sub.add_parser(
+        "moveset-build",
+        help="read the live moveset -> decode -> join -> write the movemap (brief #18 Phase 2)",
+    )
+    p_msbuild.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR)
+    p_msbuild.add_argument("--movemap", default=DEFAULT_MOVEMAP_DIR)
+    p_msbuild.add_argument("--version", default=None, help="override detected version")
+    p_msbuild.add_argument(
+        "--char", required=True, help="the character to build the movemap for (e.g. bryan)"
+    )
+    p_msbuild.add_argument(
+        "--player", type=int, default=1, help="which player's moveset to read (1 or 2; default 1)"
+    )
+    p_msbuild.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace already-mapped ids instead of preserving them (brief #16 skip-on-resume).",
+    )
+    p_msbuild.add_argument(
+        "--move-size",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="tk_move stride (confirmed by the live self-check; owner attribution needs it).",
+    )
+    p_msbuild.add_argument(
+        "--cancel-ptr-offset",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="offset within tk_move of the pointer to its first cancel.",
+    )
+    p_msbuild.add_argument(
+        "--cancel-count-offset",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="offset within tk_move of its cancel count (u64).",
+    )
+    p_msbuild.add_argument(
+        "--neutral-move-id",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="the character's neutral/standing move id (its cancel list holds the from-neutral "
+        "canonical inputs).",
+    )
+    p_msbuild.set_defaults(func=moveset_build_main)
 
     p_monitor = sub.add_parser(
         "monitor",
