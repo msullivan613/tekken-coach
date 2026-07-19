@@ -829,6 +829,143 @@ def moveset_build_main(args: argparse.Namespace) -> int:  # pragma: no cover - l
     return 0
 
 
+def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - live grounding shell
+    """``moveset-anchor``: ground the moveset layout on the trusted live ``move_id`` (brief #21).
+
+    The doc-derived ``tk_moveset`` offsets are wrong for 5.02.01 (the 2026-07-19 dumps proved the
+    blind shape scan was matching shader objects), so this stops trusting the docs and grounds the
+    layout on the one fact we trust — ``move_id``, an index into the moves array. Phase 1 samples
+    the player's pointer slots against the live ``move_id`` while the user performs distinct known
+    moves, then solves the slot whose value tracks ``move_id`` linearly into ``moves_base`` +
+    ``move_stride`` (or takes them from ``--moves-base``/``--move-stride`` to re-run the dumps
+    without re-sampling). Phase 2 dumps the real layout: the ``tk_move`` of ``--dump-move`` and the
+    ``tk_moveset`` header that stores ``moves_base`` (reverse-scanned), plus an optional gate
+    brute-force of ``cancels_ptr`` with ``--find-cancels``. Read-only; degrades at the menu like the
+    other live commands.
+    """
+    import time  # noqa: PLC0415
+
+    from tekken_coach.reader.decode import read_scalar  # noqa: PLC0415
+    from tekken_coach.reader.discovery.heapscan import _region_buffers  # noqa: PLC0415
+    from tekken_coach.reader.discovery.moveset_anchor import (  # noqa: PLC0415
+        REAL_MOVE_ID_MAX,
+        MoveSample,
+        MovesArray,
+        dump_move,
+        find_cancels_ptr_offset,
+        locate_moves_base_holder,
+        solve_moves_array,
+    )
+    from tekken_coach.reader.discovery.moveset_scan import _find_value_locations  # noqa: PLC0415
+    from tekken_coach.reader.moveset import gate_pairs_for  # noqa: PLC0415
+    from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
+    from tekken_coach.reader.slots import (  # noqa: PLC0415
+        DEFAULT_SLOT_END,
+        DEFAULT_SLOT_START,
+        RegionIndex,
+        is_plausible_pointer,
+        pointer_candidates,
+    )
+    from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
+    from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
+
+    try:
+        source = WinMemorySource(args.process)
+        version = args.version or detect_running_version(args.process)
+        table = select_offset_table(version, args.offsets)
+    except ReaderError as exc:
+        return _report_fault(exc)
+
+    index = args.player - 1
+    move_id_spec = table.players.fields.get("move_id")
+    if move_id_spec is None:
+        print("offset table is missing the move_id field — cannot ground on it.", file=sys.stderr)
+        return 1
+
+    # Phase 1: solve moves_base + move_stride, unless the user supplied them to re-run the dumps.
+    if args.moves_base is not None and args.move_stride is not None:
+        moves = MovesArray(slot_offset=-1, moves_base=args.moves_base, move_stride=args.move_stride)
+        print(f"using given moves_base=0x{moves.moves_base:x} stride=0x{moves.move_stride:x}\n")
+    else:
+        start, end = DEFAULT_SLOT_START, DEFAULT_SLOT_END
+        regions = RegionIndex(source.regions())
+        print(
+            f"grounding {args.char}'s moves array on the live move_id (P{args.player}) on {version}"
+        )
+        print(
+            "in a Practice match, perform several DISTINCT known moves slowly (e.g. jab 1695, "
+            "d+4 1725, b+3 1779), pausing on each; Ctrl-C once 3+ distinct ids are captured.\n"
+        )
+        samples: list[MoveSample] = []
+        seen: set[int] = set()
+        try:
+            for _ in range(args.polls):
+                try:
+                    base = resolve_player_base(source, table, index)
+                    move_id = int(
+                        read_scalar(source, base + move_id_spec.offset, move_id_spec.kind)
+                    )
+                    if move_id < REAL_MOVE_ID_MAX and move_id not in seen:
+                        block = source.read(base + start, end - start)
+                        slots = {
+                            off: val
+                            for off, val in pointer_candidates(block, start=start)
+                            if is_plausible_pointer(val, regions)
+                        }
+                        samples.append(MoveSample(move_id, slots))
+                        seen.add(move_id)
+                        print(f"  captured move_id {move_id} ({len(seen)} distinct)")
+                except MemoryReadError:
+                    pass  # menu / between-round transient — skip this poll, keep sampling
+                time.sleep(args.interval)
+        except KeyboardInterrupt:
+            print("\nstopped sampling.")
+
+        solved = solve_moves_array(samples)
+        if solved is None:
+            print(
+                f"\ncould not solve the moves array from {len(seen)} distinct id(s): no slot "
+                "tracked move_id linearly (need 3+ distinct real ids). Try again, pausing on each "
+                "move so a clean move_id is caught.",
+                file=sys.stderr,
+            )
+            return 1
+        moves = solved
+        print(
+            f"\nMOVES ARRAY SOLVED: current-move pointer at player +0x{moves.slot_offset:x}\n"
+            f"  moves_base = 0x{moves.moves_base:x}\n"
+            f"  move_stride = 0x{moves.move_stride:x} ({moves.move_stride})\n"
+        )
+
+    # Phase 2: dump the real layout from the solved base+stride.
+    try:
+        if args.dump_move is not None:
+            print(dump_move(source, moves, args.dump_move))
+            print()
+        buffers = _region_buffers(source, source.regions(), progress=None)
+        print(locate_moves_base_holder(source, buffers, moves.moves_base))
+        if args.find_cancels:
+            pairs = gate_pairs_for(args.char)
+            if pairs is None:
+                print(f"\n(no decoder-gate anchors for {args.char!r}; skipping --find-cancels)")
+            else:
+                print("\nbrute-forcing cancels_ptr around each header candidate (gate on anchors):")
+                for location in _find_value_locations(buffers, moves.moves_base):
+                    off = find_cancels_ptr_offset(
+                        source, location, pairs, word_start=-0x200, word_end=0x40
+                    )
+                    if off is None:
+                        print(f"  0x{location:x}: no gated cancels_ptr found in the window")
+                    else:
+                        print(
+                            f"  0x{location:x}: cancels_ptr at moves_ptr{off:+#x} "
+                            f"-> 0x{location + off:x} reproduced the anchors"
+                        )
+    except ReaderError as exc:
+        return _report_fault(exc)
+    return 0
+
+
 def _live_monitor_stream(
     source: MemorySource, table: OffsetTable, interval: float
 ) -> Iterator[
@@ -1202,6 +1339,59 @@ def build_parser() -> argparse.ArgumentParser:
         "canonical inputs).",
     )
     p_msbuild.set_defaults(func=moveset_build_main)
+
+    p_msanchor = sub.add_parser(
+        "moveset-anchor",
+        help="ground the moves array on the live move_id, then dump the real layout (brief #21)",
+    )
+    p_msanchor.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR)
+    p_msanchor.add_argument("--version", default=None, help="override detected version")
+    p_msanchor.add_argument(
+        "--char",
+        default="bryan",
+        help="the character being played, to key the --find-cancels gate (default bryan).",
+    )
+    p_msanchor.add_argument(
+        "--player", type=int, default=1, help="which player to ground (1 or 2; default 1)"
+    )
+    p_msanchor.add_argument(
+        "--polls",
+        type=int,
+        default=1500,
+        help="max slot/move_id samples to take while you perform moves (default 1500).",
+    )
+    p_msanchor.add_argument(
+        "--interval",
+        type=float,
+        default=0.02,
+        help="seconds between samples (default 0.02, ~50 Hz).",
+    )
+    p_msanchor.add_argument(
+        "--moves-base",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="skip sampling and re-run the dumps with this solved moves_base (hex).",
+    )
+    p_msanchor.add_argument(
+        "--move-stride",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="skip sampling and re-run the dumps with this solved move_stride (hex).",
+    )
+    p_msanchor.add_argument(
+        "--dump-move",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="also dump this move_id's raw tk_move words (e.g. jab 1695), to ground the tk_move "
+        "layout + its cancel-list reference.",
+    )
+    p_msanchor.add_argument(
+        "--find-cancels",
+        action="store_true",
+        help="also brute-force the real cancels_ptr offset around each header candidate by the "
+        "decode gate (self-validates the tk_cancel layout + command decode on this build).",
+    )
+    p_msanchor.set_defaults(func=moveset_anchor_main)
 
     p_monitor = sub.add_parser(
         "monitor",
