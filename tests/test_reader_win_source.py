@@ -40,9 +40,9 @@ def test_win_source_satisfies_memory_source_protocol() -> None:
     # runtime_checkable, methods-only Protocol -> issubclass works without instantiating.
     assert issubclass(WinMemorySource, MemorySource)
     members = {m for m in dir(WinMemorySource) if not m.startswith("_")}
-    # The seam's surface: read + module_base + regions, all read-side (regions is a VirtualQueryEx
-    # map query, C4h Phase 1), nothing that mutates.
-    assert members == {"read", "module_base", "regions"}
+    # The seam's surface: read + module_base + the two region views, all read-side (both are
+    # VirtualQueryEx map queries — C4h Phase 1 budgeted, brief #24 complete), nothing that mutates.
+    assert members == {"read", "module_base", "regions", "mapped_regions"}
 
 
 def test_read_only_open_flags_are_read_plus_query_only() -> None:

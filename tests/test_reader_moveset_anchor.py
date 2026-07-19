@@ -22,8 +22,10 @@ from collections.abc import Sequence
 
 from tekken_coach.reader.discovery.heapscan import _region_buffers
 from tekken_coach.reader.discovery.moveset_anchor import (
+    EMPTY_CENSUS,
     MoveSample,
     MovesArray,
+    SampleCensus,
     SlotKey,
     describe_slots,
     dump_move,
@@ -269,6 +271,9 @@ class _WidthCappedSource:
     def regions(self) -> Sequence[MemoryRegion]:
         return self._inner.regions()
 
+    def mapped_regions(self) -> Sequence[MemoryRegion]:
+        return self._inner.mapped_regions()
+
 
 def test_census_counts_are_exact_over_the_planted_world() -> None:
     """The census reports exactly what the sweep did over the planted player struct.
@@ -497,3 +502,54 @@ def test_find_cancels_ptr_offset_flags_a_broken_decode() -> None:
     bogus = (KnownPair(4242, "1"), KnownPair(4243, "2"), KnownPair(4244, "3"))
     off = find_cancels_ptr_offset(source, MOVESET_BASE, bogus, region_index=region_index)
     assert off is None
+
+
+# ---------------------------------------------------------------------------
+# Starvation hint (brief #24)
+# ---------------------------------------------------------------------------
+#
+# The live census that triggered #24 read 2048 direct slots and found 13 plausible pointers, because
+# validation consulted the *capped* sweep map. That produced a "nothing varied" result which looked
+# like evidence against the anchor approach and was in fact evidence of a broken oracle. The hint
+# exists so the next occurrence names its own cause.
+
+
+def test_starvation_hint_fires_on_the_live_ratio_that_triggered_the_brief() -> None:
+    census = SampleCensus(
+        direct_bytes_read=0x4000,
+        direct_slots_scanned=2048,
+        direct_pointers=13,
+        sub_objects_read=13,
+        sub_objects_skipped=0,
+        hop_pointers=112,
+    )
+    hint = census.starvation_hint()
+    assert hint is not None
+    assert "13 of 2048" in hint
+    # It must point at coverage, not at the struct — that misread is the whole bug.
+    assert "COVERAGE" in hint
+
+
+def test_starvation_hint_stays_quiet_on_a_healthy_sweep() -> None:
+    # A few percent of slots holding pointers is ordinary for a real object; no warning.
+    healthy = SampleCensus(
+        direct_bytes_read=0x4000,
+        direct_slots_scanned=2048,
+        direct_pointers=400,
+        sub_objects_read=400,
+        sub_objects_skipped=0,
+        hop_pointers=3000,
+    )
+    assert healthy.starvation_hint() is None
+    # Exactly at the 1% threshold is healthy, not starved (the boundary is inclusive).
+    assert SampleCensus(0x4000, 2000, 20, 20, 0, 0).starvation_hint() is None
+    assert SampleCensus(0x4000, 2000, 19, 19, 0, 0).starvation_hint() is not None
+
+
+def test_starvation_hint_is_silent_when_there_is_nothing_to_judge() -> None:
+    # A sweep that read nothing is a READ FAILURE, reported separately; a ratio of 0/0 is not a
+    # starvation signal, and claiming it were would double-report the same failure.
+    assert EMPTY_CENSUS.starvation_hint() is None
+    assert SampleCensus(0, 0, 0, 0, 0, 0).starvation_hint() is None
+    # Slots scanned but zero pointers is likewise the READ-FAILURE path, not this one.
+    assert SampleCensus(0x4000, 2048, 0, 0, 0, 0).starvation_hint() is None

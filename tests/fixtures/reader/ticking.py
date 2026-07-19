@@ -39,3 +39,6 @@ class TickingFlatSource:
 
     def regions(self) -> Sequence[MemoryRegion]:
         return self._snapshots[max(self._cursor, 0)].regions()
+
+    def mapped_regions(self) -> Sequence[MemoryRegion]:
+        return self._snapshots[max(self._cursor, 0)].mapped_regions()

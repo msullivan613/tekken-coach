@@ -89,6 +89,20 @@ class RegionIndex:
         i = self._covering(address)
         return i is not None and address + size <= self._ends[i]
 
+    def describe(self) -> str:
+        """A one-line summary of the map being validated against (count, total, largest).
+
+        Printed alongside a pointer census so a starved sweep is diagnosable in one look: if the map
+        is small, the sweep found few pointers because the *oracle* was wrong, not because the
+        struct holds none (brief #24). Sizes are reported in GiB, the scale a game process runs at.
+        """
+        total = sum(end - base for base, end in zip(self._bases, self._ends, strict=True))
+        largest = max(
+            (end - base for base, end in zip(self._bases, self._ends, strict=True)), default=0
+        )
+        gib = 1024**3
+        return f"{len(self._bases)} (total {total / gib:.2f} GiB, largest {largest / gib:.2f} GiB)"
+
     def room_at(self, address: int) -> int:
         """Bytes from ``address`` to the end of its region (0 if unmapped).
 

@@ -333,6 +333,26 @@ class SampleCensus:
             ]
         )
 
+    def starvation_hint(self, *, threshold: float = 0.01) -> str | None:
+        """A warning when implausibly few direct slots passed validation, else ``None``.
+
+        A live C++ game object is dense with pointers — vtable, components, owner back-references —
+        so a plausible-pointer rate under ~1% of scanned slots means the *validity oracle* rejected
+        them, not that the struct is empty. That is exactly how brief #24's starvation presented
+        (13 of 2048), and it read as "nothing to correlate" rather than as a broken filter. Naming
+        the cause here keeps the next occurrence from being re-diagnosed from scratch.
+        """
+        if self.direct_slots_scanned == 0 or self.direct_pointers == 0:
+            return None
+        if self.direct_pointers >= threshold * self.direct_slots_scanned:
+            return None
+        return (
+            f"WARNING: only {self.direct_pointers} of {self.direct_slots_scanned} direct slots "
+            "held a plausible pointer. A live game object should be far denser — suspect "
+            "pointer-validation COVERAGE (the region map above), not the struct. Pointers into "
+            "large arenas or module images are rejected if the map validated against is capped."
+        )
+
 
 EMPTY_CENSUS = SampleCensus(0, 0, 0, 0, 0, 0)
 

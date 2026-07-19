@@ -161,6 +161,9 @@ def test_process_read_error_is_reported_not_raised(table: OffsetTable) -> None:
         def regions(self) -> Sequence[MemoryRegion]:
             return []
 
+        def mapped_regions(self) -> Sequence[MemoryRegion]:
+            return []
+
     report = run_doctor(DeadSource(), table, known_char_ids=KNOWN_CHAR_IDS, frames=6)
     assert not report.ok
     assert report.runbook is not None  # a failed gate points at the §4 runbook

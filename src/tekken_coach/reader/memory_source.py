@@ -76,12 +76,30 @@ class MemorySource(Protocol):
         ...
 
     def regions(self) -> Sequence[MemoryRegion]:
-        """Enumerate committed, readable, non-guard memory regions (base + size).
+        """The **budgeted** committed regions: what a scan is willing to sweep (base + size).
 
         Read-only by construction: it queries the OS map (``VirtualQueryEx`` on Windows) and returns
         spans; it never reads or writes their contents. This is what lets the C4h heap sweep look
         for the entity struct wherever it was allocated, instead of a fixed module-relative window
         that a heap struct never falls in (docs/02 §3).
+
+        An implementation may bound this list for tractability, because every caller **reads all of
+        it**. That makes it the wrong answer to "is this address real?" — use :meth:`mapped_regions`
+        for that (brief #24).
+        """
+        ...
+
+    def mapped_regions(self) -> Sequence[MemoryRegion]:
+        """The **complete** committed map, for address validation only — never sweep this.
+
+        "Regions I am willing to scan" and "addresses that are real" are different questions, and
+        answering the second with the first silently discards genuine pointers (brief #24). This is
+        the unbounded answer to the second: every committed readable span, module images included,
+        with no size or total budget applied.
+
+        Cheap by construction — it carries ``(base, size)`` only and reads no contents, so
+        :class:`~tekken_coach.reader.slots.RegionIndex` searches it in ``O(log n)``. Cheap to *hold*
+        is not cheap to *read*: it is unbudgeted, so it must never be handed to a byte sweep.
         """
         ...
 
@@ -139,4 +157,8 @@ class FakeMemorySource:
 
     def regions(self) -> Sequence[MemoryRegion]:
         """The scripted region list (empty unless the test planted one) — read-only."""
+        return list(self._regions)
+
+    def mapped_regions(self) -> Sequence[MemoryRegion]:
+        """The same scripted list: a fake map has no caps to lift, so both views coincide."""
         return list(self._regions)

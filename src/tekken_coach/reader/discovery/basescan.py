@@ -2069,6 +2069,10 @@ class LayeredMemorySource:
         """Enumeration is a property of the live map, so it comes from the fallback (read-only)."""
         return self._fallback.regions()
 
+    def mapped_regions(self) -> Sequence[MemoryRegion]:
+        """Likewise for the validation map — the overlay freezes bytes, not the map (brief #24)."""
+        return self._fallback.mapped_regions()
+
 
 def freeze_struct(
     live: MemorySource, base: int, span: int, *, floor: int = 0x1000

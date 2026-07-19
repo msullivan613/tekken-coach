@@ -19,7 +19,7 @@ from tekken_coach.reader.discovery.moveset_scan import (
     shape_survivors,
 )
 from tekken_coach.reader.discovery.scanners import Region
-from tekken_coach.reader.memory_source import MemorySource
+from tekken_coach.reader.memory_source import MemoryRegion, MemorySource
 from tekken_coach.reader.moveset import BRYAN_GATE_PAIRS, gate_pairs_for, read_moveset_header
 from tekken_coach.reader.slots import RegionIndex
 from tests.fixtures.reader.planted_moveset import (
@@ -164,3 +164,43 @@ def test_gate_pairs_for_known_and_unknown_char() -> None:
     assert gate_pairs_for("bryan") == BRYAN_GATE_PAIRS
     assert gate_pairs_for("BRYAN") == BRYAN_GATE_PAIRS
     assert gate_pairs_for("kazuya") is None
+
+
+# ---------------------------------------------------------------------------
+# The regions() / mapped_regions() split (brief #24)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingSource:
+    """A ``MemorySource`` wrapper that records which region view each caller asked for.
+
+    The two views answer different questions — "what may I sweep?" and "what addresses are real?" —
+    and handing a sweep the unbudgeted map would re-open the C4h perf wall, while validating against
+    the budgeted one starves the pointer oracle (the #24 bug). A fixture cannot tell them apart by
+    their contents, so this asserts on the *calls*.
+    """
+
+    def __init__(self, inner: MemorySource) -> None:
+        self._inner = inner
+        self.asked: list[str] = []
+
+    def read(self, address: int, size: int) -> bytes:
+        return self._inner.read(address, size)
+
+    def module_base(self, module: str) -> int:
+        return self._inner.module_base(module)
+
+    def regions(self) -> Sequence[MemoryRegion]:
+        self.asked.append("regions")
+        return self._inner.regions()
+
+    def mapped_regions(self) -> Sequence[MemoryRegion]:
+        self.asked.append("mapped_regions")
+        return self._inner.mapped_regions()
+
+
+def test_scan_sweeps_the_capped_map_and_validates_against_the_complete_one() -> None:
+    source = _RecordingSource(planted_moveset_scan_source())
+    scan_moveset(source, pairs=BRYAN_GATE_PAIRS)
+    # Exactly one of each, and both: the sweep budget and the validity oracle are separate reads.
+    assert source.asked == ["regions", "mapped_regions"]

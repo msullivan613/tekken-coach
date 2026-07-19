@@ -229,7 +229,9 @@ def scan_moveset(
     if buffers is None:
         buffers = _region_buffers(source, source.regions(), progress=progress)
     if region_index is None:
-        region_index = RegionIndex(source.regions())
+        # Validation, not sweeping: the complete map, so a pointer into a big arena or a module
+        # image is not mistaken for junk (brief #24). The buffers above stay on the capped list.
+        region_index = RegionIndex(source.mapped_regions())
     survivors = shape_survivors(buffers, region_index, progress=progress)
     candidates = gate_survivors(source, survivors, pairs, progress=progress)
     return MovesetScan(buffers=buffers, survivors=survivors, candidates=candidates)

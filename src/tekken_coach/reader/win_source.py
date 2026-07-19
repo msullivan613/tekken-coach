@@ -64,6 +64,13 @@ _PAGE_READABLE = 0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80  # R / RW / WC / XR / X
 # x64 user-space bounds and tractability caps for the sweep. Deliberately generous; the scan layer
 # bounds its own work further. A single reserved span far larger than any heap struct's arena is
 # skipped so one 4 GiB reservation cannot dominate the sweep.
+#
+# These caps bound a *sweep* — how many bytes a scan is willing to read. They are emphatically not
+# a statement about which addresses are real (brief #24). Reusing them as a pointer-validity oracle
+# is what starved the moveset-anchor sampler down to 13 pointers out of 2048 slots: every pointer
+# into a >512 MiB arena, above the 4 GiB cutoff, or into a module image (where vtables live) read as
+# implausible. :meth:`WinMemorySource.mapped_regions` answers the validity question with the caps
+# lifted; :meth:`WinMemorySource.regions` keeps these for the budgeted sweeps.
 _ENUM_MIN_ADDRESS = 0x10000
 _ENUM_MAX_ADDRESS = 0x7FFF_FFFF_FFFF
 _ENUM_MAX_REGION_BYTES = 512 * 1024 * 1024
@@ -128,17 +135,21 @@ def enumerate_committed_regions(
     *,
     min_address: int = _ENUM_MIN_ADDRESS,
     max_address: int = _ENUM_MAX_ADDRESS,
-    max_region_bytes: int = _ENUM_MAX_REGION_BYTES,
-    max_total_bytes: int = _ENUM_MAX_TOTAL_BYTES,
+    max_region_bytes: int | None = _ENUM_MAX_REGION_BYTES,
+    max_total_bytes: int | None = _ENUM_MAX_TOTAL_BYTES,
     skip_image: bool = True,
 ) -> list[MemoryRegion]:
     """Walk the process map via ``query`` (a ``VirtualQueryEx`` wrapper), collecting readable heap.
 
     Pure over ``query(address) -> _BasicRegion | None`` so it is offline-testable with a fake map
-    (``None`` ends the walk, as ``VirtualQueryEx`` returning 0 does). Bounded three ways for
-    tractability — a userspace address window, a per-region ceiling (a giant reservation is skipped,
-    not swept), and a running total — because the caller sweeps every returned byte. It **reads no
-    memory**: it only asks the OS what is mapped.
+    (``None`` ends the walk, as ``VirtualQueryEx`` returning 0 does). It **reads no memory**: it
+    only asks the OS what is mapped.
+
+    The defaults are the *sweep* bounds — a userspace address window, a per-region ceiling (a giant
+    reservation is skipped, not swept), and a running total — because a sweeping caller reads every
+    returned byte. Passing ``None`` for either byte cap, and ``skip_image=False``, lifts them to
+    yield the **complete** committed map, which is what pointer validation needs and no sweep should
+    ever read (brief #24).
     """
     out: list[MemoryRegion] = []
     total = 0
@@ -151,10 +162,10 @@ def enumerate_committed_regions(
         if nxt <= address:  # a non-advancing query would loop forever; stop defensively
             break
         readable = _is_readable_committed(region, skip_image=skip_image)
-        if readable and region.size <= max_region_bytes:
+        if readable and (max_region_bytes is None or region.size <= max_region_bytes):
             out.append(MemoryRegion(base=region.base, size=region.size))
             total += region.size
-            if total >= max_total_bytes:
+            if max_total_bytes is not None and total >= max_total_bytes:
                 break
         address = nxt
     return out
@@ -305,15 +316,14 @@ class WinMemorySource:
             raise MemoryReadError(f"module not loaded: {module!r}")
         return int(info.lpBaseOfDll)
 
-    def regions(self) -> Sequence[MemoryRegion]:  # pragma: no cover - needs a live VirtualQueryEx
-        """Enumerate committed readable heap via ``VirtualQueryEx`` (read-only, docs/02 §2, C4h).
+    def _query(self) -> Callable[[int], _BasicRegion | None]:  # pragma: no cover - live-only
+        """Bind ``kernel32.VirtualQueryEx`` and return the ``query`` callable the walk is pure over.
 
-        Binds :func:`enumerate_committed_regions` to ``kernel32.VirtualQueryEx`` directly (the
-        installed pymem has no ``virtual_query`` helper). This is a *query* of the process map — one
-        ``MEMORY_BASIC_INFORMATION`` per region — and reads no region content; the sweep reads bytes
-        afterwards through :meth:`read`. The walk logic is offline-tested via
-        :func:`enumerate_committed_regions` with a fake map; only this ``VirtualQueryEx`` binding is
-        live-only (and was validated against the running game before it landed).
+        Bound directly rather than through pymem (the installed version has no ``virtual_query``
+        helper). This is a *query* of the process map — one ``MEMORY_BASIC_INFORMATION`` per region
+        — and reads no region content; a sweeping caller reads bytes afterwards through
+        :meth:`read`. The walk logic is offline-tested via :func:`enumerate_committed_regions` with
+        a fake map; only this binding is live-only (validated against the running game).
         """
         # ``ctypes.windll`` exists only on Windows, so it is resolved here (never offline) rather
         # than at import; typeshed hides it off-win32, hence the localized ignore.
@@ -343,4 +353,32 @@ class WinMemorySource:
                 type=int(mbi.Type),
             )
 
-        return enumerate_committed_regions(query)
+        return query
+
+    def regions(self) -> Sequence[MemoryRegion]:  # pragma: no cover - needs a live VirtualQueryEx
+        """The **budgeted** committed-heap map: what a scan is willing to sweep (docs/02 §2, C4h).
+
+        Bounded by the module's sweep caps — per-region ceiling, running total, module images
+        excluded — because every caller of this reads all of it. Use it for
+        ``_region_buffers``-style sweeps only; for deciding whether an address is real, use
+        :meth:`mapped_regions` (brief #24).
+        """
+        return enumerate_committed_regions(self._query())
+
+    def mapped_regions(self) -> Sequence[MemoryRegion]:  # pragma: no cover - needs a live query
+        """The **complete** committed map, for address validation only — never sweep this.
+
+        Same read-only ``VirtualQueryEx`` walk as :meth:`regions`, with all three sweep bounds
+        lifted: no per-region ceiling, no running total, and module images **included**. Each is
+        load-bearing for validation (brief #24) — the game's main arenas exceed the 512 MiB
+        per-region cap, its committed total exceeds 4 GiB, and a C++ object's most common pointer of
+        all, the vtable, points into an image's ``.rdata``. Validating against the budgeted map
+        rejected all three as implausible.
+
+        This carries no sweep cost: it returns ``(base, size)`` spans and reads no contents, so the
+        result is kilobytes and :class:`~tekken_coach.reader.slots.RegionIndex` answers from it in
+        ``O(log n)``. It is **not** budgeted, though, so it must never be handed to a byte sweep.
+        """
+        return enumerate_committed_regions(
+            self._query(), max_region_bytes=None, max_total_bytes=None, skip_image=False
+        )

@@ -62,3 +62,7 @@ class FlatMemorySource:
     def regions(self) -> Sequence[MemoryRegion]:
         """The planted committed-region map — read-only, mirroring the live seam (C4h Phase 1)."""
         return list(self._regions)
+
+    def mapped_regions(self) -> Sequence[MemoryRegion]:
+        """The same planted map: a fixture has no sweep caps to lift (brief #24)."""
+        return list(self._regions)

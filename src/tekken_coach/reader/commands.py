@@ -371,8 +371,9 @@ def _slots_main(
 
     try:
         # The pointer-validity oracle, read once: VirtualQueryEx's committed map. This is a query of
-        # what is mapped — it reads no contents and adds no write path (docs/02 §2).
-        regions = RegionIndex(source.regions())
+        # what is mapped — it reads no contents and adds no write path (docs/02 §2). It must be the
+        # COMPLETE map, not the capped sweep list, or most real pointers read as junk (brief #24).
+        regions = RegionIndex(source.mapped_regions())
         samples: list[list[bytes]] = []
         for _ in range(args.polls):
             bases = [resolve_player_base(source, table, index) for index in (0, 1)]
@@ -884,7 +885,9 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
     # and report what the sweep actually reached. Verifies the sampler in a second of standing in
     # Practice, instead of discovering after a full three-move protocol that it read nothing.
     if args.census:
-        regions = RegionIndex(source.regions())
+        # The COMPLETE map (brief #24) — validating pointers against the capped sweep list is what
+        # starved this sweep to 13 pointers out of 2048 slots.
+        regions = RegionIndex(source.mapped_regions())
         try:
             base = resolve_player_base(source, table, index)
         except ReaderError as exc:
@@ -894,14 +897,27 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
         )
         print(f"census of one sweep of P{args.player} @ 0x{base:x} (window 0x{args.window:x}):")
         print(census.report())
+        print(f"  regions in map     : {regions.describe()}")
         for key in sorted(slots)[:5]:
             print(f"    e.g. {format_slot_key(key)} = 0x{slots[key]:x}")
+        hint = census.starvation_hint()
+        if hint is not None:
+            print(f"\n{hint}", file=sys.stderr)
         if census.direct_pointers == 0:
             print(
                 f"\nREAD FAILURE: the sweep found no direct pointers at all in 0x{args.window:x} "
                 "bytes. The window is the suspect, not the approach — re-run with "
                 "--census --window 0x1600 and compare.",
                 file=sys.stderr,
+            )
+            return 1
+        if hint is not None:
+            # Pointers were found, so this is not a READ failure — but the sweep is too thin to
+            # trust a null result from, so it is not "healthy" either. Say so rather than waving a
+            # starved sweep through into a protocol run whose verdict would be worthless.
+            print(
+                "\nsweep reached memory but looks STARVED — fix coverage before trusting a null "
+                "result from the move protocol."
             )
             return 1
         print("\nsweep looks healthy — run the normal move protocol next.")
@@ -912,10 +928,12 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
         moves = MovesArray(slot_key=(), moves_base=args.moves_base, move_stride=args.move_stride)
         print(f"using given moves_base=0x{moves.moves_base:x} stride=0x{moves.move_stride:x}\n")
     else:
-        regions = RegionIndex(source.regions())
+        # The COMPLETE map — pointer validation, not a sweep budget (brief #24).
+        regions = RegionIndex(source.mapped_regions())
         print(
             f"grounding {args.char}'s moves array on the live move_id (P{args.player}) on {version}"
         )
+        print(f"validating pointers against {regions.describe()} committed regions")
         print(
             "in a Practice match, perform several DISTINCT known moves slowly (e.g. jab 1695, "
             "d+4 1725, b+3 1779), pausing on each; Ctrl-C once 3+ distinct ids are captured.\n"
@@ -996,14 +1014,26 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
             elif not varying:
                 n_direct = sum(1 for d in descriptions if len(d.slot_key) == 1)
                 n_hop = len(descriptions) - n_direct
+                # A starved sweep can produce this same "none varied" shape while having tested
+                # almost nothing, so the pivot advice is gated on the sweep having been dense
+                # enough to mean it (brief #24).
+                starved = next(
+                    (h for h in (c.starvation_hint() for c in censuses) if h is not None), None
+                )
+                verdict = (
+                    "the sweep was too thin to conclude anything from — do NOT pivot on this run."
+                    if starved is not None
+                    else "Pivot to a different anchor rather than searching deeper."
+                )
                 print(
                     f"\nDIAGNOSTIC: sampled {len(descriptions)} slots ({n_direct} direct, {n_hop} "
                     f"one hop out) across {len(seen)} ids; none varied. No sampled slot (direct or "
-                    "one hop out) tracks move_id — nothing reachable this way caches a "
-                    "moves_base + id*stride pointer. Pivot to a different anchor rather than "
-                    "searching deeper.",
+                    f"one hop out) tracks move_id — {verdict}",
                     file=sys.stderr,
                 )
+                print(f"  regions in map     : {regions.describe()}", file=sys.stderr)
+                if starved is not None:
+                    print(f"\n{starved}", file=sys.stderr)
             else:
                 print(
                     f"\nDIAGNOSTIC: {len(varying)} slot(s) varied with move_id but none solved; "

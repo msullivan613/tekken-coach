@@ -254,6 +254,9 @@ class _MenuThenMatchSource:
     def regions(self) -> Sequence[MemoryRegion]:
         return self._inner.regions()
 
+    def mapped_regions(self) -> Sequence[MemoryRegion]:
+        return self._inner.mapped_regions()
+
 
 def test_capture_at_the_menu_skips_faulting_polls_then_records_the_match() -> None:
     # Part A: `capture N` started at the menu must not crash — the module-relative match_flag reads
