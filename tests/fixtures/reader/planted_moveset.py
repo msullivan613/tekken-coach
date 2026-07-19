@@ -320,6 +320,123 @@ def _gate_decoy_blobs() -> tuple[bytes, bytes]:
     return header, bytes(cancels)
 
 
+# ---------------------------------------------------------------------------
+# Brief #25 — a tk_move world with per-move cancel runs bounded by the NEXT move's pointer
+# ---------------------------------------------------------------------------
+
+# The #18/#19 world above gives each move an explicit ``(cancel_ptr, cancel_count)`` pair. The live
+# 5.02.01 ``tk_move`` shows no such count — what it shows is a per-move heap pointer (at a candidate
+# ``+0x098``) whose gaps between consecutive moves are whole multiples of ``CANCEL_SIZE``. So this
+# world plants that shape instead: runs laid contiguously, each move pointing only at its own start,
+# the run's END implied by the next move's pointer. Everything the brief must falsify is planted
+# here — an empty run, a last move with no readable neighbour, and one deliberately misaligned
+# pointer whose span is NOT a whole multiple of 0x28.
+TKM_MOVES_BASE = 0x310000000
+TKM_CANCELS_BASE = 0x311000000
+TKM_JUNK_BASE = 0x312000000  # readable 0xff bytes: what a WRONG ptr_offset lands in
+
+TKM_MOVE_SIZE = 0x40  # the planted tk_move stride (8 words — a full-stride dump is 8 lines)
+TKM_CANCEL_PTR_OFFSET = 0x18  # the per-move cancel-run pointer (parameterised, as it is live)
+TKM_JUNK_PTR_OFFSET = 0x20  # a readable pointer into junk, for the wrong-offset test
+TKM_ID_FIELD_OFFSETS = (0x08, 0x28)  # where the ``move_id + K`` u32 sits (twice, so it repeats)
+TKM_ID_FIELD_K = 1893  # the live constant: 0x0e04 for move 1695, 0x0d83 for move 1566
+
+TKM_MOVES_COUNT = 8  # ids 0..7; move 8's record is past the segment -> an unreadable neighbour
+TKM_NO_ID_FIELD_MOVE = 0  # move 0 carries no id field, so "no consistent K" is exercised too
+TKM_NEUTRAL_MOVE = 0  # its run holds Bryan's from-neutral anchors -> the gate confirms
+TKM_FOLLOWUP_MOVE = 1  # its run holds follow-ups only -> the gate honestly finds no anchor
+TKM_EMPTY_RUN_MOVE = 2  # ptr(2) == ptr(3): a move owning no cancels
+TKM_MISALIGNED_MOVE = 5  # ptr(6) is skewed by TKM_SKEW, so span(5) is not a multiple of 0x28
+TKM_LAST_MOVE = TKM_MOVES_COUNT - 1
+TKM_SKEW = 4  # the non-multiple-of-0x28 offset that falsifies the contiguous-run hypothesis
+
+# Rows owned by each move, laid contiguously in move order. The counts differ (5, 2, 0, 3, 1, 2) so
+# a range computed from pointer gaps is a real result, not a constant that would match by accident.
+TKM_RUNS: tuple[tuple[int, tuple[PlantedCancel, ...]], ...] = (
+    (
+        0,
+        (
+            _clean(0, 1695, "", "1"),
+            _clean(0, 1628, "df", "2"),
+            _clean(0, 1725, "d", "4"),
+            _clean(0, 1573, "", "3"),
+            _clean(0, 1566, "", "2"),
+        ),
+    ),
+    (1, (_clean(1, 1697, "", "2"), _clean(1, 1582, "", "3"))),
+    (2, ()),
+    (3, (_clean(3, 1700, "", "1"), _clean(3, 1701, "", "2"), _clean(3, 1702, "", "3"))),
+    (4, (_clean(4, 1703, "", "4"),)),
+    (5, (_clean(5, 1704, "b", "1"), _clean(5, 1705, "b", "2"))),
+    (6, (_clean(6, 1706, "", "1"), _clean(6, 1707, "", "2"))),
+    (7, (_clean(7, 1708, "", "3"),)),
+)
+
+TKM_CANCELS_BLOB_ROWS = 24  # generously sized so the skewed runs stay inside the segment
+
+
+def tk_move_run_starts() -> dict[int, int]:
+    """The planted absolute cancel-run start address for each move id (the fixture's ground truth).
+
+    Runs are contiguous in move order — ``start(N+1) == start(N) + len(run N) * CANCEL_SIZE`` — so
+    the span between consecutive pointers *is* the owning move's byte length. Move
+    :data:`TKM_MISALIGNED_MOVE`'s successor is skewed by :data:`TKM_SKEW` so exactly one span in the
+    world is not a whole multiple of ``CANCEL_SIZE``.
+    """
+    starts: dict[int, int] = {}
+    index = 0
+    for move_id, rows in TKM_RUNS:
+        skew = TKM_SKEW if move_id > TKM_MISALIGNED_MOVE else 0
+        starts[move_id] = TKM_CANCELS_BASE + index * CANCEL_SIZE + skew
+        index += len(rows)
+    return starts
+
+
+def _tk_move_blobs() -> tuple[bytes, bytes]:
+    """Lay the brief #25 moves array and its contiguous cancels array; return both blobs."""
+    starts = tk_move_run_starts()
+    cancels = bytearray(TKM_CANCELS_BLOB_ROWS * CANCEL_SIZE)
+    moves = bytearray(TKM_MOVES_COUNT * TKM_MOVE_SIZE)
+
+    index = 0
+    for move_id, rows in TKM_RUNS:
+        for i, cancel in enumerate(rows):
+            at = (index + i) * CANCEL_SIZE + (TKM_SKEW if move_id > TKM_MISALIGNED_MOVE else 0)
+            cancels[at : at + CANCEL_SIZE] = _cancel_row(cancel.command, cancel.dest)
+        index += len(rows)
+
+        record = move_id * TKM_MOVE_SIZE
+        _put_ptr(moves, record + TKM_CANCEL_PTR_OFFSET, starts[move_id])
+        _put_ptr(moves, record + TKM_JUNK_PTR_OFFSET, TKM_JUNK_BASE)
+        if move_id != TKM_NO_ID_FIELD_MOVE:
+            # A u32 == move_id + K, planted twice so it *repeats* through the record — the shape
+            # that made the live +1893 relationship visible. Its high half stays 0, so the word also
+            # exercises the both-halves-small split annotation.
+            for id_offset in TKM_ID_FIELD_OFFSETS:
+                _put_ptr(moves, record + id_offset, move_id + TKM_ID_FIELD_K)
+    return bytes(moves), bytes(cancels)
+
+
+def planted_tk_move_source() -> FlatMemorySource:
+    """A world for the brief #25 per-move cancel-run probes (moves + contiguous cancels + junk).
+
+    Deliberately *not* a superset of the moveset world above: it plants only what the live
+    ``tk_move`` evidence supports — a moves array at :data:`TKM_MOVES_BASE` with stride
+    :data:`TKM_MOVE_SIZE`, each record holding its cancel-run start (and no count), and the cancels
+    laid contiguously so a run's end is the next move's start.
+    """
+    moves_blob, cancels_blob = _tk_move_blobs()
+    return FlatMemorySource(
+        [
+            (MODULE_BASE, b"\x00" * 0x1000),
+            (TKM_MOVES_BASE, moves_blob),
+            (TKM_CANCELS_BASE, cancels_blob),
+            (TKM_JUNK_BASE, b"\xff" * 0x400),
+        ],
+        module_bases={MODULE: MODULE_BASE},
+    )
+
+
 def planted_moveset_scan_source() -> FlatMemorySource:
     """A world for the brief #19 heap shape+gate scan: real header off a path, plus a gate decoy.
 

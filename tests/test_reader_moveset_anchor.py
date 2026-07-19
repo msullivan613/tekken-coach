@@ -27,11 +27,14 @@ from tekken_coach.reader.discovery.moveset_anchor import (
     MovesArray,
     SampleCensus,
     SlotKey,
+    cancel_range,
     describe_slots,
     dump_move,
     find_cancels_ptr_offset,
+    find_id_related_u32s,
     format_slot_key,
     locate_moves_base_holder,
+    probe_cancel_run,
     sample_player_slots,
     solve_moves_array,
 )
@@ -39,6 +42,7 @@ from tekken_coach.reader.faults import MemoryReadError
 from tekken_coach.reader.memory_source import MemoryRegion
 from tekken_coach.reader.moveset import (
     BRYAN_GATE_PAIRS,
+    CANCEL_SIZE,
     MOVESET_CANCELS_PTR_OFFSET,
     KnownPair,
 )
@@ -56,7 +60,21 @@ from tests.fixtures.reader.planted_moveset import (
     PLAYER_BASE,
     PLAYER_DISTRACTOR_SLOT,
     PLAYER_MOVESET_SLOT,
+    TKM_CANCEL_PTR_OFFSET,
+    TKM_EMPTY_RUN_MOVE,
+    TKM_FOLLOWUP_MOVE,
+    TKM_ID_FIELD_K,
+    TKM_JUNK_PTR_OFFSET,
+    TKM_LAST_MOVE,
+    TKM_MISALIGNED_MOVE,
+    TKM_MOVE_SIZE,
+    TKM_MOVES_BASE,
+    TKM_NEUTRAL_MOVE,
+    TKM_NO_ID_FIELD_MOVE,
+    TKM_SKEW,
     planted_moveset_scan_source,
+    planted_tk_move_source,
+    tk_move_run_starts,
 )
 
 # The synthetic ground truth the solver must recover: one slot holds moves_base + id*stride.
@@ -553,3 +571,228 @@ def test_starvation_hint_is_silent_when_there_is_nothing_to_judge() -> None:
     assert SampleCensus(0, 0, 0, 0, 0, 0).starvation_hint() is None
     # Slots scanned but zero pointers is likewise the READ-FAILURE path, not this one.
     assert SampleCensus(0x4000, 2048, 0, 0, 0, 0).starvation_hint() is None
+
+
+# ---------------------------------------------------------------------------
+# Brief #25 — the full-stride dump and the per-move cancel run
+# ---------------------------------------------------------------------------
+
+
+def _tk_moves() -> MovesArray:
+    """The brief #25 planted moves array, as the solver would hand it to Phase 2."""
+    return MovesArray(slot_key=(0x3D8,), moves_base=TKM_MOVES_BASE, move_stride=TKM_MOVE_SIZE)
+
+
+def test_dump_move_defaults_to_the_whole_record() -> None:
+    """With no ``n_words`` the dump covers the FULL stride — the 17%-truncation bug of #24's run.
+
+    The planted stride is 0x40, so every one of its 8 words must be rendered, up to +0x038 — the
+    word *after* the last previously-dumped offset in a short window.
+    """
+    text = dump_move(planted_tk_move_source(), _tk_moves(), TKM_FOLLOWUP_MOVE)
+    for word in range(TKM_MOVE_SIZE // 8):
+        assert f"+0x{word * 8:03x}:" in text
+    assert f"0x{TKM_MOVE_SIZE:x} bytes" in text
+
+
+def test_dump_move_honours_an_explicit_word_count() -> None:
+    """``--dump-words`` still narrows the dump, so the default is an override, not a lock-in."""
+    text = dump_move(planted_tk_move_source(), _tk_moves(), TKM_FOLLOWUP_MOVE, n_words=2)
+    assert "+0x008:" in text
+    assert "+0x010:" not in text
+
+
+def test_dump_move_is_total_over_unreadable_words_at_full_stride() -> None:
+    """A record past mapped memory renders ``<unreadable>`` for every word, never an exception."""
+    moves = MovesArray(slot_key=(), moves_base=0x999000000, move_stride=TKM_MOVE_SIZE)
+    text = dump_move(planted_tk_move_source(), moves, 0)
+    assert text.count("<unreadable>") == TKM_MOVE_SIZE // 8
+
+
+def test_dump_move_reports_the_constant_k_of_the_planted_id_field() -> None:
+    """The planted ``move_id + K`` u32 is surfaced mechanically, with its implied ``K``."""
+    source, moves = planted_tk_move_source(), _tk_moves()
+    text = dump_move(source, moves, TKM_FOLLOWUP_MOVE)
+    expected = TKM_FOLLOWUP_MOVE + TKM_ID_FIELD_K
+    assert f"(u32 {expected}, 0)" in text  # the both-halves-small split annotation
+    assert f"move_id +{TKM_ID_FIELD_K}" in text
+
+
+def test_the_same_k_falls_out_of_two_different_move_dumps() -> None:
+    """Two ids yield the SAME ``K`` — the cross-record agreement that makes it a real relationship.
+
+    This is the live evidence reproduced offline: 0x0e04 for move 1695 and 0x0d83 for move 1566 are
+    different *values* but the same ``move_id + 1893``. One dump can only ever propose a K.
+    """
+    source, moves = planted_tk_move_source(), _tk_moves()
+    deltas = set()
+    for move_id in (TKM_FOLLOWUP_MOVE, TKM_MISALIGNED_MOVE):
+        words = [
+            (off, value)
+            for off, value in _read_words(source, moves.move_addr(move_id), TKM_MOVE_SIZE // 8)
+        ]
+        found = find_id_related_u32s(words, move_id)
+        assert found, f"no candidate for move {move_id}"
+        deltas.add(found[0].delta)
+    assert deltas == {TKM_ID_FIELD_K}
+
+
+def _read_words(source: FlatMemorySource, addr: int, n_words: int) -> list[tuple[int, int | None]]:
+    """Read ``n_words`` u64s as the dump does, tolerating unreadable words (test helper)."""
+    from tekken_coach.reader.decode import read_scalar
+
+    out: list[tuple[int, int | None]] = []
+    for i in range(n_words):
+        try:
+            out.append((i * 8, int(read_scalar(source, addr + i * 8, "ptr"))))
+        except MemoryReadError:
+            out.append((i * 8, None))
+    return out
+
+
+def test_no_constant_k_is_reported_when_no_small_u32_repeats() -> None:
+    """A record with no repeated small u32 stays quiet — no candidate K is invented from noise.
+
+    Move 0 carries no id field; its only non-zero words are pointers, whose small *high* halves must
+    not be mistaken for repeated small fields.
+    """
+    source, moves = planted_tk_move_source(), _tk_moves()
+    text = dump_move(source, moves, TKM_NO_ID_FIELD_MOVE)
+    assert "no small u32 repeats through the record" in text
+    words = _read_words(source, moves.move_addr(TKM_NO_ID_FIELD_MOVE), TKM_MOVE_SIZE // 8)
+    assert find_id_related_u32s(words, TKM_NO_ID_FIELD_MOVE) == []
+
+
+def test_probe_cancel_run_reproduces_the_planted_gate_pairs() -> None:
+    """Following the neutral move's cancel pointer reproduces every Bryan anchor — a confirmation.
+
+    This is the decisive Part B result: if the live run does this, the pointer's identity, the
+    ``tk_cancel`` layout, and the T8 command encoding are all confirmed at once.
+    """
+    probe = probe_cancel_run(
+        planted_tk_move_source(),
+        _tk_moves(),
+        TKM_NEUTRAL_MOVE,
+        ptr_offset=TKM_CANCEL_PTR_OFFSET,
+        known_pairs=BRYAN_GATE_PAIRS,
+    )
+    assert probe.ptr == tk_move_run_starts()[TKM_NEUTRAL_MOVE]
+    assert probe.confirmed
+    assert len(probe.matched) == len(BRYAN_GATE_PAIRS)
+    assert "CONFIRMED" in probe.report()
+
+
+def test_probe_cancel_run_reports_a_followup_run_as_no_match() -> None:
+    """A move whose run holds only follow-ups matches no anchor — reported as such, not as failure.
+
+    The honest reading matters live: a per-move run holds that move's follow-ups, so a miss here is
+    weak evidence against the offset, and the report must say so rather than implying the offset is
+    disproven.
+    """
+    probe = probe_cancel_run(
+        planted_tk_move_source(),
+        _tk_moves(),
+        TKM_FOLLOWUP_MOVE,
+        ptr_offset=TKM_CANCEL_PTR_OFFSET,
+        known_pairs=BRYAN_GATE_PAIRS,
+    )
+    assert not probe.confirmed
+    assert probe.matched == ()
+    assert len(probe.rows) == 2
+    assert "NO MATCH" in probe.report() and "weak evidence" in probe.report()
+
+
+def test_probe_cancel_run_with_a_wrong_offset_finds_nothing_and_does_not_crash() -> None:
+    """A ptr_offset landing in junk yields no matches and no plausible rows — data, not a crash."""
+    probe = probe_cancel_run(
+        planted_tk_move_source(),
+        _tk_moves(),
+        TKM_NEUTRAL_MOVE,
+        ptr_offset=TKM_JUNK_PTR_OFFSET,
+        known_pairs=BRYAN_GATE_PAIRS,
+    )
+    assert not probe.confirmed
+    assert probe.matched == ()
+    assert probe.n_plausible == 0  # 0xff.. direction bits are not a modeled code
+
+
+def test_probe_cancel_run_with_an_unreadable_pointer_word_is_data() -> None:
+    """A move whose record is past the segment reports "no probe possible", never raising."""
+    probe = probe_cancel_run(
+        planted_tk_move_source(),
+        _tk_moves(),
+        TKM_LAST_MOVE + 1,
+        ptr_offset=TKM_CANCEL_PTR_OFFSET,
+        known_pairs=BRYAN_GATE_PAIRS,
+    )
+    assert probe.ptr is None
+    assert probe.rows == ()
+    assert "no probe possible" in probe.report()
+
+
+def test_cancel_range_computes_the_exact_planted_count() -> None:
+    """The span between consecutive pointers is a whole multiple of 0x28, giving the exact count."""
+    result = cancel_range(
+        planted_tk_move_source(), _tk_moves(), TKM_NEUTRAL_MOVE, ptr_offset=TKM_CANCEL_PTR_OFFSET
+    )
+    assert result.whole_multiple and not result.falsified
+    assert result.span == 5 * CANCEL_SIZE
+    assert result.count == 5
+    assert result.n_rows_plausible == result.n_rows_checked == 5
+    assert "CONSISTENT" in result.verdict
+
+
+def test_cancel_range_falsifies_cleanly_on_a_non_multiple_span() -> None:
+    """A span that is not a whole multiple of 0x28 FALSIFIES the hypothesis — the sharpest test.
+
+    Consecutive ``tk_cancel`` runs cannot start a non-multiple of the row size apart, so this is the
+    one result that disproves the contiguous-run reading outright rather than merely failing to
+    support it.
+    """
+    result = cancel_range(
+        planted_tk_move_source(), _tk_moves(), TKM_MISALIGNED_MOVE, ptr_offset=TKM_CANCEL_PTR_OFFSET
+    )
+    assert result.span == 2 * CANCEL_SIZE + TKM_SKEW
+    assert not result.whole_multiple
+    assert result.falsified
+    assert result.count is None  # no count is implied by a span that cannot be one
+    assert "FALSIFIED" in result.verdict
+
+
+def test_cancel_range_treats_an_empty_run_as_data() -> None:
+    """A move sharing its pointer with the next owns no cancels — consistent, but proves nothing."""
+    result = cancel_range(
+        planted_tk_move_source(), _tk_moves(), TKM_EMPTY_RUN_MOVE, ptr_offset=TKM_CANCEL_PTR_OFFSET
+    )
+    assert result.span == 0
+    assert result.count == 0
+    assert result.whole_multiple and not result.falsified
+    assert "EMPTY RUN" in result.verdict
+
+
+def test_cancel_range_on_the_last_move_is_data_not_an_error() -> None:
+    """The last move has no readable neighbour, so its run's end is unknown — a no-verdict, not a
+    falsification."""
+    result = cancel_range(
+        planted_tk_move_source(), _tk_moves(), TKM_LAST_MOVE, ptr_offset=TKM_CANCEL_PTR_OFFSET
+    )
+    assert result.start is not None
+    assert result.next_start is None
+    assert result.span is None
+    assert not result.falsified
+    assert "NO VERDICT" in result.verdict
+
+
+def test_cancel_range_reports_a_descending_span_as_data() -> None:
+    """Runs laid out in descending order are reported as such, not as a falsification.
+
+    Modelled by walking the planted moves array **backwards** (a negative stride), so index 0 lands
+    on move 4 and index 1 on move 3 — whose run starts earlier, giving a negative span.
+    """
+    descending = MovesArray(
+        slot_key=(), moves_base=TKM_MOVES_BASE + 4 * TKM_MOVE_SIZE, move_stride=-TKM_MOVE_SIZE
+    )
+    result = cancel_range(planted_tk_move_source(), descending, 0, ptr_offset=TKM_CANCEL_PTR_OFFSET)
+    assert result.span is not None and result.span < 0
+    assert not result.falsified
+    assert "DATA, NOT A FALSIFICATION" in result.verdict

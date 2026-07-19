@@ -843,6 +843,15 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
     ``tk_moveset`` header that stores ``moves_base`` (reverse-scanned), plus an optional gate
     brute-force of ``cancels_ptr`` with ``--find-cancels``. Read-only; degrades at the menu like the
     other live commands.
+
+    Brief #25 adds the per-move cancel run. Phase 1 is solved live (``player+0x3d8``, stride
+    ``0x448``), so the work is now in the record: ``--dump-move`` prints the **whole** stride rather
+    than a 24-word window, and ``--probe-cancels <id>`` follows that move's candidate cancel pointer
+    (``--cancel-ptr-offset``, default the hypothesised ``0x98``), gates what it points at against
+    the character's anchors, and tests whether the span to the next pointer is a whole multiple
+    of ``CANCEL_SIZE``. The ``moves_base`` holder reverse-scan is now opt-in (``--find-holder``): it
+    sweeps the capped region map, so its null result was a known limitation printed as if it were a
+    finding.
     """
     import time  # noqa: PLC0415
 
@@ -853,11 +862,13 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
         MoveSample,
         MovesArray,
         SampleCensus,
+        cancel_range,
         describe_slots,
         dump_move,
         find_cancels_ptr_offset,
         format_slot_key,
         locate_moves_base_holder,
+        probe_cancel_run,
         sample_player_slots,
         solve_moves_array,
     )
@@ -1053,10 +1064,52 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
     # Phase 2: dump the real layout from the solved base+stride.
     try:
         if args.dump_move is not None:
-            print(dump_move(source, moves, args.dump_move))
+            print(dump_move(source, moves, args.dump_move, n_words=args.dump_words))
             print()
+
+        # Brief #25 Part B+C: follow this move's candidate cancel pointer and test the
+        # contiguous-run hypothesis against its neighbour.
+        if args.probe_cancels is not None:
+            probe_pairs = gate_pairs_for(args.char) or ()
+            if not probe_pairs:
+                print(f"(no decoder-gate anchors for {args.char!r}; probing without a gate)")
+            print(
+                probe_cancel_run(
+                    source,
+                    moves,
+                    args.probe_cancels,
+                    ptr_offset=args.cancel_ptr_offset,
+                    known_pairs=probe_pairs,
+                ).report()
+            )
+            print()
+            print(
+                cancel_range(
+                    source, moves, args.probe_cancels, ptr_offset=args.cancel_ptr_offset
+                ).report()
+            )
+            print()
+
+        # Brief #25 Part D: the holder reverse-scan is opt-in. It sweeps the CAPPED region map
+        # (a byte sweep — 11.4 GiB of pure-Python scanning is the C4h perf wall, so it must NOT be
+        # switched to mapped_regions()), and the header lives in an arena that budget excludes. Its
+        # "no heap object stores moves_base" line is therefore a known limitation, not a finding,
+        # and printing it every run trained us to read a null result as data. If the per-move cancel
+        # pointers pan out, the header may not be needed at all.
+        if not (args.find_holder or args.find_cancels):
+            print(
+                "(skipping the moves_base holder reverse-scan: it sweeps the CAPPED region map, "
+                "which excludes the arena the header lives in, so its null result is a known "
+                "limitation rather than a finding. Pass --find-holder to run it anyway.)"
+            )
+            return 0
+
         buffers = _region_buffers(source, source.regions(), progress=None)
         print(locate_moves_base_holder(source, buffers, moves.moves_base))
+        print(
+            "  (a null result here is expected: this scan is budget-capped and does not cover "
+            "every mapped arena.)"
+        )
         if args.find_cancels:
             pairs = gate_pairs_for(args.char)
             if pairs is None:
@@ -1517,6 +1570,33 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="also dump this move_id's raw tk_move words (e.g. jab 1695), to ground the tk_move "
         "layout + its cancel-list reference.",
+    )
+    p_msanchor.add_argument(
+        "--dump-words",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="how many u64 words --dump-move prints (default: the WHOLE record, move_stride // 8, "
+        "so a dump is never silently truncated).",
+    )
+    p_msanchor.add_argument(
+        "--probe-cancels",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="follow this move_id's candidate cancel pointer, gate what it points at against the "
+        "character's known anchors, and test the contiguous-run hypothesis against move_id+1.",
+    )
+    p_msanchor.add_argument(
+        "--cancel-ptr-offset",
+        type=lambda s: int(s, 0),
+        default=0x98,
+        help="the tk_move offset holding this move's cancel-run pointer (hex, default 0x98). A "
+        "HYPOTHESIS from the 2026-07-19 dumps, not a confirmed offset — override it here.",
+    )
+    p_msanchor.add_argument(
+        "--find-holder",
+        action="store_true",
+        help="also run the moves_base holder reverse-scan. Off by default: it sweeps the capped "
+        "region map, so its null result is a known limitation, not a finding.",
     )
     p_msanchor.add_argument(
         "--find-cancels",

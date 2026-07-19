@@ -1,4 +1,4 @@
-"""Ground the ``tk_moveset`` layout on the trusted live ``move_id`` (briefs #21, #22).
+"""Ground the ``tk_moveset`` layout on the trusted live ``move_id`` (briefs #21-#25).
 
 The 2026-07-19 dumps proved the doc-derived ``tk_moveset`` offsets are wrong for the live 5.02.01
 build: the blind shape scan (#18-#20) was systematically matching shader/mesh objects because the
@@ -50,6 +50,21 @@ the samples and prints the results):
   gate — simultaneously confirming (or flagging) that the ``tk_cancel`` layout + command decode
   still hold on this build.
 
+* **Phase 2, brief #25 — the per-move cancel run.** The 2026-07-19 run *solved* Phase 1 (the
+  current-move pointer is ``player+0x3d8``, ``move_stride`` is ``0x448``) and its ``tk_move`` dumps
+  produced a strong lead: a heap pointer at ``+0x098`` that differs per move, is ordered with
+  ``move_id``, and whose gap between moves 1566 and 1695 is exactly ``853 * CANCEL_SIZE``. That fits
+  one structure — *cancels stored contiguously, each move pointing at the start of its own run, the
+  run ending where the next move's begins* — and :func:`cancel_range` tests it against its sharpest
+  prediction: the span between consecutive pointers must be a whole multiple of ``CANCEL_SIZE``, so
+  a non-multiple falsifies it outright. :func:`probe_cancel_run` then follows the pointer and gates
+  what it finds against the character's known anchors, which would confirm the pointer's identity,
+  the ``tk_cancel`` layout, and the command encoding together. If it holds, #18's open
+  owner-attribution unknown closes. :func:`dump_move` also stops truncating (it defaults to the
+  whole stride now — the 24-word dump showed 17% of a ``0x448`` record) and reports repeated small
+  u32s with the ``move_id + K`` each implies, surfacing mechanically the ``+1893`` relationship that
+  corroborated the solve by eye.
+
 Read-only throughout (docs/02 §2): it resolves addresses, reads bytes, and follows pointers — the
 grounding uses the game's own observable ``move_id`` as truth, and the dumps print only the target's
 own bytes for our inspection.
@@ -60,17 +75,22 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from tekken_coach.framedata.moveset_decode import decode_command
 from tekken_coach.reader.decode import read_scalar
 from tekken_coach.reader.discovery.moveset_scan import _find_value_locations
 from tekken_coach.reader.discovery.scanners import Region
 from tekken_coach.reader.faults import MemoryReadError
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.moveset import (
+    CANCEL_COMMAND_OFFSET,
+    CANCEL_MOVE_ID_OFFSET,
     CANCEL_SIZE,
     CANCELS_COUNT_MAX,
     CANCELS_COUNT_MIN,
+    GateRow,
     KnownPair,
     MovesetHeader,
+    RawCancel,
     gate_pairs,
     read_cancels,
 )
@@ -531,9 +551,23 @@ def describe_slots(samples: Sequence[MoveSample]) -> list[SlotDescription]:
 # Phase 2 — grounding dumps (read the real layout from a known tk_move / header)
 # ---------------------------------------------------------------------------
 
-# How many u64 words :func:`dump_move` prints from a ``tk_move`` (the real stride is unknown, so a
-# generous window shows the cancel pointer/count pair wherever it sits).
+# The fallback word count for :func:`dump_move` when the stride is unknown. Brief #25 makes the
+# **full stride** the default instead (``move_stride // 8`` words): the 2026-07-19 dump printed 24
+# words = 0xc0 of a 0x448 record, i.e. 17% of it, and its trailing zeros at +0x0a0..+0x0b8 were
+# where the *dump* stopped, not where the data did. A silently-truncated dump is how a second cancel
+# reference or an explicit count would be missed.
 DEFAULT_MOVE_WORDS = 24
+
+# A u32 half is "small" — worth splitting out and testing for an id relationship — below this.
+# Move ids and asset indices live in the low thousands; a pointer half or a float bit pattern does
+# not, so this keeps the split annotation on the fields where it means something.
+SMALL_U32_MAX = 0x10000
+
+# How many distinct offsets a small u32 value must occupy within one record before it is reported as
+# an id-related candidate. A value appearing once is unremarkable — every u64 trivially yields
+# *some* ``move_id + K``. A value repeated **through** the record is the signal that surfaced the
+# live ``+1893`` relationship (0x0e04 for move 1695, 0x0d83 for move 1566).
+MIN_U32_REPEATS = 2
 
 # The window :func:`locate_moves_base_holder` dumps around the word that stores ``moves_base`` —
 # enough either side that the neighbouring ``cancels_ptr``/count pairs of the real header show up.
@@ -541,32 +575,137 @@ DEFAULT_HOLDER_BACK = 0x80
 DEFAULT_HOLDER_FWD = 0x40
 
 
+@dataclass(frozen=True)
+class IdRelatedWord:
+    """A small u32 repeated through one ``tk_move``, and its offset from that move's ``move_id``.
+
+    The live dumps carried ``0x0e04`` (3588) through move 1695's record and ``0x0d83`` (3459)
+    through move 1566's — both ``move_id + 1893``, the *same* ``K`` for two unrelated moves. That
+    coincidence corroborated the solved ``moves_base``/``move_stride``, and it was found by eye.
+    This surfaces it mechanically instead.
+
+    One record alone cannot establish ``K``: every value yields some delta. What this reports is a
+    **candidate** — a value repeated within the record, and what ``K`` it would imply. Dumping two
+    different ids and seeing the same ``delta`` is the confirmation.
+    """
+
+    value: int
+    delta: int  # value - move_id: the K this word would imply
+    offsets: tuple[int, ...]  # every byte offset of the u32 half holding it
+
+    def describe(self) -> str:
+        """A one-line summary naming the implied ``K`` and where the value sat."""
+        where = ", ".join(f"+0x{off:03x}" for off in self.offsets)
+        return (
+            f"0x{self.value:x} ({self.value}) = move_id {self.delta:+d} "
+            f"at {len(self.offsets)} offsets [{where}]"
+        )
+
+
+def find_id_related_u32s(
+    words: Sequence[tuple[int, int | None]],
+    move_id: int,
+    *,
+    min_repeats: int = MIN_U32_REPEATS,
+    max_value: int = SMALL_U32_MAX,
+) -> list[IdRelatedWord]:
+    """Small u32 halves repeated through a dumped record, with the ``K`` each would imply (pure).
+
+    ``words`` is the dump's ``(byte_offset, u64 value or None)`` sequence. A word contributes only
+    when **both** its u32 halves are below ``max_value`` — i.e. it is a pair of small fields rather
+    than a pointer or float bits. That test is what keeps the report clean: a 64-bit heap pointer
+    has a small *high* half (the live ones were ``0x2b4``), so collecting halves independently would
+    surface every pointer's page bits as a spurious repeated value. Zero halves are skipped as
+    padding. Values occupying at least ``min_repeats`` distinct offsets are returned, most-repeated
+    first, ties by value — deterministic, so two dumps are directly comparable.
+
+    Reports candidates, never a conclusion: see :class:`IdRelatedWord`.
+    """
+    offsets_by_value: dict[int, list[int]] = {}
+    for offset, value in words:
+        if value is None:
+            continue
+        halves = (value & 0xFFFFFFFF, (value >> 32) & 0xFFFFFFFF)
+        if any(half >= max_value for half in halves):
+            continue  # a pointer or a wide field, not a pair of small ones
+        for half_index, half in enumerate(halves):
+            if half > 0:
+                offsets_by_value.setdefault(half, []).append(offset + half_index * 4)
+
+    found = [
+        IdRelatedWord(value=value, delta=value - move_id, offsets=tuple(offsets))
+        for value, offsets in offsets_by_value.items()
+        if len(offsets) >= min_repeats
+    ]
+    found.sort(key=lambda w: (-len(w.offsets), w.value))
+    return found
+
+
+def _read_move_words(
+    source: MemorySource, move_addr: int, n_words: int
+) -> list[tuple[int, int | None]]:
+    """Read ``n_words`` u64s from ``move_addr`` as ``(byte_offset, value or None)`` (read-only).
+
+    Total: an unreadable word yields ``None`` rather than raising, so a slightly-off stride or a
+    record running past its mapping still produces a usable dump.
+    """
+    words: list[tuple[int, int | None]] = []
+    for i in range(n_words):
+        off = i * POINTER_SIZE
+        try:
+            words.append((off, _read_u64(source, move_addr + off)))
+        except MemoryReadError:
+            words.append((off, None))
+    return words
+
+
 def dump_move(
     source: MemorySource,
     moves: MovesArray,
     move_id: int,
     *,
-    n_words: int = DEFAULT_MOVE_WORDS,
+    n_words: int | None = None,
 ) -> str:
     """Dump the raw words of ``move_id``'s ``tk_move`` at ``moves.move_addr(move_id)`` (read-only).
 
     Grounds the ``tk_move`` layout (#18's unconfirmed owner-attribution offsets): somewhere in these
-    words is this move's cancel-list reference (a pointer into the cancels array + a count), which
-    is the path to the real cancels. Total: an unreadable word is shown as ``<unreadable>``, never
-    raising, so even a slightly-off stride still yields a usable dump.
+    words is this move's cancel-list reference (a pointer into the cancels array), which is the path
+    to the real cancels. ``n_words`` defaults to the **whole record** (``move_stride // 8``) so a
+    dump is never silently truncated the way the 24-word 2026-07-19 dump was; pass it explicitly to
+    override.
+
+    Each word whose two u32 halves are both small is annotated with that split, and the trailing
+    section reports which small u32s repeat through the record and what ``move_id + K`` each would
+    imply (:func:`find_id_related_u32s`). Total: an unreadable word is shown as ``<unreadable>``,
+    never raising.
     """
+    if n_words is None:
+        n_words = max(1, moves.move_stride // POINTER_SIZE)
     move_addr = moves.move_addr(move_id)
+    words = _read_move_words(source, move_addr, n_words)
+
     lines = [
         f"tk_move dump for move_id {move_id} @ 0x{move_addr:x} "
-        f"(moves_base=0x{moves.moves_base:x}, stride=0x{moves.move_stride:x}):"
+        f"(moves_base=0x{moves.moves_base:x}, stride=0x{moves.move_stride:x}, "
+        f"{n_words} words = 0x{n_words * POINTER_SIZE:x} bytes):"
     ]
-    for i in range(n_words):
-        off = i * POINTER_SIZE
-        try:
-            value = _read_u64(source, move_addr + off)
-            lines.append(f"    +0x{off:03x}: 0x{value:016x}")
-        except MemoryReadError:
+    for off, value in words:
+        if value is None:
             lines.append(f"    +0x{off:03x}: <unreadable>")
+            continue
+        low, high = value & 0xFFFFFFFF, (value >> 32) & 0xFFFFFFFF
+        split = f"  (u32 {low}, {high})" if low < SMALL_U32_MAX and high < SMALL_U32_MAX else ""
+        lines.append(f"    +0x{off:03x}: 0x{value:016x}{split}")
+
+    related = find_id_related_u32s(words, move_id)
+    if related:
+        lines.append("  small u32s repeated through the record (each implies a candidate K):")
+        lines.extend(f"    {word.describe()}" for word in related)
+        lines.append(
+            "  dump a second move_id: a K that is the SAME for both is a real id relationship."
+        )
+    else:
+        lines.append("  no small u32 repeats through the record — no candidate K to report.")
     return "\n".join(lines)
 
 
@@ -653,3 +792,357 @@ def find_cancels_ptr_offset(
         if all(row.found for row in gate_pairs(cancels, tuple_pairs)):
             return off
     return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — the per-move cancel run (brief #25): test the contiguous-range hypothesis
+# ---------------------------------------------------------------------------
+
+# The ``tk_move`` word the 2026-07-19 dumps point at as this move's cancel-list pointer. A
+# **hypothesis under test**, not a confirmed fact: both records held a heap pointer here, into an
+# arena distinct from ``moves_base``, differing per move and ordered with ``move_id`` — and the gap
+# between move 1566's and move 1695's (0x8548 across 129 moves) is exactly 853 * CANCEL_SIZE. Every
+# entry point takes it as a parameter so a wrong guess is one flag away from corrected.
+DEFAULT_CANCEL_PTR_OFFSET = 0x98
+
+# How many rows :func:`probe_cancel_run` reads when no range bounds it (an unreadable neighbour, or
+# an explicit override). Enough to reach a gate anchor if the pointer is real; small enough that a
+# junk pointer costs nothing.
+DEFAULT_PROBE_ROWS = 32
+
+# The hard ceiling on rows read from one move's run, however large the computed span. A wrong
+# ``ptr_offset`` can yield an enormous span; this keeps that a bounded, reportable non-result rather
+# than a hang.
+MAX_PROBE_ROWS = 4096
+
+
+def _read_cancel_ptr(
+    source: MemorySource, moves: MovesArray, move_id: int, ptr_offset: int
+) -> int | None:
+    """Read ``move_id``'s cancel-run pointer at ``+ptr_offset``, or ``None`` if unreadable.
+
+    Unreadable is **data** (the move index may not exist, or its record may run past the mapping),
+    so the callers report it rather than raising.
+    """
+    try:
+        return _read_u64(source, moves.move_addr(move_id) + ptr_offset)
+    except MemoryReadError:
+        return None
+
+
+def _read_cancel_row(source: MemorySource, row_addr: int) -> RawCancel | None:
+    """Read one ``tk_cancel`` at ``row_addr`` in the confirmed layout, or ``None`` if unreadable."""
+    try:
+        command = _read_u64(source, row_addr + CANCEL_COMMAND_OFFSET)
+        dest = int(read_scalar(source, row_addr + CANCEL_MOVE_ID_OFFSET, "u16"))
+    except MemoryReadError:
+        return None
+    return RawCancel(command=command, dest_move_id=dest)
+
+
+def _row_is_plausible(row: RawCancel) -> bool:
+    """Whether a row decodes as a plausible ``tk_cancel`` — its direction bits are a modeled code.
+
+    Deliberately structural rather than a notation check: a real cancel may legitimately decode to
+    no notation (a motion input, a Heat engage), so requiring notation would reject genuine rows.
+    What junk *cannot* do is land on a modeled direction code repeatedly — an arbitrary u64's low 32
+    bits are almost never one of the eight documented codes or the two no-prefix values.
+    """
+    return not decode_command(row.command).unknown_direction
+
+
+@dataclass(frozen=True)
+class CancelRange:
+    """Whether ``move_id``'s cancels are the contiguous run ``[ptr(N), ptr(N+1))`` (#25 Part C).
+
+    The hypothesis: cancels are stored contiguously, each ``tk_move`` points at the start of its own
+    run, and the run ends where the next move's run begins. Its sharpest prediction is that the span
+    between consecutive moves' pointers is a **whole multiple of** :data:`CANCEL_SIZE` — a
+    non-multiple falsifies it outright, which is why that is recorded separately from the count.
+
+    Non-results are data, not errors: an unreadable pointer (``start``/``next_start`` ``None``), a
+    zero span (a move with no cancels sharing its neighbour's pointer), and a negative span (the
+    runs are not laid out in ascending ``move_id`` order) each get a verdict of their own.
+    """
+
+    move_id: int
+    ptr_offset: int
+    start: int | None
+    next_start: int | None
+    span: int | None
+    count: int | None
+    whole_multiple: bool
+    n_rows_checked: int
+    n_rows_plausible: int
+    verdict: str
+
+    @property
+    def falsified(self) -> bool:
+        """Whether this range **disproves** the contiguous-run hypothesis (a non-multiple span)."""
+        return self.span is not None and not self.whole_multiple
+
+    def report(self) -> str:
+        """A multi-line summary: the two pointers, the span, and what it does to the hypothesis."""
+        lines = [
+            f"cancel range for move_id {self.move_id} (ptr at tk_move+0x{self.ptr_offset:x}):",
+            f"  ptr(N)   = {'<unreadable>' if self.start is None else f'0x{self.start:x}'}",
+            f"  ptr(N+1) = "
+            f"{'<unreadable>' if self.next_start is None else f'0x{self.next_start:x}'}",
+        ]
+        if self.span is not None:
+            multiple = "YES" if self.whole_multiple else "NO"
+            lines.append(
+                f"  span     = {self.span} bytes; whole multiple of 0x{CANCEL_SIZE:x}: {multiple}"
+            )
+        if self.count is not None:
+            lines.append(f"  implied cancel count = {self.count}")
+        if self.n_rows_checked:
+            lines.append(
+                f"  rows decoding as plausible tk_cancels: "
+                f"{self.n_rows_plausible}/{self.n_rows_checked}"
+            )
+        lines.append(f"  {self.verdict}")
+        return "\n".join(lines)
+
+
+def cancel_range(
+    source: MemorySource,
+    moves: MovesArray,
+    move_id: int,
+    *,
+    ptr_offset: int = DEFAULT_CANCEL_PTR_OFFSET,
+    max_rows: int = MAX_PROBE_ROWS,
+) -> CancelRange:
+    """Test the contiguous-run hypothesis for ``move_id`` against move ``move_id + 1`` (read-only).
+
+    Reads both moves' candidate cancel pointers, reports the byte span between them and whether it
+    is a whole multiple of :data:`CANCEL_SIZE`, the implied cancel count, and — when the span is a
+    positive whole multiple — how many of the rows in ``[ptr(N), ptr(N+1))`` decode as plausible
+    ``tk_cancel``\\ s. Row reads are capped at ``max_rows`` so a wrong ``ptr_offset`` yielding an
+    enormous span is a bounded non-result.
+
+    Total: every failure mode above is returned as a :class:`CancelRange` with its own verdict.
+    """
+    start = _read_cancel_ptr(source, moves, move_id, ptr_offset)
+    next_start = _read_cancel_ptr(source, moves, move_id + 1, ptr_offset)
+
+    def result(
+        span: int | None,
+        count: int | None,
+        whole: bool,
+        checked: int,
+        plausible: int,
+        verdict: str,
+    ) -> CancelRange:
+        return CancelRange(
+            move_id=move_id,
+            ptr_offset=ptr_offset,
+            start=start,
+            next_start=next_start,
+            span=span,
+            count=count,
+            whole_multiple=whole,
+            n_rows_checked=checked,
+            n_rows_plausible=plausible,
+            verdict=verdict,
+        )
+
+    if start is None:
+        return result(
+            None, None, False, 0, 0, "NO VERDICT: this move's own pointer word is unreadable."
+        )
+    if next_start is None:
+        return result(
+            None,
+            None,
+            False,
+            0,
+            0,
+            f"NO VERDICT: move {move_id + 1}'s pointer word is unreadable (a last move, or a "
+            "record past the mapping) — the run's end is unknown, which bounds nothing.",
+        )
+
+    span = next_start - start
+    whole = span % CANCEL_SIZE == 0
+    if span < 0:
+        return result(
+            span,
+            None,
+            whole,
+            0,
+            0,
+            "DATA, NOT A FALSIFICATION: the next move's run starts BEFORE this one's, so the runs "
+            "are not laid out in ascending move_id order. The hypothesis needs a different "
+            "end-of-run source.",
+        )
+    if not whole:
+        return result(
+            span,
+            None,
+            whole,
+            0,
+            0,
+            f"FALSIFIED: {span} is not a whole multiple of 0x{CANCEL_SIZE:x} — consecutive "
+            f"tk_cancel runs cannot start {span} bytes apart. Either +0x{ptr_offset:x} is not the "
+            "cancel pointer, or the cancels are not stored contiguously.",
+        )
+    if span == 0:
+        return result(
+            span,
+            0,
+            whole,
+            0,
+            0,
+            "EMPTY RUN: this move shares its pointer with the next, i.e. it owns no cancels. "
+            "Consistent with the hypothesis; carries no evidence for it.",
+        )
+
+    count = span // CANCEL_SIZE
+    checked = min(count, max_rows)
+    plausible = 0
+    for i in range(checked):
+        row = _read_cancel_row(source, start + i * CANCEL_SIZE)
+        if row is not None and _row_is_plausible(row):
+            plausible += 1
+    if plausible == checked:
+        verdict = (
+            f"CONSISTENT: the span is exactly {count} tk_cancel rows and all {checked} checked "
+            "decode plausibly."
+        )
+    elif plausible == 0:
+        verdict = (
+            f"INCONSISTENT: the span divides into {count} rows, but NONE of the {checked} checked "
+            "decode as a plausible tk_cancel — a divisible span alone is weak evidence."
+        )
+    else:
+        verdict = (
+            f"PARTIAL: {plausible} of {checked} checked rows decode plausibly. Not a confirmation "
+            "— report which rows, do not round up."
+        )
+    return result(span, count, whole, checked, plausible, verdict)
+
+
+@dataclass(frozen=True)
+class CancelRunProbe:
+    """What the pointer at ``tk_move+ptr_offset`` actually points at — brief #25 Part B.
+
+    The self-validating gate trick :func:`find_cancels_ptr_offset` uses, applied to a **per-move**
+    pointer: if rows read at this pointer reproduce known ``(command -> destination move_id)``
+    anchors, then the pointer's identity, the ``tk_cancel`` layout, and the T8 command encoding are
+    confirmed together. Partial results are reported as partial — ``gate`` carries every anchor's
+    own verdict, so a caller can never report a confirmation without naming which parts matched.
+    """
+
+    move_id: int
+    ptr_offset: int
+    ptr: int | None
+    rows: tuple[RawCancel, ...]
+    n_undecodable: int
+    n_plausible: int
+    gate: tuple[GateRow, ...]
+
+    @property
+    def matched(self) -> tuple[GateRow, ...]:
+        """The anchors this run reproduced."""
+        return tuple(row for row in self.gate if row.found)
+
+    @property
+    def unmatched(self) -> tuple[GateRow, ...]:
+        """The anchors this run did not reproduce."""
+        return tuple(row for row in self.gate if not row.found)
+
+    @property
+    def confirmed(self) -> bool:
+        """Whether **every** anchor was reproduced — the only state that confirms the layout."""
+        return bool(self.gate) and not self.unmatched
+
+    def report(self) -> str:
+        """A multi-line summary that states matched, unmatched, and undecodable separately."""
+        if self.ptr is None:
+            return (
+                f"cancel run for move_id {self.move_id}: the pointer word at "
+                f"tk_move+0x{self.ptr_offset:x} is unreadable — no probe possible."
+            )
+        lines = [
+            f"cancel run for move_id {self.move_id} via tk_move+0x{self.ptr_offset:x} "
+            f"-> 0x{self.ptr:x}:",
+            f"  read {len(self.rows)} row(s); {self.n_plausible} decode as plausible tk_cancels, "
+            f"{self.n_undecodable} yield no notation",
+        ]
+        for row in self.rows[:16]:
+            note = decode_command(row.command).notation()
+            lines.append(
+                f"    command=0x{row.command:016x} -> dest {row.dest_move_id} "
+                f"({note if note is not None else '<no notation>'})"
+            )
+        if len(self.rows) > 16:
+            lines.append(f"    ... {len(self.rows) - 16} more")
+
+        if not self.gate:
+            lines.append("  no anchors supplied — nothing gated, so nothing is confirmed.")
+            return "\n".join(lines)
+        for anchor in self.gate:
+            mark = "MATCH  " if anchor.found else "no     "
+            lines.append(
+                f"  {mark} move {anchor.move_id} expected {anchor.expected!r}; "
+                f"this run decoded {anchor.decoded or '[]'}"
+            )
+        if self.confirmed:
+            lines.append(
+                f"  CONFIRMED: all {len(self.gate)} anchors reproduced — the pointer at "
+                f"+0x{self.ptr_offset:x}, the tk_cancel layout, and the command encoding all hold."
+            )
+        elif self.matched:
+            lines.append(
+                f"  PARTIAL: {len(self.matched)}/{len(self.gate)} anchors reproduced. NOT a "
+                "confirmation — the listed misses are unexplained."
+            )
+        else:
+            lines.append(
+                f"  NO MATCH: none of the {len(self.gate)} anchors were reproduced. Note that a "
+                "per-move run holds that move's FOLLOW-UPS, so anchors are only expected in the "
+                "neutral move's run — a miss here is weak evidence against the offset."
+            )
+        return "\n".join(lines)
+
+
+def probe_cancel_run(
+    source: MemorySource,
+    moves: MovesArray,
+    move_id: int,
+    *,
+    ptr_offset: int = DEFAULT_CANCEL_PTR_OFFSET,
+    known_pairs: Sequence[KnownPair] = (),
+    n_rows: int | None = None,
+) -> CancelRunProbe:
+    """Follow ``move_id``'s candidate cancel pointer and gate what it points at (read-only).
+
+    Reads the pointer at ``tk_move+ptr_offset``, treats its target as a ``tk_cancel`` array using
+    the existing :data:`CANCEL_SIZE` / offset constants and the #18 decoder, and gates the decoded
+    ``(command -> dest)`` entries against ``known_pairs``. ``n_rows`` defaults to the count implied
+    by :func:`cancel_range` (falling back to :data:`DEFAULT_PROBE_ROWS` when the range yields none),
+    capped at :data:`MAX_PROBE_ROWS`.
+
+    Total: an unreadable pointer or row ends the read and is reported, never raised — a wrong
+    ``ptr_offset`` pointing into junk yields no matches rather than a crash.
+    """
+    ptr = _read_cancel_ptr(source, moves, move_id, ptr_offset)
+    if ptr is None:
+        return CancelRunProbe(move_id, ptr_offset, None, (), 0, 0, ())
+
+    if n_rows is None:
+        implied = cancel_range(source, moves, move_id, ptr_offset=ptr_offset).count
+        n_rows = implied if implied else DEFAULT_PROBE_ROWS
+    n_rows = max(0, min(n_rows, MAX_PROBE_ROWS))
+
+    rows: list[RawCancel] = []
+    for i in range(n_rows):
+        row = _read_cancel_row(source, ptr + i * CANCEL_SIZE)
+        if row is None:
+            break  # the array ends (or was never one) — report what was readable
+        rows.append(row)
+
+    n_undecodable = sum(1 for row in rows if decode_command(row.command).notation() is None)
+    n_plausible = sum(1 for row in rows if _row_is_plausible(row))
+    gate = tuple(gate_pairs(rows, tuple(known_pairs))) if known_pairs else ()
+    return CancelRunProbe(move_id, ptr_offset, ptr, tuple(rows), n_undecodable, n_plausible, gate)
