@@ -11,6 +11,7 @@ from __future__ import annotations
 from tekken_coach.reader.moveset import (
     BRYAN_GATE_PAIRS,
     build_notation_map,
+    dump_header,
     gate_pairs,
     read_attributed_cancels,
     read_cancels,
@@ -123,6 +124,31 @@ def test_phase2_build_reproduces_ground_truth() -> None:
     for move_id in EXPECTED_UNRESOLVED:
         assert move_id in result.unresolved
         assert move_id not in result.notation
+
+
+def test_dump_header_formats_words_and_cancel_rows() -> None:
+    """Brief #20 Part D: the raw dump formats the header words + first cancel rows for grounding.
+
+    Pure over a planted source: it shows the ``cancels_ptr`` header word and, from that array, the
+    first cancel's raw ``command`` + ``move_id`` — the bytes we compare against the assumed offsets.
+    """
+    source, moveset_ptr = planted_moveset_source()
+    dump = dump_header(source, moveset_ptr, n_cancel_rows=4)
+    lines = dump.splitlines()
+    assert lines[0] == f"raw dump of header 0x{moveset_ptr:x}:"
+    # the cancels_ptr header word (at +0x1d0) is shown in the word window
+    assert any("+0x1d0:" in line for line in lines)
+    # the first planted cancel is the from-neutral jab: dest move_id 1695 (0x69f)
+    assert any("move_id=1695" in line for line in lines)
+    # exactly the requested number of cancel rows were formatted
+    assert sum(line.strip().startswith("[") for line in lines) == 4
+
+
+def test_dump_header_degrades_on_unreadable_target() -> None:
+    """The dump never raises on a garbage address — it labels the unreadable words instead."""
+    source, _ = planted_moveset_source()
+    dump = dump_header(source, 0xDEADBEEF000, n_cancel_rows=2)
+    assert "<unreadable>" in dump
 
 
 def test_self_check_classifies_hit_miss_missing() -> None:

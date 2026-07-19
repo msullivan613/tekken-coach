@@ -61,6 +61,25 @@ MOVESET_REF_OFFSET = 0x18  # the slot inside the object that holds the header ad
 # NOT reproduce Bryan's anchors, proving the gate — not the shape filter — is what accepts a header.
 GATE_DECOY_BASE = 0x306000000
 GATE_DECOY_CANCELS_BASE = 0x307000000
+GATE_DECOY_MOVES_COUNT = 200
+GATE_DECOY_CANCELS_COUNT = 250  # > moves -> passes the shape filter; padded to reach the gate
+
+# Brief #20: the scan world's REAL header carries realistic large counts — cancels ABOVE the old
+# 20000 cap (the ceiling that filtered the true Bryan header out on 2026-07-19) and far more cancels
+# than moves. Its cancels array is physically padded to this length so the gate can read all of it.
+REAL_CANCELS_COUNT = (
+    22000  # > 20000 (old cap) and >> MOVES_COUNT (1720): the defining moveset shape
+)
+
+# Two shape-filter decoys that must be rejected BEFORE the gate (they own no cancels array):
+#  - a near-equal-count array (the 8,703-strong live junk): fails the new ``cancels > moves`` check.
+#  - a micro array: fails the raised count floor.
+NEAR_EQUAL_DECOY_BASE = 0x308000000
+NEAR_EQUAL_DECOY_CANCELS = 4880
+NEAR_EQUAL_DECOY_MOVES = 4881  # cancels < moves -> rejected at the shape filter, never gated
+MICRO_DECOY_BASE = 0x309000000
+MICRO_DECOY_CANCELS = 6  # cancels > moves but both below the floor -> rejected at the shape filter
+MICRO_DECOY_MOVES = 3
 
 # The durable path the reverse scan must derive back from the confirmed header.
 EXPECTED_MOVESET_ANCHOR = ComponentAnchor(
@@ -255,12 +274,35 @@ def _object_blob() -> bytes:
     return bytes(buf)
 
 
-def _gate_decoy_blobs() -> tuple[bytes, bytes]:
-    """A header with a valid *shape* but cancels that reproduce NONE of Bryan's anchors.
+def _shape_header(cancels_ptr: int, cancels_count: int, moves_ptr: int, moves_count: int) -> bytes:
+    """A tk_moveset header with only the four cheap-filter words set (for shape-filter decoys)."""
+    header = bytearray(MOVESET_INPUT_SEQ_COUNT_OFFSET + 8)
+    _put_ptr(header, MOVESET_CANCELS_PTR_OFFSET, cancels_ptr)
+    _put_ptr(header, MOVESET_CANCELS_COUNT_OFFSET, cancels_count)
+    _put_ptr(header, MOVESET_MOVES_PTR_OFFSET, moves_ptr)
+    _put_ptr(header, MOVESET_MOVES_COUNT_OFFSET, moves_count)
+    return bytes(header)
 
-    Its counts and pointers survive the cheap shape filter, so it reaches the decoder gate — where
-    it is rejected because its cancels go to unrelated destinations. This proves the gate, not
-    the shape filter, is the decisive discriminator (brief #19 test intent).
+
+def _pad_cancels(cancels: bytearray, target_count: int) -> bytearray:
+    """Extend a cancels blob with zero rows to ``target_count`` rows (zero commands decode to None).
+
+    A physically full array so the gate can read every ``cancels_count`` row; the trailing zero rows
+    decode to no notation and go to dest 0, so they change no anchor's verdict.
+    """
+    needed = target_count * CANCEL_SIZE - len(cancels)
+    if needed > 0:
+        cancels += bytearray(needed)
+    return cancels
+
+
+def _gate_decoy_blobs() -> tuple[bytes, bytes]:
+    """A header with a valid *shape* (cancels > moves, in range) but cancels reproducing NO anchor.
+
+    Its counts and pointers survive the cheap shape filter — including the new ``cancels > moves``
+    check (brief #20) — so it reaches the decoder gate, where it is rejected because its cancels go
+    to unrelated destinations. This proves the gate, not the shape filter, is the decisive
+    discriminator (brief #19 test intent).
     """
     decoy_cancels = (
         _clean(0, 900, "", "1"),
@@ -270,30 +312,32 @@ def _gate_decoy_blobs() -> tuple[bytes, bytes]:
     cancels = bytearray()
     for c in decoy_cancels:
         cancels += _cancel_row(c.command, c.dest)
+    cancels = _pad_cancels(cancels, GATE_DECOY_CANCELS_COUNT)
 
-    header = bytearray(MOVESET_INPUT_SEQ_COUNT_OFFSET + 8)
-    _put_ptr(header, MOVESET_CANCELS_PTR_OFFSET, GATE_DECOY_CANCELS_BASE)
-    _put_ptr(header, MOVESET_CANCELS_COUNT_OFFSET, len(decoy_cancels))
-    _put_ptr(header, MOVESET_MOVES_PTR_OFFSET, MOVES_BASE)  # any real region; moves aren't gated
-    _put_ptr(header, MOVESET_MOVES_COUNT_OFFSET, 100)
-    return bytes(header), bytes(cancels)
+    header = _shape_header(
+        GATE_DECOY_CANCELS_BASE, GATE_DECOY_CANCELS_COUNT, MOVES_BASE, GATE_DECOY_MOVES_COUNT
+    )
+    return header, bytes(cancels)
 
 
 def planted_moveset_scan_source() -> FlatMemorySource:
     """A world for the brief #19 heap shape+gate scan: real header off a path, plus a gate decoy.
 
     Superset of :func:`planted_moveset_source` — the real Bryan header at :data:`MOVESET_BASE` is
-    now reachable only via ``PLAYER_BASE -> OBJECT_BASE -> header`` (no direct slot), and a decoy
-    decoy header rides along. Regions are auto-derived per segment (see
-    :class:`~tests.fixtures.reader.flat_source.FlatMemorySource`), so the scan sweeps every planted
-    heap segment exactly as it would the live regions.
+    now reachable only via ``PLAYER_BASE -> OBJECT_BASE -> header`` (no direct slot), it carries
+    realistic large counts (cancels ABOVE the old 20000 cap, cancels >> moves — brief #20), and
+    three decoys ride along: a shape-valid gate decoy (rejected at the gate) plus a near-equal-count
+    decoy and a micro decoy (both rejected at the shape filter). Regions are auto-derived per
+    segment (see :class:`~tests.fixtures.reader.flat_source.FlatMemorySource`), so the scan sweeps
+    every planted heap segment exactly as it would the live regions.
     """
-    cancels_blob, moves_blob, cancels_count = _build_arrays()
+    cancels_blob, moves_blob, _ = _build_arrays()
+    cancels_blob = _pad_cancels(cancels_blob, REAL_CANCELS_COUNT)
     decoy_header, decoy_cancels = _gate_decoy_blobs()
     return FlatMemorySource(
         [
             (MODULE_BASE, b"\x00" * 0x1000),
-            (MOVESET_BASE, _header_blob(cancels_count)),
+            (MOVESET_BASE, _header_blob(REAL_CANCELS_COUNT)),
             (CANCELS_BASE, bytes(cancels_blob)),
             (MOVES_BASE, bytes(moves_blob)),
             (DECOY_BASE, b"\xff" * 0x400),
@@ -301,6 +345,17 @@ def planted_moveset_scan_source() -> FlatMemorySource:
             (OBJECT_BASE, _object_blob()),
             (GATE_DECOY_BASE, decoy_header),
             (GATE_DECOY_CANCELS_BASE, decoy_cancels),
+            # Shape-filter decoys: valid pointers into real regions, but counts the new filter cuts.
+            (
+                NEAR_EQUAL_DECOY_BASE,
+                _shape_header(
+                    CANCELS_BASE, NEAR_EQUAL_DECOY_CANCELS, MOVES_BASE, NEAR_EQUAL_DECOY_MOVES
+                ),
+            ),
+            (
+                MICRO_DECOY_BASE,
+                _shape_header(CANCELS_BASE, MICRO_DECOY_CANCELS, MOVES_BASE, MICRO_DECOY_MOVES),
+            ),
         ],
         module_bases={MODULE: MODULE_BASE},
     )

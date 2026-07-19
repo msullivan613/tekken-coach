@@ -20,16 +20,22 @@ from tekken_coach.reader.discovery.moveset_scan import (
 )
 from tekken_coach.reader.discovery.scanners import Region
 from tekken_coach.reader.memory_source import MemorySource
-from tekken_coach.reader.moveset import BRYAN_GATE_PAIRS, gate_pairs_for
+from tekken_coach.reader.moveset import BRYAN_GATE_PAIRS, gate_pairs_for, read_moveset_header
 from tekken_coach.reader.slots import RegionIndex
 from tests.fixtures.reader.planted_moveset import (
     EXPECTED_MOVESET_ANCHOR,
     GATE_DECOY_BASE,
+    MICRO_DECOY_BASE,
     MOVESET_BASE,
+    NEAR_EQUAL_DECOY_BASE,
     PLAYER_BASE,
     PLAYER_STRUCT_SPAN,
+    REAL_CANCELS_COUNT,
     planted_moveset_scan_source,
 )
+
+# The old single shared count ceiling (brief #19) that filtered the true Bryan header out live.
+_OLD_COUNT_MAX = 20000
 
 
 def _buffers_and_index(source: MemorySource) -> tuple[Sequence[Region], RegionIndex]:
@@ -44,6 +50,43 @@ def test_shape_survivors_include_both_headers() -> None:
     survivors = shape_survivors(buffers, index)
     assert MOVESET_BASE in survivors
     assert GATE_DECOY_BASE in survivors
+
+
+def test_shape_filter_rejects_the_near_equal_and_micro_decoys() -> None:
+    """Brief #20: the new ``cancels > moves`` check + raised floor cut the junk BEFORE the gate.
+
+    The near-equal decoy (cancels < moves, like the 8,703 live false positives) and the micro decoy
+    (counts below the floor) are both rejected at the cheap shape filter — never reaching the gate.
+    """
+    source = planted_moveset_scan_source()
+    buffers, index = _buffers_and_index(source)
+    survivors = shape_survivors(buffers, index)
+    assert NEAR_EQUAL_DECOY_BASE not in survivors
+    assert MICRO_DECOY_BASE not in survivors
+
+
+def test_shape_survivors_is_a_small_set() -> None:
+    """The tuned filter collapses the planted world to the two shape-valid headers (brief #20)."""
+    source = planted_moveset_scan_source()
+    buffers, index = _buffers_and_index(source)
+    survivors = shape_survivors(buffers, index)
+    assert set(survivors) == {MOVESET_BASE, GATE_DECOY_BASE}
+
+
+def test_raised_ceiling_admits_the_real_header() -> None:
+    """The real header's cancels count is ABOVE the old 20000 cap yet is now admitted (brief #20).
+
+    This is the exact failure the live run exposed — the old shared ceiling rejected the true header
+    before the gate. The raised, split ceiling keeps it, and it has the ``cancels > moves`` shape.
+    """
+    source = planted_moveset_scan_source()
+    header = read_moveset_header(source, MOVESET_BASE)
+    assert header.cancels_count == REAL_CANCELS_COUNT
+    assert header.cancels_count > _OLD_COUNT_MAX
+    assert header.cancels_count > header.moves_count
+    # and it still survives the tuned shape filter end to end
+    buffers, index = _buffers_and_index(source)
+    assert MOVESET_BASE in shape_survivors(buffers, index)
 
 
 def test_gate_is_the_decisive_discriminator() -> None:

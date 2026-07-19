@@ -54,12 +54,27 @@ MOVESET_MOVES_COUNT_OFFSET = 0x238  # u64
 MOVESET_INPUT_SEQ_PTR_OFFSET = 0x250  # tk_input_sequence*
 MOVESET_INPUT_SEQ_COUNT_OFFSET = 0x258  # u64
 
-# Plausibility bounds for the header-shape validation (Phase 1). A real moveset has hundreds to a
-# few thousand moves and more cancels than moves; a slot that is not a moveset reads counts that are
-# either 0/huge or fail the readable-pointer check. These bound the Phase-1 gate, and they bound the
-# Phase-2 read so a mis-identified slot can never spin reading millions of rows.
+# Plausibility bounds for the header-shape validation (Phase 1). Moves and cancels differ by an
+# order of magnitude, so they are bounded on **separate** scales — a single shared [1, 20000] pair
+# (brief #19) was the bug the 2026-07-19 live run exposed: a full Bryan moveset's cancels array
+# exceeds 20000 (the run saw a max of 19,860, hard against the old ceiling), so the real header was
+# rejected by the count filter *before* the decoder gate ever saw it (brief #20).
+#
+# Chosen generous so a wrong ceiling can never re-exclude the true header (the exact failure being
+# fixed), yet still finite so a mis-identified slot cannot spin reading millions of rows.
+MOVES_COUNT_MIN = 100  # a real character has hundreds to a few thousand moves...
+MOVES_COUNT_MAX = 10000  # ...never tens of thousands — a larger count is a mis-identified slot.
+CANCELS_COUNT_MIN = 100  # every move has several cancels, so a real array is in the thousands...
+CANCELS_COUNT_MAX = (
+    200000  # ...an order above the observed ~20k, so the true header is never re-cut.
+)
+
+# Derived aliases for the legacy direct-slot path (:func:`_counts_plausible`) and the per-read bound
+# (the whole-array read and Phase-2's per-move cancel cap): the generous cancels ceiling caps a
+# mis-identified slot so it never loops unbounded. The decisive moveset-shape reject (cancels >
+# moves plus the raised floor) lives in the heap scan (``moveset_scan.shape_survivors``, brief #20).
 COUNT_MIN = 1
-COUNT_MAX = 20000
+COUNT_MAX = CANCELS_COUNT_MAX
 
 
 def _read_u64(source: MemorySource, address: int) -> int:
@@ -110,12 +125,14 @@ def read_moveset_header(source: MemorySource, moveset_ptr: int) -> MovesetHeader
 
 
 def _counts_plausible(header: MovesetHeader) -> bool:
-    """Whether the move/cancel counts look like a real moveset: both bounded and non-zero.
+    """Whether the move/cancel counts of a *directly-pointed* candidate are bounded and non-zero.
 
-    A real moveset also has more cancels than moves, but that is only *typically* true (the T8 docs
-    hedge it) and it is a weak signal next to the decoder gate, so it is **not** a hard reject here:
-    a slot with an odd ratio still faces the decisive gate. The hard reject is a count that is zero
-    or absurd, which is what a non-moveset slot reads.
+    This is the legacy #18 direct-slot check (``validate_slot``), where the candidate is already a
+    known player pointer, not one of thousands of heap addresses — so the hard reject is only a
+    count that is zero or absurd, and the decisive discriminator is the decoder gate that follows.
+    The heap **scan** (``moveset_scan.shape_survivors``) faces the opposite problem — a sea of
+    near-equal-count junk — so it additionally requires the moveset shape ``cancels > moves`` plus
+    the raised floor to survive its cheap filter (brief #20).
     """
     return (
         COUNT_MIN <= header.moves_count <= COUNT_MAX
@@ -167,6 +184,62 @@ def read_cancels(source: MemorySource, header: MovesetHeader) -> list[RawCancel]
         dest = _read_u16(source, row + CANCEL_MOVE_ID_OFFSET)
         out.append(RawCancel(command=command, dest_move_id=dest))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Raw-dump diagnostic — ground the assumed offsets against the live game (Part D)
+# ---------------------------------------------------------------------------
+
+# The header-word window the dump prints: the pointer/count table lives around 0x1D0..0x258, so a
+# window a little either side shows where the real ptr/count pairs actually sit on this build.
+DUMP_WORD_START = 0x1C0
+DUMP_WORD_END = 0x260
+
+
+def dump_header(
+    source: MemorySource,
+    header_addr: int,
+    *,
+    word_start: int = DUMP_WORD_START,
+    word_end: int = DUMP_WORD_END,
+    n_cancel_rows: int = 32,
+) -> str:
+    """Format a candidate header's raw bytes for eyeballing against the assumed T8 offsets (Part D).
+
+    When Parts A+B let a genuinely moveset-shaped candidate survive but it *still* gates ``0/5``,
+    the doc-derived layout does not match this 5.02.01 build. Rather than another blind round-trip,
+    this prints the ground truth: the header words in ``[word_start, word_end)`` (so we can see
+    where the real ``cancels_ptr``/``count`` pairs sit), and the first ``n_cancel_rows`` cancel rows
+    as raw ``command`` (u64 @ ``0x00``) + ``move_id`` (u16 @ ``0x24``) at the assumed ``tk_cancel``
+    stride. Read-only, and total: any unreadable word/row is shown as ``<unreadable>``, never
+    raising, so even a mis-identified slot yields a usable dump.
+    """
+    from tekken_coach.reader.faults import MemoryReadError  # noqa: PLC0415
+
+    lines = [f"raw dump of header 0x{header_addr:x}:", "  header words:"]
+    for off in range(word_start, word_end, 8):
+        try:
+            value = _read_u64(source, header_addr + off)
+            lines.append(f"    +0x{off:03x}: 0x{value:016x}")
+        except MemoryReadError:
+            lines.append(f"    +0x{off:03x}: <unreadable>")
+
+    lines.append(f"  first {n_cancel_rows} cancel rows (command @0x00 u64, move_id @0x24 u16):")
+    try:
+        cancels_ptr = _read_u64(source, header_addr + MOVESET_CANCELS_PTR_OFFSET)
+    except MemoryReadError:
+        lines.append("    <cancels_ptr unreadable>")
+        return "\n".join(lines)
+
+    for i in range(n_cancel_rows):
+        row = cancels_ptr + i * CANCEL_SIZE
+        try:
+            command = _read_u64(source, row + CANCEL_COMMAND_OFFSET)
+            move_id = _read_u16(source, row + CANCEL_MOVE_ID_OFFSET)
+            lines.append(f"    [{i:>3}] 0x{row:x}  command=0x{command:016x}  move_id={move_id}")
+        except MemoryReadError:
+            lines.append(f"    [{i:>3}] 0x{row:x}  <unreadable>")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
