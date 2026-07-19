@@ -227,6 +227,14 @@ class PlayerStruct(BaseModel):
     fields: dict[str, FieldSpec]
     max_health: int | None = None
     components: dict[str, ComponentAnchor] = Field(default_factory=dict)
+    # The pointer slot on the player struct that reaches this character's ``tk_moveset`` header —
+    # the input to brief #18's moveset-datamine build. It is the same "deref a pointer slot (+
+    # optional chain)" shape as a component (:class:`ComponentAnchor`), so ``resolve_component``
+    # reads it; it carries no ``fields`` because the landing is a moveset header read by the
+    # dedicated :mod:`tekken_coach.reader.moveset` reader, not a field-bearing component. ``None``
+    # until ``moveset-probe`` discovers it live (the player -> moveset linkage is undocumented); the
+    # build then reports "moveset offset not yet discovered" and exits cleanly.
+    moveset_slot: ComponentAnchor | None = None
 
     @model_validator(mode="after")
     def _one_addressing_model(self) -> PlayerStruct:

@@ -135,6 +135,7 @@
       }
     },
     "max_health": 200,
+    "moveset_slot": null,
     "components": {
       "transform": {
         "slot_offset": 32,
