@@ -70,6 +70,21 @@ def test_validate_slot_accepts_the_moveset() -> None:
     assert verdict.is_moveset
 
 
+def test_validate_slot_passes_while_idle_out_of_range_move_id() -> None:
+    """Brief #19 Part A: the idle move_id (0x8001) is out of range, yet the header still validates.
+
+    32769 is the neutral/idle alias, not an index into the moves array, so ``move_id_in_range`` is
+    False — but the decoder gate reads the static cancels and does not need a live move_id, so
+    ``is_moveset`` no longer ANDs the range check and the true header passes while the player stands
+    still (exactly the state moveset-probe asks for).
+    """
+    source, moveset_ptr = planted_moveset_source()
+    verdict = validate_slot(source, moveset_ptr, live_move_id=32769)
+    assert not verdict.move_id_in_range  # idle alias — informational only now
+    assert verdict.gate_passed
+    assert verdict.is_moveset
+
+
 def test_validate_slot_rejects_a_decoy() -> None:
     """A readable but non-moveset object fails validation — no crash, just a negative verdict."""
     source, _ = planted_moveset_source()

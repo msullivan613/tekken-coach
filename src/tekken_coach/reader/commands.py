@@ -576,36 +576,26 @@ def probe_state_main(args: argparse.Namespace) -> int:
     return 0
 
 
-def _read_live_move_id(source: MemorySource, table: OffsetTable, index: int) -> int:
-    """Read one player's current ``move_id`` — the "strong check" input for moveset validation."""
-    from tekken_coach.reader.decode import read_scalar  # noqa: PLC0415
-
-    base = resolve_player_base(source, table, index)
-    spec = table.players.fields["move_id"]
-    return int(read_scalar(source, base + spec.offset, spec.kind))
-
-
 def moveset_probe_main(args: argparse.Namespace) -> int:  # pragma: no cover - live discovery shell
-    """``moveset-probe``: discover the player -> ``tk_moveset`` pointer slot (brief #18 Phase 1).
+    """``moveset-probe``: find the character's ``tk_moveset`` by heap shape + gate scan (brief #19).
 
-    Reuses the #11 pointer-slot enumerator to list the player struct's plausible pointer slots, then
-    validates each candidate as a ``tk_moveset`` header by shape (bounded move/cancel counts,
-    readable arrays), the strong check (the live ``move_id`` is a valid move index), and the
-    decoder gate (the from-neutral cancels reproduce the character's known ``move_id -> notation``
-    anchors under the confirmed T8 command encoding). Read-only; prints the winning slot offset to
-    record in ``players.moveset_slot``. Degrades gracefully at the menu / a null slot like the other
-    live commands.
+    The #18 assumption — the header is a direct player pointer slot — was disproved live: none of
+    the plausible direct slots landed on a header. So this scans the **heap** for the header's shape
+    (bounded cancels/moves counts + array pointers that land in a region), gates the handful of
+    survivors on the character's known ``move_id -> notation`` anchors (which read the *static*
+    cancels, so an idle player is fine — brief #19 Part A), and then reverse-scans a durable
+    player-relative :class:`~tekken_coach.reader.offsets.ComponentAnchor` path to record. Read-only;
+    degrades gracefully at the menu like the other live commands.
     """
     import time  # noqa: PLC0415
 
-    from tekken_coach.reader.moveset import BRYAN_GATE_PAIRS, validate_slot  # noqa: PLC0415
-    from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
-    from tekken_coach.reader.slots import (  # noqa: PLC0415
-        DEFAULT_SLOT_END,
-        DEFAULT_SLOT_START,
-        RegionIndex,
-        classify_slots,
+    from tekken_coach.reader.discovery.moveset_scan import (  # noqa: PLC0415
+        derive_reference_path,
+        scan_moveset,
     )
+    from tekken_coach.reader.moveset import gate_pairs_for  # noqa: PLC0415
+    from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
+    from tekken_coach.reader.slots import DEFAULT_SLOT_END  # noqa: PLC0415
     from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
     from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
 
@@ -616,60 +606,74 @@ def moveset_probe_main(args: argparse.Namespace) -> int:  # pragma: no cover - l
     except ReaderError as exc:
         return _report_fault(exc)
 
-    start, end = DEFAULT_SLOT_START, DEFAULT_SLOT_END
-    size = end - start
+    pairs = gate_pairs_for(args.char)
+    if pairs is None:
+        print(
+            f"no decoder-gate anchors recorded for {args.char!r}; the scan needs a character whose "
+            "known move_id -> notation ids are in GATE_PAIRS_BY_CHAR (brief #19). Bryan is there.",
+            file=sys.stderr,
+        )
+        return 1
+
     index = args.player - 1
-    print(f"discovering the player -> tk_moveset pointer for P{args.player} on {version}")
-    print("stand in a Practice match as the target character; no presses needed.")
+    print(f"heap shape+gate scan for {args.char}'s tk_moveset (P{args.player}) on {version}")
+    print("stand in a Practice match as the target character; idle is fine (no presses needed).\n")
 
     try:
-        regions = RegionIndex(source.regions())
-        samples: list[list[bytes]] = []
-        for _ in range(args.polls):
-            base = resolve_player_base(source, table, index)
-            samples.append([source.read(base + start, size)])
-            time.sleep(args.interval)
-        live_move_id = _read_live_move_id(source, table, index)
+        elapsed_start = time.perf_counter()
+        scan = scan_moveset(source, pairs=pairs, progress=lambda m: print(m))
+        elapsed = time.perf_counter() - elapsed_start
     except ReaderError as exc:
         return _report_fault(exc)
     except KeyboardInterrupt:
         print("\nstopped.")
         return 1
 
-    findings = classify_slots(samples, regions, start=start)
-    plausible = [f for f in findings if f.plausible[0]]
-    print(
-        f"\nlive move_id = {live_move_id}; validating {len(plausible)} plausible pointer slot(s)\n"
-    )
-
-    winners: list[int] = []
-    print(f"{'slot':>8}  {'target':>18}  {'counts':>7}  {'ptrs':>5}  {'range':>6}  {'gate':>5}")
-    for finding in plausible:
-        target = finding.values[0]
-        verdict = validate_slot(source, target, live_move_id=live_move_id, pairs=BRYAN_GATE_PAIRS)
-        gate = "-"
-        if verdict.gate:
-            gate = f"{sum(r.found for r in verdict.gate)}/{len(verdict.gate)}"
+    print(f"\nscanned in {elapsed:.1f}s: {len(scan.survivors)} shape-survivor(s)\n")
+    print(f"{'header':>18}  {'cancels':>8}  {'moves':>7}  {'gate':>6}")
+    for cand in scan.candidates:
+        gate = f"{sum(r.found for r in cand.gate)}/{len(cand.gate)}"
         print(
-            f"0x{finding.offset:<6x}  0x{target:>16x}  "
-            f"{'ok' if verdict.counts_plausible else 'xx':>7}  "
-            f"{'ok' if verdict.pointers_readable else 'xx':>5}  "
-            f"{'ok' if verdict.move_id_in_range else 'xx':>6}  {gate:>5}"
+            f"0x{cand.header_addr:>16x}  {cand.header.cancels_count:>8}  "
+            f"{cand.header.moves_count:>7}  {gate:>6}"
         )
-        if verdict.is_moveset:
-            winners.append(finding.offset)
+
+    winner = scan.winner
+    print()
+    if winner is None:
+        if len(scan.matches) == 0:
+            print("no header reproduced the anchors. Confirm you are in a match as the target")
+            print("character; if it persists the gate anchors may need this character's ids.")
+        return 0
+    print(f"MOVESET HEADER FOUND: 0x{winner.header_addr:x} (gate reproduced all anchors)")
+    if len(scan.matches) > 1:
+        others = ", ".join(f"0x{m.header_addr:x}" for m in scan.matches[1:])
+        print(f"(also passed: {others} — one per loaded character; confirm which is this player's)")
+
+    try:
+        player_base = resolve_player_base(source, table, index)
+        anchor = derive_reference_path(
+            source,
+            scan.buffers,
+            header_addr=winner.header_addr,
+            player_base=player_base,
+            player_struct_span=DEFAULT_SLOT_END,
+            progress=lambda m: print(m),
+        )
+    except ReaderError as exc:
+        return _report_fault(exc)
 
     print()
-    if winners:
-        best = winners[0]
-        print(f"MOVESET SLOT FOUND: 0x{best:x} — record it in players.moveset_slot:")
-        print(f'  "moveset_slot": {{ "slot_offset": {best}, "pointer_path": [], "fields": {{}} }}')
-        if len(winners) > 1:
-            others = ", ".join(f"0x{w:x}" for w in winners[1:])
-            print(f"(also passed: {others} — confirm which is stable across character changes)")
+    if anchor is not None:
+        path = ", ".join(f"{o}" for o in anchor.pointer_path)
+        print("record the durable path in players.moveset_slot:")
+        print(
+            f'  "moveset_slot": {{ "slot_offset": {anchor.slot_offset}, '
+            f'"pointer_path": [{path}], "fields": {{}} }}'
+        )
     else:
-        print("no slot validated as a tk_moveset. Confirm you are in a match on the target")
-        print("character, then re-run; if it persists the gate anchors may need this char's ids.")
+        print("no durable player-relative path found. Record NOTHING and let moveset-build re-run")
+        print("this shape+gate scan at startup to relocate the header (slower, but self-healing).")
     return 0
 
 
@@ -1095,16 +1099,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_msprobe = sub.add_parser(
         "moveset-probe",
-        help="discover the player -> tk_moveset pointer slot (brief #18 Phase 1; read-only)",
+        help="find the tk_moveset by heap shape+gate scan + derive a durable path (brief #19)",
     )
     p_msprobe.add_argument("--offsets", default=DEFAULT_OFFSETS_DIR)
     p_msprobe.add_argument("--version", default=None, help="override detected version")
-    p_msprobe.add_argument("--interval", type=float, default=0.05, help="poll interval, seconds")
     p_msprobe.add_argument(
-        "--polls",
-        type=int,
-        default=20,
-        help="polls to sample before classifying the pointer slots (default 20).",
+        "--char",
+        default="bryan",
+        help="the character being played, to key the decoder gate (default bryan).",
     )
     p_msprobe.add_argument(
         "--player", type=int, default=1, help="which player to probe (1 or 2; default 1)"

@@ -193,6 +193,22 @@ BRYAN_GATE_PAIRS: tuple[KnownPair, ...] = (
     KnownPair(1566, "2"),
 )
 
+# The decisive gate is character-specific (its anchors are one character's known ids), so the scan
+# keys off the character the user is running as. Bryan is populated now; another character's anchors
+# slot in here later (brief #19). Keys are lowercase character names, matching the movemap files.
+GATE_PAIRS_BY_CHAR: dict[str, tuple[KnownPair, ...]] = {
+    "bryan": BRYAN_GATE_PAIRS,
+}
+
+
+def gate_pairs_for(char: str) -> tuple[KnownPair, ...] | None:
+    """The known ``move_id -> notation`` anchors for ``char``'s decoder gate, or ``None``.
+
+    Returns ``None`` for a character whose anchors have not been recorded yet — the caller reports
+    that it cannot gate a scan for that character rather than silently gating on the wrong ids.
+    """
+    return GATE_PAIRS_BY_CHAR.get(char.lower())
+
 
 @dataclass(frozen=True)
 class GateRow:
@@ -240,7 +256,7 @@ class SlotValidation:
     header: MovesetHeader | None  # None when the header was unreadable at this slot
     counts_plausible: bool
     pointers_readable: bool
-    move_id_in_range: bool  # live move_id @ 0x550 < moves_count (the "strong check")
+    move_id_in_range: bool  # live move_id < moves_count — INFORMATIONAL only (see is_moveset)
     gate: list[GateRow]
 
     @property
@@ -250,13 +266,17 @@ class SlotValidation:
 
     @property
     def is_moveset(self) -> bool:
-        """Whether this slot passes every check: shape, readable arrays, move_id range, and gate."""
-        return (
-            self.counts_plausible
-            and self.pointers_readable
-            and self.move_id_in_range
-            and self.gate_passed
-        )
+        """Whether this slot is the moveset: plausible shape, readable arrays, and the decoder gate.
+
+        ``move_id_in_range`` is deliberately **not** required. The live idle/neutral ``move_id`` is
+        ``0x8001`` (32769), an alias that is *not* an index into the moves array, so ANDing
+        ``0 <= move_id < moves_count`` rejects even the true header while the player stands still —
+        which is exactly the state ``moveset-probe`` asks the user to be in (brief #19). The decoder
+        gate reads the **static** cancels array (Bryan's known ids reproduced under the confirmed T8
+        decode) and needs no live ``move_id``, so it is the decisive discriminator; the range check
+        rides along as information in the probe table only.
+        """
+        return self.counts_plausible and self.pointers_readable and self.gate_passed
 
 
 def validate_slot(

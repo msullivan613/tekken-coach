@@ -34,6 +34,7 @@ from tekken_coach.reader.moveset import (
     MOVESET_MOVES_PTR_OFFSET,
     MoveLayout,
 )
+from tekken_coach.reader.offsets import ComponentAnchor
 from tests.fixtures.reader.flat_source import FlatMemorySource
 
 MODULE = "Polaris-Win64-Shipping.exe"
@@ -44,6 +45,27 @@ MOVESET_BASE = 0x300000000  # the tk_moveset header
 CANCELS_BASE = 0x301000000  # the global cancels array (tk_cancel rows)
 MOVES_BASE = 0x302000000  # the moves array (tk_move rows)
 DECOY_BASE = 0x303000000  # a readable but non-moveset object (for the negative slot test)
+
+# Brief #19: the header is NOT a direct player slot — it is reached player -> object -> header. The
+# player struct holds a pointer to an intermediate object; a slot inside that object holds the
+# header address. This is the shape the live run proved (no direct slot landed on a header).
+PLAYER_BASE = 0x304000000  # the resolved player struct base (holder model gives this live)
+PLAYER_STRUCT_SPAN = 0x200  # the window the reverse scan sweeps for player pointer slots
+PLAYER_MOVESET_SLOT = 0x30  # the player slot that points at the intermediate object
+PLAYER_DISTRACTOR_SLOT = 0x80  # a second pointer slot, to a nearby object (must NOT be chosen)
+OBJECT_BASE = 0x305000000  # the intermediate object the player points at (too small to be a header)
+OBJECT_SIZE = 0x40
+MOVESET_REF_OFFSET = 0x18  # the slot inside the object that holds the header address
+
+# A second, gate-FAILING moveset: valid header shape (survives the cheap filter) but cancels that do
+# NOT reproduce Bryan's anchors, proving the gate — not the shape filter — is what accepts a header.
+GATE_DECOY_BASE = 0x306000000
+GATE_DECOY_CANCELS_BASE = 0x307000000
+
+# The durable path the reverse scan must derive back from the confirmed header.
+EXPECTED_MOVESET_ANCHOR = ComponentAnchor(
+    slot_offset=PLAYER_MOVESET_SLOT, pointer_path=[MOVESET_REF_OFFSET]
+)
 
 NEUTRAL_MOVE_ID = 0
 
@@ -208,3 +230,77 @@ def planted_moveset_source() -> tuple[FlatMemorySource, int]:
         module_bases={MODULE: MODULE_BASE},
     )
     return source, MOVESET_BASE
+
+
+def _put_ptr(buf: bytearray, off: int, value: int) -> None:
+    buf[off : off + 8] = struct.pack("<Q", value)
+
+
+def _player_blob() -> bytes:
+    """The player struct: a slot pointing at the intermediate object, plus a distractor slot.
+
+    No slot holds the header address directly (that is exactly the live finding), so the reverse
+    scan must take the one-hop player -> object -> header route.
+    """
+    buf = bytearray(PLAYER_STRUCT_SPAN)
+    _put_ptr(buf, PLAYER_MOVESET_SLOT, OBJECT_BASE)
+    _put_ptr(buf, PLAYER_DISTRACTOR_SLOT, DECOY_BASE)  # points elsewhere; must not be chosen
+    return bytes(buf)
+
+
+def _object_blob() -> bytes:
+    """The intermediate object: too small to be a header, holds the header address at one slot."""
+    buf = bytearray(OBJECT_SIZE)
+    _put_ptr(buf, MOVESET_REF_OFFSET, MOVESET_BASE)
+    return bytes(buf)
+
+
+def _gate_decoy_blobs() -> tuple[bytes, bytes]:
+    """A header with a valid *shape* but cancels that reproduce NONE of Bryan's anchors.
+
+    Its counts and pointers survive the cheap shape filter, so it reaches the decoder gate — where
+    it is rejected because its cancels go to unrelated destinations. This proves the gate, not
+    the shape filter, is the decisive discriminator (brief #19 test intent).
+    """
+    decoy_cancels = (
+        _clean(0, 900, "", "1"),
+        _clean(0, 901, "", "2"),
+        _clean(0, 902, "", "3"),
+    )
+    cancels = bytearray()
+    for c in decoy_cancels:
+        cancels += _cancel_row(c.command, c.dest)
+
+    header = bytearray(MOVESET_INPUT_SEQ_COUNT_OFFSET + 8)
+    _put_ptr(header, MOVESET_CANCELS_PTR_OFFSET, GATE_DECOY_CANCELS_BASE)
+    _put_ptr(header, MOVESET_CANCELS_COUNT_OFFSET, len(decoy_cancels))
+    _put_ptr(header, MOVESET_MOVES_PTR_OFFSET, MOVES_BASE)  # any real region; moves aren't gated
+    _put_ptr(header, MOVESET_MOVES_COUNT_OFFSET, 100)
+    return bytes(header), bytes(cancels)
+
+
+def planted_moveset_scan_source() -> FlatMemorySource:
+    """A world for the brief #19 heap shape+gate scan: real header off a path, plus a gate decoy.
+
+    Superset of :func:`planted_moveset_source` — the real Bryan header at :data:`MOVESET_BASE` is
+    now reachable only via ``PLAYER_BASE -> OBJECT_BASE -> header`` (no direct slot), and a decoy
+    decoy header rides along. Regions are auto-derived per segment (see
+    :class:`~tests.fixtures.reader.flat_source.FlatMemorySource`), so the scan sweeps every planted
+    heap segment exactly as it would the live regions.
+    """
+    cancels_blob, moves_blob, cancels_count = _build_arrays()
+    decoy_header, decoy_cancels = _gate_decoy_blobs()
+    return FlatMemorySource(
+        [
+            (MODULE_BASE, b"\x00" * 0x1000),
+            (MOVESET_BASE, _header_blob(cancels_count)),
+            (CANCELS_BASE, bytes(cancels_blob)),
+            (MOVES_BASE, bytes(moves_blob)),
+            (DECOY_BASE, b"\xff" * 0x400),
+            (PLAYER_BASE, _player_blob()),
+            (OBJECT_BASE, _object_blob()),
+            (GATE_DECOY_BASE, decoy_header),
+            (GATE_DECOY_CANCELS_BASE, decoy_cancels),
+        ],
+        module_bases={MODULE: MODULE_BASE},
+    )
