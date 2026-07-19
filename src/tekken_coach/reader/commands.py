@@ -851,6 +851,7 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
         REAL_MOVE_ID_MAX,
         MoveSample,
         MovesArray,
+        SampleCensus,
         describe_slots,
         dump_move,
         find_cancels_ptr_offset,
@@ -879,6 +880,33 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
         print("offset table is missing the move_id field — cannot ground on it.", file=sys.stderr)
         return 1
 
+    # Preflight (brief #23): sample ONCE, right now, with no move protocol and no steadiness gate,
+    # and report what the sweep actually reached. Verifies the sampler in a second of standing in
+    # Practice, instead of discovering after a full three-move protocol that it read nothing.
+    if args.census:
+        regions = RegionIndex(source.regions())
+        try:
+            base = resolve_player_base(source, table, index)
+        except ReaderError as exc:
+            return _report_fault(exc)
+        slots, census = sample_player_slots(
+            source, base, regions, direct_end=args.window, hop_end=args.hop_window
+        )
+        print(f"census of one sweep of P{args.player} @ 0x{base:x} (window 0x{args.window:x}):")
+        print(census.report())
+        for key in sorted(slots)[:5]:
+            print(f"    e.g. {format_slot_key(key)} = 0x{slots[key]:x}")
+        if census.direct_pointers == 0:
+            print(
+                f"\nREAD FAILURE: the sweep found no direct pointers at all in 0x{args.window:x} "
+                "bytes. The window is the suspect, not the approach — re-run with "
+                "--census --window 0x1600 and compare.",
+                file=sys.stderr,
+            )
+            return 1
+        print("\nsweep looks healthy — run the normal move protocol next.")
+        return 0
+
     # Phase 1: solve moves_base + move_stride, unless the user supplied them to re-run the dumps.
     if args.moves_base is not None and args.move_stride is not None:
         moves = MovesArray(slot_key=(), moves_base=args.moves_base, move_stride=args.move_stride)
@@ -893,6 +921,7 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
             "d+4 1725, b+3 1779), pausing on each; Ctrl-C once 3+ distinct ids are captured.\n"
         )
         samples: list[MoveSample] = []
+        censuses: list[SampleCensus] = []
         seen: set[int] = set()
         prev_id: int | None = None  # brief #22: require a move_id steady across 2 polls before use
         try:
@@ -906,7 +935,7 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
                     # sampled pointers are read from a poll where move_id had settled (drops the
                     # brief movement-animation flashes and first-frame move_id/pointer desync).
                     if move_id < REAL_MOVE_ID_MAX and move_id not in seen and move_id == prev_id:
-                        slots = sample_player_slots(
+                        slots, census = sample_player_slots(
                             source,
                             base,
                             regions,
@@ -914,8 +943,14 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
                             hop_end=args.hop_window,
                         )
                         samples.append(MoveSample(move_id, slots))
+                        censuses.append(census)
                         seen.add(move_id)
-                        print(f"  captured move_id {move_id} ({len(seen)} distinct)")
+                        # The census rides on every capture line (brief #23) so a sweep that read
+                        # nothing is visible immediately, not after the whole protocol.
+                        print(
+                            f"  captured move_id {move_id} ({len(seen)} distinct) "
+                            f"[{census.one_line()}]"
+                        )
                     prev_id = move_id
                 except MemoryReadError:
                     prev_id = None  # menu / transient — reset the steadiness gate, keep sampling
@@ -932,13 +967,41 @@ def moveset_anchor_main(args: argparse.Namespace) -> int:  # pragma: no cover - 
                 file=sys.stderr,
             )
             # Brief #22 diagnostic: report what DID move, so a failed run is signal not a dead end.
+            # Brief #23 splits it three ways — only the last case is a reason to pivot.
             descriptions = describe_slots(samples)
             varying = [d for d in descriptions if d.kind != "constant"]
-            if not varying:
+            if not censuses:
                 print(
-                    "\nDIAGNOSTIC: no sampled slot (direct or one hop out) varied with move_id — "
-                    "nothing reachable this way caches a moves_base + id*stride pointer. Pivot to "
-                    "a different anchor rather than searching deeper.",
+                    "\nDIAGNOSTIC: nothing was captured, so nothing was swept — no verdict on the "
+                    "anchor approach either way. Re-run the protocol, pausing on each move.",
+                    file=sys.stderr,
+                )
+            elif all(c.total_keys == 0 for c in censuses):
+                # The sweep itself read nothing. This says nothing about whether a tracking
+                # pointer exists — do NOT read it as a reason to abandon the anchor.
+                print(
+                    f"\nREAD FAILURE: {len(censuses)} sweep(s) at window 0x{args.window:x} yielded "
+                    "ZERO slot keys — the sampler reached no pointers, so there was nothing to "
+                    "correlate. The diagnostic below is empty because nothing was swept, not "
+                    "because nothing varied.",
+                    file=sys.stderr,
+                )
+                print(censuses[-1].report(), file=sys.stderr)
+                print(
+                    "\nThe widened window most likely overruns the player struct's region. "
+                    "Re-run with --census --window 0x1600, then repeat the protocol at the width "
+                    "that sweeps cleanly.",
+                    file=sys.stderr,
+                )
+            elif not varying:
+                n_direct = sum(1 for d in descriptions if len(d.slot_key) == 1)
+                n_hop = len(descriptions) - n_direct
+                print(
+                    f"\nDIAGNOSTIC: sampled {len(descriptions)} slots ({n_direct} direct, {n_hop} "
+                    f"one hop out) across {len(seen)} ids; none varied. No sampled slot (direct or "
+                    "one hop out) tracks move_id — nothing reachable this way caches a "
+                    "moves_base + id*stride pointer. Pivot to a different anchor rather than "
+                    "searching deeper.",
                     file=sys.stderr,
                 )
             else:
@@ -1399,6 +1462,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0x800,
         help="the bounded sub-window swept inside each dereferenced pointer, one hop out (hex, "
         "default 0x800).",
+    )
+    p_msanchor.add_argument(
+        "--census",
+        action="store_true",
+        help="preflight: sweep the player's pointers ONCE right now (no move protocol), print what "
+        "the sweep actually reached, and exit non-zero if it found no direct pointers.",
     )
     p_msanchor.add_argument(
         "--moves-base",

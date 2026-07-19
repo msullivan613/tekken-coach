@@ -18,6 +18,8 @@ hop out. Offline-testable pieces:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from tekken_coach.reader.discovery.heapscan import _region_buffers
 from tekken_coach.reader.discovery.moveset_anchor import (
     MoveSample,
@@ -31,12 +33,15 @@ from tekken_coach.reader.discovery.moveset_anchor import (
     sample_player_slots,
     solve_moves_array,
 )
+from tekken_coach.reader.faults import MemoryReadError
+from tekken_coach.reader.memory_source import MemoryRegion
 from tekken_coach.reader.moveset import (
     BRYAN_GATE_PAIRS,
     MOVESET_CANCELS_PTR_OFFSET,
     KnownPair,
 )
 from tekken_coach.reader.slots import RegionIndex
+from tests.fixtures.reader.flat_source import FlatMemorySource
 from tests.fixtures.reader.planted_moveset import (
     CANCELS_BASE,
     DECOY_BASE,
@@ -215,7 +220,7 @@ def test_sample_player_slots_captures_direct_and_one_hop_pointers() -> None:
     """
     source = planted_moveset_scan_source()
     regions = RegionIndex(source.regions())
-    slots = sample_player_slots(source, PLAYER_BASE, regions, direct_end=0x200)
+    slots, _ = sample_player_slots(source, PLAYER_BASE, regions, direct_end=0x200)
     assert slots[(PLAYER_MOVESET_SLOT,)] == OBJECT_BASE
     assert slots[(PLAYER_DISTRACTOR_SLOT,)] == DECOY_BASE
     # the current-move-style pointer, reached one hop out through the 0x30 slot
@@ -230,9 +235,134 @@ def test_sample_player_slots_yields_no_hop_keys_from_a_pointerless_object() -> N
     """
     source = planted_moveset_scan_source()
     regions = RegionIndex(source.regions())
-    slots = sample_player_slots(source, PLAYER_BASE, regions, direct_end=0x200)
+    slots, _ = sample_player_slots(source, PLAYER_BASE, regions, direct_end=0x200)
     assert (PLAYER_DISTRACTOR_SLOT,) in slots
     assert not any(key[:1] == (PLAYER_DISTRACTOR_SLOT,) and len(key) == 2 for key in slots)
+
+
+# ---------------------------------------------------------------------------
+# The sample census + the guarded, stepped-down direct read (brief #23)
+# ---------------------------------------------------------------------------
+
+
+class _WidthCappedSource:
+    """A read-only source whose reads fault above a width cap — models an overrun mapping.
+
+    The live failure this stands in for: a widened window that runs past the end of the struct's
+    committed region, so the read faults at 0x4000 but succeeds narrower. ``only_at`` restricts the
+    cap to one address, to fail a single sub-object deref while the rest of the sweep works.
+    """
+
+    def __init__(self, inner: FlatMemorySource, *, cap: int, only_at: int | None = None) -> None:
+        self._inner = inner
+        self._cap = cap
+        self._only_at = only_at
+
+    def read(self, address: int, size: int) -> bytes:
+        if (self._only_at is None or address == self._only_at) and size > self._cap:
+            raise MemoryReadError(f"capped: [0x{address:x}, +{size}) exceeds 0x{self._cap:x}")
+        return self._inner.read(address, size)
+
+    def module_base(self, module: str) -> int:
+        return self._inner.module_base(module)
+
+    def regions(self) -> Sequence[MemoryRegion]:
+        return self._inner.regions()
+
+
+def test_census_counts_are_exact_over_the_planted_world() -> None:
+    """The census reports exactly what the sweep did over the planted player struct.
+
+    Ground truth: two direct pointers (the moveset slot -> the intermediate object, and the
+    distractor -> ``DECOY_BASE``); the object yields one plausible one-hop pointer (the header
+    address at ``0x18``); the 0xff-filled decoy holds nothing plausible but IS readable, so both
+    sub-objects are read and none skipped.
+    """
+    source = planted_moveset_scan_source()
+    regions = RegionIndex(source.regions())
+    slots, census = sample_player_slots(source, PLAYER_BASE, regions, direct_end=0x200)
+    assert census.direct_bytes_read == 0x200
+    assert census.direct_slots_scanned == 0x200 // 8
+    assert census.direct_pointers == 2
+    assert census.sub_objects_read == 2
+    assert census.sub_objects_skipped == 0
+    assert census.hop_pointers == 1
+    # the invariant the census exists to make auditable
+    assert census.total_keys == census.direct_pointers + census.hop_pointers
+    assert census.total_keys == len(slots)
+
+
+def test_census_counts_a_skipped_sub_object() -> None:
+    """A direct pointer whose target cannot be read counts as a skipped sub-object, not a read one.
+
+    ``DECOY_BASE`` is declared in the region map but its bytes are withheld from the source, so the
+    deref fails: it still yields its direct key, and the census records the skip.
+    """
+    inner = planted_moveset_scan_source()
+    source = _WidthCappedSource(inner, cap=0x200, only_at=DECOY_BASE)
+    regions = RegionIndex(inner.regions())
+    slots, census = sample_player_slots(
+        source, PLAYER_BASE, regions, direct_end=0x200, hop_end=0x400
+    )
+    assert (PLAYER_DISTRACTOR_SLOT,) in slots
+    assert census.sub_objects_skipped == 1
+    assert census.sub_objects_read == 1
+
+
+def test_sampler_returns_empty_when_every_direct_read_fails() -> None:
+    """When the wide read AND every fallback width fail, the sampler yields nothing, never raising.
+
+    This is the bug brief #23 fixes: the old room-bounded retry sat outside any ``try``, so a second
+    fault propagated out of a function documented "never raises" and the capture was silently lost —
+    a broken run masquerading as a quiet one.
+    """
+    source = _WidthCappedSource(planted_moveset_scan_source(), cap=0)
+    regions = RegionIndex([MemoryRegion(base=PLAYER_BASE, size=0x100000)])
+    slots, census = sample_player_slots(source, PLAYER_BASE, regions, direct_end=0x4000)
+    assert slots == {}
+    assert census.direct_bytes_read == 0
+    assert census.total_keys == 0
+
+
+def test_sampler_steps_down_to_a_narrower_width_and_still_finds_pointers() -> None:
+    """A window overrunning the struct steps down, reports the narrower width, and still sweeps.
+
+    The region map claims 0x100000 of room (so the room-bounded retry is no help — it re-tries the
+    full 0x4000), but reads wider than 0x2000 fault. The sampler must halve down to 0x2000, record
+    that as ``direct_bytes_read``, and still find the pointer planted at 0x30.
+    """
+    player = bytearray(0x2000)
+    player[0x30:0x38] = OBJECT_BASE.to_bytes(8, "little")
+    inner = FlatMemorySource(
+        [
+            (PLAYER_BASE, bytes(player)),
+            (OBJECT_BASE, MOVESET_BASE.to_bytes(8, "little") * 8),
+            (MOVESET_BASE, b"\x00" * 0x40),
+        ],
+        module_bases={},
+        regions=[
+            MemoryRegion(base=PLAYER_BASE, size=0x100000),
+            MemoryRegion(base=OBJECT_BASE, size=0x40),
+            MemoryRegion(base=MOVESET_BASE, size=0x40),
+        ],
+    )
+    source = _WidthCappedSource(inner, cap=0x2000)
+    regions = RegionIndex(inner.regions())
+    slots, census = sample_player_slots(source, PLAYER_BASE, regions, direct_end=0x4000)
+    assert census.direct_bytes_read == 0x2000
+    assert slots[(0x30,)] == OBJECT_BASE
+    assert census.direct_pointers == 1
+
+
+def test_describe_slots_over_zero_sampled_slots_returns_nothing() -> None:
+    """Samples carrying NO slots describe nothing — the exact ambiguity the census resolves.
+
+    Three clean ids, zero swept pointers: ``describe_slots`` is empty, which is byte-for-byte the
+    output of three ids whose every slot was constant. Only the census tells the two apart, so the
+    CLI must branch on it rather than on this list.
+    """
+    samples = [MoveSample(move_id, {}) for move_id in (1695, 1725, 1779)]
+    assert describe_slots(samples) == []
 
 
 def test_describe_slots_classifies_constant_nonlinear_and_linear() -> None:

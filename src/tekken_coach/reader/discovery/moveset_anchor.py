@@ -35,7 +35,10 @@ the samples and prints the results):
   recovers ``moves_base`` and ``move_stride``. A ``>= 3``-id-on-one-line floor kills a two-point
   coincidental line; a strong-majority test lets one stray point be tolerated. When no slot key
   solves, :func:`describe_slots` classifies every sampled slot (constant / non-linear / linear over
-  K-of-N ids) so the failure is signal, not just a dead end.
+  K-of-N ids) so the failure is signal, not just a dead end. Brief #23 makes that failure *honest*:
+  the sampler also returns a :class:`SampleCensus` of what it actually swept, because a sweep that
+  read nothing and a sweep that found everything constant otherwise produce the same empty
+  diagnostic — and only the second is a reason to pivot.
 
 * **Phase 2 — grounding dumps.** With ``moves_base + move_stride`` the ``tk_move`` for any known id
   is ``moves_base + id * move_stride``. :func:`dump_move` prints its raw words (its cancel-list
@@ -104,6 +107,11 @@ DEFAULT_DIRECT_END = 0x4000
 # The bounded sub-window swept inside each dereferenced sub-object for the one-hop pass. Kept small:
 # the tracking pointer, if cached one hop out, sits near the head of the animation/move object.
 DEFAULT_HOP_END = 0x800
+
+# The narrowest direct window the sweep will step down to before giving up (brief #23). 0x1600 is
+# the #21 window we know reads cleanly on the live struct, so a widened sweep that overruns the
+# struct's region still returns the slots the old window would have — degraded, never empty.
+MIN_DIRECT_WIDTH = 0x1600
 
 
 def _read_u64(source: MemorySource, address: int) -> int:
@@ -280,6 +288,80 @@ def _read_sub_object(
         return None
 
 
+@dataclass(frozen=True)
+class SampleCensus:
+    """What one :func:`sample_player_slots` sweep actually did — the honest-failure record (#23).
+
+    Without this, an empty sample is ambiguous: a sweep that read **nothing** (the widened window
+    overran the struct's region and every fallback read failed) and a sweep that read a hundred
+    thousand words and found every one constant produce the same empty diagnostic — and the second
+    means "pivot the approach" while the first means "the read is broken". The census separates
+    them, and ``direct_bytes_read`` records the width that actually succeeded rather than the one
+    requested. Invariant: ``direct_pointers + hop_pointers`` is the number of sampled slot keys.
+    """
+
+    direct_bytes_read: int
+    direct_slots_scanned: int
+    direct_pointers: int
+    sub_objects_read: int
+    sub_objects_skipped: int
+    hop_pointers: int
+
+    @property
+    def total_keys(self) -> int:
+        """The number of slot keys the sweep yielded (direct + one hop out)."""
+        return self.direct_pointers + self.hop_pointers
+
+    def one_line(self) -> str:
+        """A compact summary for the per-capture line (``read 0x4000, 412 direct ptrs, ...``)."""
+        return (
+            f"read 0x{self.direct_bytes_read:x}, {self.direct_pointers} direct ptrs, "
+            f"{self.hop_pointers} one-hop ptrs"
+        )
+
+    def report(self) -> str:
+        """The full multi-line census, for the preflight ``--census`` mode and a failed run."""
+        return "\n".join(
+            [
+                f"  direct window read : 0x{self.direct_bytes_read:x} bytes",
+                f"  direct slots scanned: {self.direct_slots_scanned}",
+                f"  direct pointers    : {self.direct_pointers}",
+                f"  sub-objects read   : {self.sub_objects_read} "
+                f"(skipped {self.sub_objects_skipped})",
+                f"  one-hop pointers   : {self.hop_pointers}",
+                f"  total slot keys    : {self.total_keys}",
+            ]
+        )
+
+
+EMPTY_CENSUS = SampleCensus(0, 0, 0, 0, 0, 0)
+
+
+def _direct_width_candidates(requested: int, room: int) -> list[int]:
+    """The widths to try for the direct window, best first (brief #23 step-down).
+
+    The requested window first; then the room left in the struct's mapped region (a widened window
+    can overrun it); then successive halvings, floored at :data:`MIN_DIRECT_WIDTH` — the #21 window
+    known to read. All pointer-aligned and deduped, so a narrow request degrades to a single try.
+    """
+    widths: list[int] = []
+
+    def add(width: int) -> None:
+        width -= width % POINTER_SIZE
+        if POINTER_SIZE <= width <= requested and width not in widths:
+            widths.append(width)
+
+    add(requested)
+    if room > 0:
+        add(min(requested, room))
+    step = requested // 2
+    while step > MIN_DIRECT_WIDTH:
+        add(step)
+        step //= 2
+    add(min(requested, MIN_DIRECT_WIDTH))
+    return widths
+
+
 def sample_player_slots(
     source: MemorySource,
     player_base: int,
@@ -289,38 +371,59 @@ def sample_player_slots(
     direct_end: int = DEFAULT_DIRECT_END,
     hop_start: int = 0x0,
     hop_end: int = DEFAULT_HOP_END,
-) -> dict[SlotKey, int]:
+) -> tuple[dict[SlotKey, int], SampleCensus]:
     """Sample every plausible pointer in the player struct **and one hop out** (composite keys).
 
     For each 8-aligned direct slot in ``[direct_start, direct_end)`` whose value is a plausible heap
     pointer, records it under ``(offset,)`` and then dereferences it, sampling the plausible
     pointers inside a bounded sub-window ``[hop_start, hop_end)`` of that object under
     ``(offset, sub_offset)`` (brief #22 — the current-move pointer is not a direct slot, so it is
-    sought one hop out). Read-only and total: an unreadable direct window falls back to the room
-    available, and an unreadable sub-object is simply skipped (never raises).
+    sought one hop out). Returns the slots **and** a :class:`SampleCensus` of what the sweep did, so
+    an empty result can be told apart from a sweep that read nothing (brief #23).
+
+    Read-only and total: the direct window steps down through
+    :func:`_direct_width_candidates` when the requested width overruns the struct's region — every
+    attempt guarded, so exhausting them yields empty slots and a zeroed census rather than raising —
+    and an unreadable sub-object is simply skipped.
     """
     slots: dict[SlotKey, int] = {}
-    try:
-        block = source.read(player_base + direct_start, direct_end - direct_start)
-    except MemoryReadError:
-        # The struct may not span the full widened window; read as far as its region allows.
-        room = regions.room_at(player_base + direct_start)
-        room -= room % POINTER_SIZE
-        if room < POINTER_SIZE:
-            return slots
-        block = source.read(player_base + direct_start, room)
+    requested = direct_end - direct_start
+    room = regions.room_at(player_base + direct_start)
+    block: bytes | None = None
+    for width in _direct_width_candidates(requested, room):
+        try:
+            block = source.read(player_base + direct_start, width)
+            break
+        except MemoryReadError:
+            continue  # the window overruns the mapping — try the next, narrower width
+    if block is None:
+        return slots, EMPTY_CENSUS
 
+    scanned = pointers = subs_read = subs_skipped = hops = 0
     for offset, value in pointer_candidates(block, start=direct_start):
+        scanned += 1
         if not is_plausible_pointer(value, regions):
             continue
+        pointers += 1
         slots[(offset,)] = value
         sub = _read_sub_object(source, regions, value, hop_start, hop_end)
         if sub is None:
+            subs_skipped += 1
             continue
+        subs_read += 1
         for sub_offset, sub_value in pointer_candidates(sub, start=hop_start):
             if is_plausible_pointer(sub_value, regions):
                 slots[(offset, sub_offset)] = sub_value
-    return slots
+                hops += 1
+    census = SampleCensus(
+        direct_bytes_read=len(block),
+        direct_slots_scanned=scanned,
+        direct_pointers=pointers,
+        sub_objects_read=subs_read,
+        sub_objects_skipped=subs_skipped,
+        hop_pointers=hops,
+    )
+    return slots, census
 
 
 # ---------------------------------------------------------------------------
