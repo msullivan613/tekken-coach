@@ -590,10 +590,11 @@ def moveset_probe_main(args: argparse.Namespace) -> int:  # pragma: no cover - l
     import time  # noqa: PLC0415
 
     from tekken_coach.reader.discovery.moveset_scan import (  # noqa: PLC0415
+        MovesetCandidate,
         derive_reference_path,
         scan_moveset,
     )
-    from tekken_coach.reader.moveset import gate_pairs_for  # noqa: PLC0415
+    from tekken_coach.reader.moveset import dump_header, gate_pairs_for  # noqa: PLC0415
     from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
     from tekken_coach.reader.slots import DEFAULT_SLOT_END  # noqa: PLC0415
     from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
@@ -605,6 +606,15 @@ def moveset_probe_main(args: argparse.Namespace) -> int:  # pragma: no cover - l
         table = select_offset_table(version, args.offsets)
     except ReaderError as exc:
         return _report_fault(exc)
+
+    if args.dump is not None:
+        # Escape hatch (brief #20 Part D): dump one known header's raw bytes without a scan, so a
+        # moveset-shaped candidate that gated 0/5 can be compared against the assumed T8 offsets.
+        try:
+            print(dump_header(source, args.dump))
+        except ReaderError as exc:
+            return _report_fault(exc)
+        return 0
 
     pairs = gate_pairs_for(args.char)
     if pairs is None:
@@ -630,22 +640,50 @@ def moveset_probe_main(args: argparse.Namespace) -> int:  # pragma: no cover - l
         return 1
 
     print(f"\nscanned in {elapsed:.1f}s: {len(scan.survivors)} shape-survivor(s)\n")
-    print(f"{'header':>18}  {'cancels':>8}  {'moves':>7}  {'gate':>6}")
-    for cand in scan.candidates:
+
+    def _row(cand: MovesetCandidate) -> str:
         gate = f"{sum(r.found for r in cand.gate)}/{len(cand.gate)}"
-        print(
+        return (
             f"0x{cand.header_addr:>16x}  {cand.header.cancels_count:>8}  "
             f"{cand.header.moves_count:>7}  {gate:>6}"
         )
 
     winner = scan.winner
-    print()
     if winner is None:
-        if len(scan.matches) == 0:
-            print("no header reproduced the anchors. Confirm you are in a match as the target")
-            print("character; if it persists the gate anchors may need this character's ids.")
+        # Never flood the terminal with thousands of rows: show only the best near-misses, ranked by
+        # anchors reproduced, then by most moveset-shaped (largest cancels - moves) — that surfaces
+        # the real candidate to eyeball (and to --dump) without the scroll (brief #20 Part C).
+        print(
+            "no header reproduced all anchors. Confirm you are in a match as the target character."
+        )
+        near = sorted(
+            scan.candidates,
+            key=lambda c: (
+                sum(r.found for r in c.gate),
+                c.header.cancels_count - c.header.moves_count,
+            ),
+            reverse=True,
+        )[:15]
+        if near:
+            print(f"\ntop {len(near)} near-miss(es) (most anchors, then most moveset-shaped):")
+            print(f"{'header':>18}  {'cancels':>8}  {'moves':>7}  {'gate':>6}")
+            for cand in near:
+                print(_row(cand))
+            top = near[0]
+            found = sum(r.found for r in top.gate)
+            print(
+                f"\na shaped candidate that still gates {found}/{len(top.gate)} means the "
+                "doc-derived offsets do not match this build. Re-run with "
+                f"`--dump 0x{top.header_addr:x}` to ground them (brief #20 Part D)."
+            )
+            print("auto-dump of the top near-miss:\n")
+            print(dump_header(source, top.header_addr))
         return 0
+
     print(f"MOVESET HEADER FOUND: 0x{winner.header_addr:x} (gate reproduced all anchors)")
+    print(f"\n{'header':>18}  {'cancels':>8}  {'moves':>7}  {'gate':>6}")
+    for cand in scan.matches:
+        print(_row(cand))
     if len(scan.matches) > 1:
         others = ", ".join(f"0x{m.header_addr:x}" for m in scan.matches[1:])
         print(f"(also passed: {others} — one per loaded character; confirm which is this player's)")
@@ -1110,6 +1148,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_msprobe.add_argument(
         "--player", type=int, default=1, help="which player to probe (1 or 2; default 1)"
+    )
+    p_msprobe.add_argument(
+        "--dump",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="raw-dump one header address (hex) instead of scanning — its header words + first "
+        "cancel rows — to ground the T8 offsets when a shaped candidate gates 0/5 (brief #20).",
     )
     p_msprobe.set_defaults(func=moveset_probe_main)
 

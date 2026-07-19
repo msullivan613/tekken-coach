@@ -44,8 +44,10 @@ from tekken_coach.reader.faults import MemoryReadError
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.moveset import (
     CANCEL_SIZE,
-    COUNT_MAX,
-    COUNT_MIN,
+    CANCELS_COUNT_MAX,
+    CANCELS_COUNT_MIN,
+    MOVES_COUNT_MAX,
+    MOVES_COUNT_MIN,
     MOVESET_CANCELS_COUNT_OFFSET,
     MOVESET_CANCELS_PTR_OFFSET,
     MOVESET_MOVES_COUNT_OFFSET,
@@ -91,11 +93,16 @@ def shape_survivors(
     """Sweep the heap buffers for 8-aligned addresses shaped like a ``tk_moveset`` header.
 
     Buffer-local and cheap-filtered: for every 8-aligned candidate address it reads the two count
-    words (rejecting anything not in ``[COUNT_MIN, COUNT_MAX]``) and then the two array pointers
-    (rejecting anything that does not land in an enumerated region). No candidate is dereferenced
-    and no cancel is read here — that is :func:`gate_survivors`' job on the few that survive. Uses a
-    :class:`memoryview` cast to ``u64`` per buffer so the hot loop is index arithmetic, not
-    per-candidate ``struct.unpack``.
+    words (each rejected against its own realistic range), requires the **moveset shape**
+    ``cancels > moves``, then checks the two array pointers land in an enumerated region. Nothing is
+    dereferenced and no cancel is read here — that is :func:`gate_survivors`' job on the few that
+    survive. Uses a :class:`memoryview` cast to ``u64`` per buffer so the hot loop is index
+    arithmetic, not per-candidate ``struct.unpack``.
+
+    The ``cancels > moves`` requirement is what the 2026-07-19 live run proved essential (#20):
+    without it, 8,703 of 9,026 survivors were contiguous near-equal-count arrays (two adjacent
+    small words) that flooded the gate. A real moveset has far more cancels than moves, so this one
+    cheap comparison — applied before the region lookups — collapses the survivors to a handful.
     """
     survivors: list[int] = []
     swept = 0
@@ -114,11 +121,13 @@ def shape_survivors(
         swept += n - _HEADER_LAST_WORD
         for i in range(n - _HEADER_LAST_WORD):
             cancels_count = words[i + _CANCELS_COUNT_WORD]
-            if not (COUNT_MIN <= cancels_count <= COUNT_MAX):
+            if not (CANCELS_COUNT_MIN <= cancels_count <= CANCELS_COUNT_MAX):
                 continue
             moves_count = words[i + _MOVES_COUNT_WORD]
-            if not (COUNT_MIN <= moves_count <= COUNT_MAX):
+            if not (MOVES_COUNT_MIN <= moves_count <= MOVES_COUNT_MAX):
                 continue
+            if cancels_count <= moves_count:
+                continue  # the defining moveset shape — kills the near-equal-count junk (brief #20)
             if not region_index.contains(words[i + _CANCELS_PTR_WORD], CANCEL_SIZE):
                 continue
             if not region_index.contains(words[i + _MOVES_PTR_WORD], POINTER_SIZE):
