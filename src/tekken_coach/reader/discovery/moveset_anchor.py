@@ -816,7 +816,7 @@ DEFAULT_PROBE_ROWS = 32
 MAX_PROBE_ROWS = 4096
 
 
-def _read_cancel_ptr(
+def read_cancel_ptr(
     source: MemorySource, moves: MovesArray, move_id: int, ptr_offset: int
 ) -> int | None:
     """Read ``move_id``'s cancel-run pointer at ``+ptr_offset``, or ``None`` if unreadable.
@@ -830,7 +830,7 @@ def _read_cancel_ptr(
         return None
 
 
-def _read_cancel_row(source: MemorySource, row_addr: int) -> RawCancel | None:
+def read_cancel_row(source: MemorySource, row_addr: int) -> RawCancel | None:
     """Read one ``tk_cancel`` at ``row_addr`` in the confirmed layout, or ``None`` if unreadable."""
     try:
         command = _read_u64(source, row_addr + CANCEL_COMMAND_OFFSET)
@@ -923,8 +923,8 @@ def cancel_range(
 
     Total: every failure mode above is returned as a :class:`CancelRange` with its own verdict.
     """
-    start = _read_cancel_ptr(source, moves, move_id, ptr_offset)
-    next_start = _read_cancel_ptr(source, moves, move_id + 1, ptr_offset)
+    start = read_cancel_ptr(source, moves, move_id, ptr_offset)
+    next_start = read_cancel_ptr(source, moves, move_id + 1, ptr_offset)
 
     def result(
         span: int | None,
@@ -1001,7 +1001,7 @@ def cancel_range(
     checked = min(count, max_rows)
     plausible = 0
     for i in range(checked):
-        row = _read_cancel_row(source, start + i * CANCEL_SIZE)
+        row = read_cancel_row(source, start + i * CANCEL_SIZE)
         if row is not None and _row_is_plausible(row):
             plausible += 1
     if plausible == checked:
@@ -1126,7 +1126,7 @@ def probe_cancel_run(
     Total: an unreadable pointer or row ends the read and is reported, never raised — a wrong
     ``ptr_offset`` pointing into junk yields no matches rather than a crash.
     """
-    ptr = _read_cancel_ptr(source, moves, move_id, ptr_offset)
+    ptr = read_cancel_ptr(source, moves, move_id, ptr_offset)
     if ptr is None:
         return CancelRunProbe(move_id, ptr_offset, None, (), 0, 0, ())
 
@@ -1137,7 +1137,7 @@ def probe_cancel_run(
 
     rows: list[RawCancel] = []
     for i in range(n_rows):
-        row = _read_cancel_row(source, ptr + i * CANCEL_SIZE)
+        row = read_cancel_row(source, ptr + i * CANCEL_SIZE)
         if row is None:
             break  # the array ends (or was never one) — report what was readable
         rows.append(row)

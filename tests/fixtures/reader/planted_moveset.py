@@ -22,6 +22,7 @@ import struct
 from dataclasses import dataclass
 
 from tekken_coach.framedata.moveset_decode import MODE_NORMAL
+from tekken_coach.reader.discovery.moveset_anchor import MovesArray
 from tekken_coach.reader.moveset import (
     CANCEL_COMMAND_OFFSET,
     CANCEL_MOVE_ID_OFFSET,
@@ -34,6 +35,7 @@ from tekken_coach.reader.moveset import (
     MOVESET_MOVES_PTR_OFFSET,
     MoveLayout,
 )
+from tekken_coach.reader.moveset_walk import TERMINATOR_COMMAND
 from tekken_coach.reader.offsets import ComponentAnchor
 from tests.fixtures.reader.flat_source import FlatMemorySource
 
@@ -435,6 +437,141 @@ def planted_tk_move_source() -> FlatMemorySource:
         ],
         module_bases={MODULE: MODULE_BASE},
     )
+
+
+# ---------------------------------------------------------------------------
+# Brief #26 — a walkable cancel GRAPH in the confirmed 5.02.01 shape
+# ---------------------------------------------------------------------------
+
+# The #25 world above proves one move's run in isolation. This one plants a whole **graph** so the
+# root search, the BFS, and the join can be exercised end to end offline: a neutral root whose run
+# reproduces Bryan's committed from-neutral anchors, a two-level string, a destination reached from
+# two paths, a many-to-one command, a cycle back to the root, a deliberate collision, and the two
+# structural row kinds (terminator + auto-transition) that must never become graph edges.
+#
+# Layout is the confirmed live shape: move index == move_id, each record holding only its cancel-run
+# START pointer, runs laid contiguously in ascending move_id order so a run's end is the next move's
+# start. Moves with no planted run share their neighbour's pointer — a legitimately empty run.
+TKW_MOVES_BASE = 0x320000000
+TKW_CANCELS_BASE = 0x321000000
+
+TKW_MOVE_SIZE = 0x40
+TKW_CANCEL_PTR_OFFSET = 0x18
+
+TKW_ROOT = 100  # the neutral move: its run holds the from-neutral canonical inputs
+TKW_DECOY_ROOT = 200  # a SECOND full-anchor match, so ambiguity has something to report
+TKW_JAB = 1695
+TKW_AUTO_TRANSITION_DEST = 1696  # reached only by the command-0 recovery link -> never a graph node
+TKW_COLLISION_DEST = 1990  # two from-neutral commands, different notations -> reported, not guessed
+TKW_MANY_TO_ONE = (1697, 1698, 1699)  # one command, three destination ids -> one shared notation
+TKW_DEEP = 1800  # the two-level string's tail; its run cycles back to the root
+
+TKW_MOVES_COUNT = 1802  # > TKW_DEEP + 1, so even the deepest move has a readable neighbour
+
+# The from-neutral run the root owns — deliberately Bryan's committed anchors, so the same
+# ``gate_pairs`` that finds the root live finds it here.
+_TKW_ROOT_RUN = (
+    ("", "1", TKW_JAB),
+    ("df", "2", 1628),
+    ("d", "4", 1725),
+    ("", "3", 1573),
+    ("", "2", 1566),
+    # A collision: two from-neutral cancels to one dest with different notations.
+    ("", "1", TKW_COLLISION_DEST),
+    ("", "2", TKW_COLLISION_DEST),
+)
+
+# move_id -> its run, as (direction, buttons, dest) triples. Every listed run also gets a terminator
+# row appended (see :func:`_tkw_rows`); the jab additionally gets the command-0 auto-transition.
+TKW_RUNS: dict[int, tuple[tuple[str, str, int], ...]] = {
+    TKW_ROOT: _TKW_ROOT_RUN,
+    TKW_DECOY_ROOT: _TKW_ROOT_RUN[:5],  # the anchors only — a second, indistinguishable full match
+    TKW_JAB: (
+        # many-to-one: one command, three destinations, all legitimately "1,2"
+        ("", "2", TKW_MANY_TO_ONE[0]),
+        ("", "2", TKW_MANY_TO_ONE[1]),
+        ("", "2", TKW_MANY_TO_ONE[2]),
+        # a destination ALSO reachable from neutral — from-neutral must win, so 1573 stays "3"
+        ("", "3", 1573),
+    ),
+    TKW_MANY_TO_ONE[0]: (("", "3", TKW_DEEP),),  # the second string level: "1,2" -> "1,2,3"
+    TKW_DEEP: (("", "4", TKW_ROOT),),  # a cycle back to the root — the walk must terminate
+}
+
+# What the join must reconstruct from the planted graph (the fixture's ground truth).
+TKW_EXPECTED_NOTATION: dict[int, str] = {
+    TKW_JAB: "1",
+    1628: "df+2",
+    1725: "d+4",
+    1573: "3",  # from-neutral wins over the "1,3" string path off the jab
+    1566: "2",
+    TKW_MANY_TO_ONE[0]: "1,2",
+    TKW_MANY_TO_ONE[1]: "1,2",
+    TKW_MANY_TO_ONE[2]: "1,2",
+    TKW_DEEP: "1,2,3",
+}
+TKW_EXPECTED_COLLISIONS: dict[int, list[str]] = {TKW_COLLISION_DEST: ["1", "2"]}
+
+# Every move the BFS should visit: the root plus every destination named by an INPUT row. The
+# auto-transition's destination and the terminator's neutral alias are excluded by construction.
+TKW_EXPECTED_REACHED: frozenset[int] = frozenset(
+    {TKW_ROOT, TKW_JAB, 1628, 1725, 1573, 1566, TKW_COLLISION_DEST, *TKW_MANY_TO_ONE, TKW_DEEP}
+)
+
+# The run terminator's destination: the 0x8001 neutral **alias**, which is not a moves-array index.
+TKW_TERMINATOR_DEST = 0x8001
+
+
+def _tkw_rows(move_id: int) -> tuple[PlantedCancel, ...]:
+    """The planted rows for ``move_id``: its inputs, its structural rows, then the terminator.
+
+    Every non-empty run ends with a terminator, and the jab also carries the command-0
+    auto-transition into :data:`TKW_AUTO_TRANSITION_DEST` — the two row kinds the reader must
+    exclude and count rather than turn into graph edges.
+    """
+    run = TKW_RUNS.get(move_id)
+    if run is None:
+        return ()
+    rows = [_clean(move_id, dest, direction, buttons) for direction, buttons, dest in run]
+    if move_id == TKW_JAB:
+        rows.append(PlantedCancel(move_id, TKW_AUTO_TRANSITION_DEST, 0))
+    rows.append(PlantedCancel(move_id, TKW_TERMINATOR_DEST, TERMINATOR_COMMAND))
+    return tuple(rows)
+
+
+def _tkw_blobs() -> tuple[bytes, bytes]:
+    """Lay the walk world's moves array and its contiguous cancels array; return both blobs."""
+    moves = bytearray(TKW_MOVES_COUNT * TKW_MOVE_SIZE)
+    cancels = bytearray()
+    for move_id in range(TKW_MOVES_COUNT):
+        # The record points at the current end of the cancels blob: a move with no planted run
+        # therefore shares its successor's pointer, i.e. owns an empty run.
+        _put_ptr(
+            moves, move_id * TKW_MOVE_SIZE + TKW_CANCEL_PTR_OFFSET, TKW_CANCELS_BASE + len(cancels)
+        )
+        for row in _tkw_rows(move_id):
+            cancels += _cancel_row(row.command, row.dest)
+    return bytes(moves), bytes(cancels)
+
+
+def planted_cancel_graph_source() -> tuple[FlatMemorySource, MovesArray]:
+    """A walkable cancel-graph world plus the solved :class:`MovesArray` addressing it (brief #26).
+
+    Returns the source and the ``MovesArray`` a live ``moveset-anchor`` run would have solved, so
+    the walk tests exercise exactly the live entry path (``moves_base`` + ``move_stride`` + the
+    per-move cancel pointer) with no header, no ``MoveLayout``, and no doc-derived offsets involved.
+    """
+    moves_blob, cancels_blob = _tkw_blobs()
+    source = FlatMemorySource(
+        [
+            (MODULE_BASE, b"\x00" * 0x1000),
+            (TKW_MOVES_BASE, moves_blob),
+            (TKW_CANCELS_BASE, cancels_blob),
+        ],
+        module_bases={MODULE: MODULE_BASE},
+    )
+    moves = MovesArray(slot_key=(), moves_base=TKW_MOVES_BASE, move_stride=TKW_MOVE_SIZE)
+    return source, moves
 
 
 def planted_moveset_scan_source() -> FlatMemorySource:

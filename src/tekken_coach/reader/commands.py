@@ -46,9 +46,15 @@ from tekken_coach.reader.decode import (
     resolve_component,
     resolve_player_base,
 )
+from tekken_coach.reader.discovery.moveset_anchor import DEFAULT_CANCEL_PTR_OFFSET
 from tekken_coach.reader.faults import ReaderError, classify_fault
 from tekken_coach.reader.memory_source import MemorySource
 from tekken_coach.reader.monitor import PlayerView, monitor_lines, views_of
+from tekken_coach.reader.moveset_walk import (
+    DEFAULT_MAX_MOVES,
+    DEFAULT_SEARCH_END,
+    DEFAULT_SEARCH_START,
+)
 from tekken_coach.reader.offsets import OffsetTable
 from tekken_coach.reader.probe import (
     ChangeRecord,
@@ -717,78 +723,137 @@ def moveset_probe_main(args: argparse.Namespace) -> int:  # pragma: no cover - l
 
 
 def moveset_build_main(args: argparse.Namespace) -> int:  # pragma: no cover - live build shell
-    """``moveset-build``: read the live moveset -> decode -> join -> write the movemap (Phase 2).
+    """``moveset-build``: walk the live cancel graph -> join -> write the movemap (brief #26).
 
-    Depends on the Phase-1 discovery: with ``players.moveset_slot`` still ``null`` it reports
-    "moveset offset not yet discovered" and exits cleanly (brief #18). Owner attribution also needs
-    the ``tk_move`` cancel-range layout (undocumented in our tables — see
-    :class:`~tekken_coach.reader.moveset.MoveLayout`); supply it with ``--move-size`` /
-    ``--cancel-ptr-offset`` / ``--cancel-count-offset`` / ``--neutral-move-id`` once the live run
-    confirms them; otherwise the build reports the gap and exits. When both are present it rebuilds
-    ``move_id -> notation``, merges the notations that resolve to a real ``framedata_key`` into
-    ``assets/movemap/<char>.json``, and prints a hit/miss self-check against the committed ids.
+    Runs the **anchor path**, not the ``tk_moveset`` header: the doc-derived header offsets are
+    proven wrong for 5.02.01, so the build is grounded on what the live runs confirmed instead —
+    ``moves_base`` + ``move_stride`` (from ``moveset-anchor``) plus the per-move cancel-run pointer
+    at ``tk_move+0x098``. ``moves_base`` is **session-specific**, so it is passed in each run and
+    never recorded.
+
+    With no ``--root`` it finds the neutral move itself, by the same self-validating gate: the move
+    whose run reproduces the character's from-neutral anchors *is* the root. Then it BFSes the
+    graph,
+    hands the rows to the existing pure ``join_moves``, and gates the result with ``self_check``
+    against the committed ids **before writing anything** — any ``MISS`` (a rebuilt notation that
+    differs from ground truth) fails the build and writes nothing, since a wrong mapping is the one
+    outcome worse than a missing one (docs/05 §2.3).
     """
-    from tekken_coach.framedata.loader import load_current_framedata  # noqa: PLC0415
+    from tekken_coach.framedata.loader import (  # noqa: PLC0415
+        load_char_move_map,
+        load_current_framedata,
+    )
     from tekken_coach.framedata.movemap_miner import merge_mappings  # noqa: PLC0415
-    from tekken_coach.reader.decode import resolve_component  # noqa: PLC0415
-    from tekken_coach.reader.moveset import (  # noqa: PLC0415
-        MoveLayout,
-        build_notation_map,
-        self_check,
+    from tekken_coach.framedata.moveset_decode import join_moves  # noqa: PLC0415
+    from tekken_coach.reader.discovery.moveset_anchor import MovesArray  # noqa: PLC0415
+    from tekken_coach.reader.moveset import gate_pairs_for, self_check  # noqa: PLC0415
+    from tekken_coach.reader.moveset_walk import (  # noqa: PLC0415
+        find_neutral_move,
+        walk_cancel_graph,
     )
     from tekken_coach.reader.offsets import select_offset_table  # noqa: PLC0415
     from tekken_coach.reader.version import detect_running_version  # noqa: PLC0415
     from tekken_coach.reader.win_source import WinMemorySource  # noqa: PLC0415
 
+    if args.moves_base is None or args.move_stride is None:
+        print(
+            "the moves array is not solved. Run `moveset-anchor --char <char> --player <n>` first "
+            "and pass its result as --moves-base/--move-stride. moves_base is session-specific, so "
+            "it must be re-solved every run; only move_stride (0x448) and the cancel pointer "
+            "(+0x098) are durable.",
+            file=sys.stderr,
+        )
+        return 2
+
+    char = args.char.lower()
     try:
         source = WinMemorySource(args.process)
         version = args.version or detect_running_version(args.process)
-        table = select_offset_table(version, args.offsets)
+        select_offset_table(version, args.offsets)
     except ReaderError as exc:
         return _report_fault(exc)
 
-    slot = table.players.moveset_slot
-    if slot is None:
-        print(
-            "moveset offset not yet discovered — players.moveset_slot is null. Run "
-            "`moveset-probe` live first to find it (brief #18 Phase 1).",
-            file=sys.stderr,
-        )
-        return 0
+    moves = MovesArray(slot_key=(), moves_base=args.moves_base, move_stride=args.move_stride)
+    ptr_offset = args.cancel_ptr_offset
 
-    layout_args = (args.move_size, args.cancel_ptr_offset, args.cancel_count_offset)
-    if any(a is None for a in layout_args) or args.neutral_move_id is None:
+    root = args.root
+    if root is None:
+        pairs = gate_pairs_for(char)
+        if pairs is None:
+            print(
+                f"no from-neutral anchors recorded for {char!r}, so the root cannot be gated. "
+                "Pass --root explicitly, or record the character's anchors first.",
+                file=sys.stderr,
+            )
+            return 2
         print(
-            "tk_move cancel-range layout not confirmed. Owner attribution needs --move-size, "
-            "--cancel-ptr-offset, --cancel-count-offset and --neutral-move-id (confirmed by the "
-            "live self-check). Without them a string-only move would be mis-mapped, so the build "
-            "declines rather than write a wrong notation (docs/05 §2.3).",
-            file=sys.stderr,
+            f"searching ids [{args.search_start}, {args.search_end}) for the neutral move "
+            f"(the run reproducing {char}'s from-neutral anchors)..."
         )
-        return 0
+        try:
+            search = find_neutral_move(
+                source,
+                moves,
+                pairs,
+                search_start=args.search_start,
+                search_end=args.search_end,
+                ptr_offset=ptr_offset,
+            )
+        except ReaderError as exc:
+            return _report_fault(exc)
+        print(search.report())
+        if search.root is None:
+            print(
+                "\nno single root — nothing built. Widen --search-start/--search-end, or pass "
+                "--root once it is known.",
+                file=sys.stderr,
+            )
+            return 1
+        root = search.root
 
-    layout = MoveLayout(
-        size=args.move_size,
-        cancel_ptr_offset=args.cancel_ptr_offset,
-        cancel_count_offset=args.cancel_count_offset,
-    )
-    index = args.player - 1
     try:
-        base = resolve_player_base(source, table, index)
-        moveset_ptr = resolve_component(source, base, slot)
-        result = build_notation_map(
-            source, moveset_ptr, layout, neutral_move_id=args.neutral_move_id
+        graph = walk_cancel_graph(
+            source, moves, root, ptr_offset=ptr_offset, max_moves=args.max_moves
         )
     except ReaderError as exc:
         return _report_fault(exc)
+    print()
+    print(graph.report())
 
+    result = join_moves(list(graph.cancels), neutral_move_id=root)
     print(
-        f"rebuilt {len(result.notation)} move_id -> notation "
+        f"\nrebuilt {len(result.notation)} move_id -> notation "
         f"({len(result.collisions)} collisions, {len(result.unresolved)} unresolved)"
     )
+    for move_id, competing in sorted(result.collisions.items()):
+        print(f"  COLLISION {move_id}: {competing} — reported, not guessed")
+
+    # The build gate runs BEFORE anything is written: a MISS means a wrong mapping, and a wrong
+    # mapping must never reach the movemap.
+    map_path = Path(args.movemap) / f"{char}.json"
+    if map_path.exists():
+        committed = {int(k): e.notation for k, e in load_char_move_map(map_path).moves.items()}
+        rows = self_check(result.notation, committed)
+        hits = sum(1 for r in rows if r.status == "HIT")
+        missing = sum(1 for r in rows if r.status == "MISSING")
+        misses = [r for r in rows if r.status == "MISS"]
+        print(
+            f"\nself-check vs {map_path}: {hits} HIT, {len(misses)} MISS, {missing} MISSING "
+            f"(of {len(rows)} committed ids)"
+        )
+        for r in misses:
+            print(f"  MISS {r.move_id}: expected {r.expected!r}, rebuilt {r.got!r}")
+        if misses:
+            print(
+                f"\n{len(misses)} MISS(es) — the rebuild contradicts committed ground truth, so "
+                "NOTHING was written. A MISSING id is only out of v1 scope; a MISS is a wrong "
+                "mapping and fails the build.",
+                file=sys.stderr,
+            )
+            return 1
 
     snapshot = load_current_framedata()
-    char_fd = snapshot.get_char(args.char.lower())
+    char_fd = snapshot.get_char(char)
     if char_fd is None:
         print(
             f"no frame-data snapshot for {args.char!r} — run `fetch-framedata {args.char}` first.",
@@ -796,11 +861,12 @@ def moveset_build_main(args: argparse.Namespace) -> int:  # pragma: no cover - l
         )
         return 1
 
-    # Only write notations that resolve to a real framedata_key; the rest are honest needs-manual.
+    # Only write notations that join to a real framedata_key; the rest are a reported gap, never an
+    # invented key.
     mappable = [(mid, note) for mid, note in result.notation.items() if note in char_fd.moves]
-    unknown_key = sorted(mid for mid, note in result.notation.items() if note not in char_fd.moves)
+    unknown_key = sorted({note for note in result.notation.values() if note not in char_fd.moves})
     merge = merge_mappings(
-        args.char.lower(),
+        char,
         char_fd,
         snapshot.manifest.game_version or version,
         mappable,
@@ -809,24 +875,15 @@ def moveset_build_main(args: argparse.Namespace) -> int:  # pragma: no cover - l
     )
     verb = "created" if merge.created else "updated"
     print(
-        f"{verb} {merge.path}: +{len(merge.written)} new, "
+        f"\n{verb} {merge.path}: +{len(merge.written)} new, "
         f"{len(merge.overwritten)} overwritten, {len(merge.preserved)} preserved"
     )
     if unknown_key:
-        print(f"{len(unknown_key)} rebuilt notation(s) match no framedata_key (needs-manual)")
-
-    # Self-check against the committed ids already in the movemap (Bryan's ground truth).
-    from tekken_coach.framedata.loader import load_char_move_map  # noqa: PLC0415
-
-    map_path = Path(args.movemap) / f"{args.char.lower()}.json"
-    if map_path.exists():
-        committed = {int(k): e.notation for k, e in load_char_move_map(map_path).moves.items()}
-        rows = self_check(result.notation, committed)
-        hits = sum(1 for r in rows if r.status == "HIT")
-        misses = [r for r in rows if r.status == "MISS"]
-        print(f"\nself-check vs {map_path}: {hits}/{len(rows)} hit")
-        for r in misses:
-            print(f"  MISS {r.move_id}: expected {r.expected!r}, rebuilt {r.got!r}")
+        print(
+            f"{len(unknown_key)} rebuilt notation(s) match no framedata_key (a reported gap, not "
+            f"an invented key): {', '.join(unknown_key[:12])}"
+            + (" ..." if len(unknown_key) > 12 else "")
+        )
     return 0
 
 
@@ -1480,29 +1537,51 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace already-mapped ids instead of preserving them (brief #16 skip-on-resume).",
     )
     p_msbuild.add_argument(
-        "--move-size",
+        "--moves-base",
         type=lambda s: int(s, 0),
         default=None,
-        help="tk_move stride (confirmed by the live self-check; owner attribution needs it).",
+        help="the solved moves-array base from `moveset-anchor` (hex). SESSION-SPECIFIC — it must "
+        "be re-solved every run, so it is never recorded.",
+    )
+    p_msbuild.add_argument(
+        "--move-stride",
+        type=lambda s: int(s, 0),
+        default=None,
+        help="the tk_move stride (durable: 0x448 on 5.02.01).",
     )
     p_msbuild.add_argument(
         "--cancel-ptr-offset",
         type=lambda s: int(s, 0),
-        default=None,
-        help="offset within tk_move of the pointer to its first cancel.",
+        default=DEFAULT_CANCEL_PTR_OFFSET,
+        help="offset within tk_move of its cancel-run start pointer (durable: 0x98, live-confirmed "
+        "2026-07-19).",
     )
     p_msbuild.add_argument(
-        "--cancel-count-offset",
+        "--root",
         type=lambda s: int(s, 0),
         default=None,
-        help="offset within tk_move of its cancel count (u64).",
+        help="the neutral move id, skipping the root search. Omit to find it by gating each "
+        "candidate's run against the character's from-neutral anchors.",
     )
     p_msbuild.add_argument(
-        "--neutral-move-id",
+        "--search-start",
         type=lambda s: int(s, 0),
-        default=None,
-        help="the character's neutral/standing move id (its cancel list holds the from-neutral "
-        "canonical inputs).",
+        default=DEFAULT_SEARCH_START,
+        help=f"first move id the root search sweeps (default {DEFAULT_SEARCH_START}).",
+    )
+    p_msbuild.add_argument(
+        "--search-end",
+        type=lambda s: int(s, 0),
+        default=DEFAULT_SEARCH_END,
+        help=f"one past the last move id the root search sweeps (default {DEFAULT_SEARCH_END}); "
+        "each candidate costs a couple of small reads plus its own run.",
+    )
+    p_msbuild.add_argument(
+        "--max-moves",
+        type=int,
+        default=DEFAULT_MAX_MOVES,
+        help=f"how many moves the graph walk visits before stopping (default {DEFAULT_MAX_MOVES}); "
+        "truncation is reported, never hidden.",
     )
     p_msbuild.set_defaults(func=moveset_build_main)
 
